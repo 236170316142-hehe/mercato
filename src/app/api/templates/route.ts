@@ -1,0 +1,109 @@
+import path from "node:path";
+import { NextRequest, NextResponse } from "next/server";
+import { authGuard, adminGuard } from "@/lib/auth-helpers";
+import { prisma } from "@/lib/db";
+import { readXlsxGrid } from "@/lib/vendor/xlsx-lite";
+
+const MAX_BYTES = 15 * 1024 * 1024;
+const ALLOWED_EXT = new Set([".xlsx", ".xlsm", ".csv", ".tsv"]);
+
+export async function GET(req: NextRequest) {
+  const { response } = await authGuard();
+  if (response) return response;
+
+  const marketplace = req.nextUrl.searchParams.get("marketplace");
+  const templates = await prisma.exportTemplate.findMany({
+    where: marketplace ? { marketplace } : undefined,
+    orderBy: { createdAt: "desc" },
+  });
+
+  return NextResponse.json({ templates });
+}
+
+export async function POST(req: NextRequest) {
+  const { response } = await adminGuard();
+  if (response) return response;
+
+  const contentType = req.headers.get("content-type") ?? "";
+
+  // ── File upload path ──────────────────────────────────────────────────────
+  if (contentType.includes("multipart/form-data")) {
+    let form: FormData;
+    try { form = await req.formData(); } catch {
+      return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+    }
+
+    const file = form.get("file");
+    const marketplace = String(form.get("marketplace") ?? "").trim();
+    const category = String(form.get("category") ?? "").trim() || null;
+    const name = String(form.get("name") ?? "").trim();
+
+    if (!(file instanceof File)) return NextResponse.json({ error: "No file attached" }, { status: 400 });
+    if (!marketplace) return NextResponse.json({ error: "marketplace required" }, { status: 400 });
+    if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
+
+    const ext = path.extname(file.name).toLowerCase();
+    if (!ALLOWED_EXT.has(ext)) {
+      return NextResponse.json({ error: `Unsupported type "${ext}". Use .xlsx, .xlsm, .csv, or .tsv.` }, { status: 400 });
+    }
+    if (file.size === 0) return NextResponse.json({ error: "File is empty" }, { status: 400 });
+    if (file.size > MAX_BYTES) return NextResponse.json({ error: "File too large (max 15 MB)" }, { status: 400 });
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    let headers: string[] = [];
+
+    if (ext === ".csv" || ext === ".tsv") {
+      const text = buffer.toString("utf-8").replace(/^﻿/, "");
+      const delim = ext === ".tsv" ? "\t" : (text.includes("\t") ? "\t" : ",");
+      const firstLine = text.split(/\r?\n/)[0] ?? "";
+      headers = firstLine.split(delim).map((h) => h.replace(/^"|"$/g, "").trim()).filter(Boolean);
+    } else {
+      const { grid } = await readXlsxGrid(buffer, 30);
+      // Find header row: most non-empty cells in first 25 rows
+      let bestIdx = 0, bestCount = -1;
+      for (let i = 0; i < Math.min(grid.length, 25); i++) {
+        const count = grid[i].filter((c) => c.trim() !== "").length;
+        if (count >= 2 && count > bestCount) { bestCount = count; bestIdx = i; }
+      }
+      headers = (grid[bestIdx] ?? []).map((h) => h.trim()).filter(Boolean);
+    }
+
+    if (!headers.length) return NextResponse.json({ error: "No column headers found in file" }, { status: 400 });
+
+    const columns = headers.map((key) => ({
+      key,
+      label: key.charAt(0).toUpperCase() + key.slice(1).replace(/[_-]/g, " "),
+    }));
+
+    const template = await prisma.exportTemplate.create({
+      data: { name, marketplace, category, fileFormat: ext === ".csv" || ext === ".tsv" ? "csv" : "xlsx", columns },
+    });
+
+    return NextResponse.json({ ...template, detectedColumns: headers.length });
+  }
+
+  // ── JSON path (manual column entry) ──────────────────────────────────────
+  const body = await req.json();
+  const { name, marketplace, category, fileFormat, columns } = body;
+
+  if (!name || !marketplace || !columns) {
+    return NextResponse.json({ error: "name, marketplace and columns required" }, { status: 400 });
+  }
+
+  const template = await prisma.exportTemplate.create({
+    data: { name, marketplace, category: category ?? null, fileFormat: fileFormat ?? "xlsx", columns },
+  });
+
+  return NextResponse.json(template);
+}
+
+export async function DELETE(req: NextRequest) {
+  const { response } = await adminGuard();
+  if (response) return response;
+
+  const id = req.nextUrl.searchParams.get("id");
+  if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+
+  await prisma.exportTemplate.delete({ where: { id } });
+  return NextResponse.json({ ok: true });
+}

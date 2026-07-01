@@ -1,0 +1,139 @@
+import JSZip from "jszip";
+
+/**
+ * Minimal fast xlsx GRID READER (first N rows only).
+ * ExcelJS hangs on large files with column-level data validations — this reads
+ * straight from the XML without expanding those validations.
+ */
+
+export type XlsxGrid = { sheetName: string; grid: string[][] };
+
+function decodeXml(s: string): string {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function textRuns(fragment: string): string {
+  let out = "";
+  const re = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(fragment))) out += decodeXml(m[1]);
+  return out;
+}
+
+function colIndex(ref: string): number {
+  let n = 0;
+  for (const ch of ref) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+function attr(tag: string, name: string): string | null {
+  const m = new RegExp(`(?:^|\\s)${name}="([^"]*)"`).exec(tag);
+  return m ? m[1] : null;
+}
+
+const MAX_COLS = 512;
+const SCORE_SCAN_ROWS = 60;
+
+const NAME_POSITIVE = /listing|template|catalog\b|product|items?\b|offers?\b|\bdata\b/i;
+const NAME_NEGATIVE =
+  /instruction|definition|help|glossary|example|dropdown|valid|values|attribute|meta\b|reference|browse|lookup|notes|read.?me|conditions/i;
+
+function scoreSheet(name: string, grid: string[][]): number {
+  let headerIdx = 0;
+  let headerCount = 0;
+  const scan = Math.min(grid.length, 25);
+  for (let i = 0; i < scan; i++) {
+    const count = grid[i].filter((c) => String(c ?? "").trim() !== "").length;
+    if (count >= 2 && count > headerCount) {
+      headerCount = count;
+      headerIdx = i;
+    }
+  }
+  if (headerCount < 2) return -1000;
+  let dataRowsBelow = 0;
+  for (let i = headerIdx + 1; i < grid.length; i++) {
+    if (grid[i].some((c) => String(c ?? "").trim() !== "")) dataRowsBelow++;
+  }
+  const nameBonus = NAME_NEGATIVE.test(name) ? -80 : NAME_POSITIVE.test(name) ? 60 : 0;
+  return Math.min(headerCount, 120) + nameBonus - Math.min(dataRowsBelow * 5, 60);
+}
+
+export async function readXlsxGrid(buffer: Buffer, maxRows: number): Promise<XlsxGrid> {
+  const zip = await JSZip.loadAsync(buffer);
+
+  const wbXml = await zip.file("xl/workbook.xml")?.async("string");
+  if (!wbXml) throw new Error("Not a valid xlsx file (missing workbook.xml).");
+
+  const relsXml = (await zip.file("xl/_rels/workbook.xml.rels")?.async("string")) ?? "";
+  const relTargets = new Map<string, string>();
+  for (const m of relsXml.matchAll(/<Relationship\s[^>]*Id="([^"]*)"[^>]*Target="([^"]*)"/g)) {
+    relTargets.set(m[1], m[2].replace(/^\/?(xl\/)?/, ""));
+  }
+
+  const shared: string[] = [];
+  const ssXml = await zip.file("xl/sharedStrings.xml")?.async("string");
+  if (ssXml) {
+    const re = /<si(?:\s[^>]*)?>([\s\S]*?)<\/si>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(ssXml))) shared.push(textRuns(m[1]));
+  }
+
+  let best: { name: string; grid: string[][]; score: number } | null = null;
+  let sheetIdx = 0;
+  for (const m of wbXml.matchAll(/<sheet\s[^>]*>/g)) {
+    const name = decodeXml(attr(m[0], "name") ?? `Sheet${sheetIdx + 1}`);
+    const rid = attr(m[0], "r:id");
+    const target = (rid && relTargets.get(rid)) || `worksheets/sheet${sheetIdx + 1}.xml`;
+    sheetIdx++;
+    const sheetXml = await zip.file(`xl/${target}`)?.async("string");
+    if (!sheetXml) continue;
+    const grid = parseSheetRows(sheetXml, shared, Math.max(maxRows, SCORE_SCAN_ROWS));
+    const score = scoreSheet(name, grid);
+    if (!best || score > best.score) best = { name, grid, score };
+  }
+  if (!best) throw new Error("Workbook has no readable sheets.");
+  return { sheetName: best.name, grid: best.grid.slice(0, maxRows) };
+}
+
+function parseSheetRows(sheetXml: string, shared: string[], maxRows: number): string[][] {
+  const grid: string[][] = [];
+  const rowRe = /<row(\s[^>]*)?>([\s\S]*?)<\/row>/g;
+  const cellRe = /<c\s([^>]*?)\/>|<c\s([^>]*)>([\s\S]*?)<\/c>/g;
+  let rowM: RegExpExecArray | null;
+  while ((rowM = rowRe.exec(sheetXml)) && grid.length < maxRows) {
+    const rAttr = attr(`<row ${rowM[1] ?? ""}>`, "r");
+    const rowIdx = rAttr ? parseInt(rAttr, 10) - 1 : grid.length;
+    if (rowIdx >= maxRows) break;
+    while (grid.length < rowIdx) grid.push([]);
+    const cells: string[] = [];
+    let cellM: RegExpExecArray | null;
+    cellRe.lastIndex = 0;
+    while ((cellM = cellRe.exec(rowM[2]))) {
+      const attrs = cellM[1] ?? cellM[2] ?? "";
+      const body = cellM[3] ?? "";
+      const ref = attr(`<c ${attrs}>`, "r");
+      const letters = ref ? ref.replace(/\d+$/, "") : "";
+      const ci = letters ? colIndex(letters) : cells.length;
+      if (ci >= MAX_COLS) continue;
+      const type = attr(`<c ${attrs}>`, "t");
+      let value = "";
+      if (type === "inlineStr") {
+        value = textRuns(body);
+      } else {
+        const v = /<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/.exec(body)?.[1] ?? "";
+        value = type === "s" ? (shared[parseInt(v, 10)] ?? "") : decodeXml(v);
+      }
+      while (cells.length < ci) cells.push("");
+      cells[ci] = value;
+    }
+    grid[rowIdx] = cells;
+  }
+  return grid;
+}

@@ -1,0 +1,169 @@
+"use client";
+
+import { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Upload, FileSpreadsheet, Loader2, X, CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const MARKETPLACES = [
+  { id: "amazon", label: "Amazon", emoji: "🟠", desc: "Via Keepa API" },
+  { id: "bestbuy", label: "Best Buy", emoji: "🔵", desc: "Official API" },
+  { id: "walmart", label: "Walmart", emoji: "🔷", desc: "Affiliate API" },
+  { id: "temu", label: "Temu", emoji: "🟣", desc: "Via SerpAPI" },
+  { id: "mathis", label: "Mathis", emoji: "🟤", desc: "Via SerpAPI" },
+  { id: "sears", label: "Sears", emoji: "⚫", desc: "Via SerpAPI" },
+];
+
+export function NewProjectForm() {
+  const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState("");
+  const [marketplace, setMarketplace] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  function handleFile(f: File) {
+    const ext = f.name.split(".").pop()?.toLowerCase();
+    if (!["csv", "xlsx", "xls"].includes(ext ?? "")) {
+      toast.error("Only CSV or Excel files are supported");
+      return;
+    }
+    setFile(f);
+    if (!name) setName(f.name.replace(/\.[^.]+$/, ""));
+  }
+
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!file) { toast.error("Please upload a vendor file"); return; }
+    if (!marketplace) { toast.error("Please select a marketplace"); return; }
+    if (!name.trim()) { toast.error("Please enter a project name"); return; }
+
+    setLoading(true);
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", name.trim());
+    form.append("marketplace", marketplace);
+
+    const res = await fetch("/api/projects", { method: "POST", body: form });
+    const data = await res.json();
+    setLoading(false);
+
+    if (!res.ok) {
+      toast.error(data.error ?? "Failed to create project");
+    } else {
+      toast.success(`Project created — ${data.count} products imported`);
+      router.push(`/projects/${data.id}`);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Project name */}
+      <div>
+        <label className="block text-sm font-medium mb-1.5">Project name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Summer Vendor List 2026"
+          className="w-full h-10 rounded-lg border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring transition"
+        />
+      </div>
+
+      {/* File upload */}
+      <div>
+        <label className="block text-sm font-medium mb-1.5">Vendor file</label>
+        <div
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          className={cn(
+            "relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-10 cursor-pointer transition-colors",
+            dragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-accent/50",
+            file && "border-green-500 bg-green-50"
+          )}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+          />
+          {file ? (
+            <>
+              <CheckCircle2 className="w-8 h-8 text-green-600" />
+              <div className="text-center">
+                <p className="text-sm font-medium text-green-700">{file.name}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {(file.size / 1024).toFixed(0)} KB
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setFile(null); }}
+                className="absolute top-3 right-3 text-muted-foreground hover:text-destructive transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
+                <FileSpreadsheet className="w-6 h-6 text-muted-foreground" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-medium">Drop your file here or <span className="text-primary underline">browse</span></p>
+                <p className="text-xs text-muted-foreground mt-1">CSV, XLSX or XLS · Max 50MB</p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Marketplace */}
+      <div>
+        <label className="block text-sm font-medium mb-2">Marketplace</label>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {MARKETPLACES.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => setMarketplace(m.id)}
+              className={cn(
+                "flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all text-sm",
+                marketplace === m.id
+                  ? "border-primary bg-primary/5 ring-1 ring-primary"
+                  : "border-border hover:border-primary/40 hover:bg-accent"
+              )}
+            >
+              <span className="text-lg">{m.emoji}</span>
+              <div>
+                <p className="font-medium leading-tight">{m.label}</p>
+                <p className="text-xs text-muted-foreground">{m.desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button
+        type="submit"
+        disabled={loading || !file || !marketplace}
+        className="w-full h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium flex items-center justify-center gap-2 hover:opacity-90 transition disabled:opacity-50"
+      >
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+        {loading ? "Creating project…" : "Create project"}
+      </button>
+    </form>
+  );
+}

@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          String    @default("user") // "user" | "admin"
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+  projects Project[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ── Core ─────────────────────────────────────────────────────────────────────
+
+model Project {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  marketplace String   // amazon | bestbuy | walmart | temu | mathis | sears
+  status      String   @default("uploaded") // uploaded | verifying | verified | categorizing | categorized | exporting | done
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products Product[]
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  projectId   String
+  vendorSku   String?
+  upc         String?
+  asin        String?
+  name        String
+  brand       String?
+  description String?
+  price       Float?
+  imageUrl    String?
+  vendorData  Json?   // full raw vendor row
+
+  // Verification
+  verifyStatus String?   // ok | warning | mismatch | not_found | pending
+  liveData     Json?     // raw marketplace response
+  verifyFields Json?     // field-by-field comparison array
+  verifiedAt   DateTime?
+
+  // Categorization
+  marketplaceCategory String?
+  categoryPath        String?
+  categoryConfidence  Float?
+  categorizedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+model ExportTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  marketplace String
+  category    String?
+  fileFormat  String   @default("xlsx") // xlsx | csv
+  columns     Json     // [{ key, label, required }]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
