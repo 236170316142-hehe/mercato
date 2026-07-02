@@ -15,7 +15,7 @@ export async function generateExportZip(
     // Only include products that passed verification; if not yet verified, include all.
     const anyVerified = products.some((p) => p.verifyStatus != null);
     const passedVerification = anyVerified
-      ? products.filter((p) => p.verifyStatus === "ok" || p.verifyStatus === "warning")
+      ? products.filter((p) => p.verifyStatus === "ok" || p.verifyStatus === "warning" || p.verifyStatus === "not_found")
       : products;
     // Further filter by template's category scope
     const filtered = template.category

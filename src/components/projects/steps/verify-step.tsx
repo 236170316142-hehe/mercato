@@ -20,6 +20,8 @@ type FieldResult = {
 type Product = {
   id: string;
   name: string;
+  vendorSku: string | null;
+  upc: string | null;
   verifyStatus: string | null;
   verifyFields: Record<string, unknown>[] | null;
   verifiedAt: Date | null;
@@ -89,7 +91,7 @@ export function VerifyStep({ projectId, products, verifiedCount, warningCount, m
         <div>
           <h2 className="text-lg font-semibold">Marketplace Verification</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Compare vendor data against live Amazon listings — title, images, description &amp; dimensions
+            Compare catalog data against live Amazon &amp; Walmart listings — title, images, description &amp; dimensions
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -153,7 +155,7 @@ export function VerifyStep({ projectId, products, verifiedCount, warningCount, m
             })}
           </div>
           <p className="text-xs text-muted-foreground mb-6">
-            <span className="font-medium text-green-700">{verifiedCount + warningCount} SKU{(verifiedCount + warningCount) !== 1 ? "s" : ""}</span> will be included in the Amazon export file (Match + Warning). Mismatches, not-found, and discontinued items are excluded.
+            <span className="font-medium text-green-700">{verifiedCount + warningCount + notFoundCount} SKU{(verifiedCount + warningCount + notFoundCount) !== 1 ? "s" : ""}</span> will be included in the export file (Match + Warning + Not Found). Mismatches and discontinued items are excluded.
             {activeFilter && (
               <> &nbsp;·&nbsp; Showing <span className="font-medium">{visibleProducts.length}</span> {activeFilter.replace("_", " ")} product{visibleProducts.length !== 1 ? "s" : ""}.{" "}
                 <button onClick={() => setActiveFilter(null)} className="underline hover:no-underline">Clear filter</button>
@@ -234,13 +236,25 @@ export function VerifyStep({ projectId, products, verifiedCount, warningCount, m
                   {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
                 </button>
 
-                {isOpen && fields.length > 0 && (
+                {isOpen && (
                   <div className="border-t bg-muted/20 divide-y">
+                    {/* SKU & UPC always shown */}
+                    <div className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
+                      <span className="font-medium text-muted-foreground">SKU</span>
+                      <p className="font-medium">{p.vendorSku ?? "—"}</p>
+                      <div />
+                    </div>
+                    <div className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
+                      <span className="font-medium text-muted-foreground">UPC</span>
+                      <p className="font-medium">{p.upc ?? "—"}</p>
+                      <div />
+                    </div>
+                    {/* Field comparison rows */}
                     {fields.map((f) => (
                       <div key={f.field} className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
                         <span className={cn("font-medium", FIELD_SEVERITY[f.severity])}>{f.label}</span>
                         <div>
-                          <p className="text-muted-foreground mb-0.5">Vendor</p>
+                          <p className="text-muted-foreground mb-0.5">Catalog</p>
                           <p className="font-medium line-clamp-2">{f.stored}</p>
                         </div>
                         <div>
@@ -249,6 +263,9 @@ export function VerifyStep({ projectId, products, verifiedCount, warningCount, m
                         </div>
                       </div>
                     ))}
+                    {fields.length === 0 && (
+                      <div className="px-4 py-2.5 text-xs text-muted-foreground">No comparison data available for this product.</div>
+                    )}
                   </div>
                 )}
               </div>

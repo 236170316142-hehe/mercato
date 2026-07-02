@@ -39,10 +39,16 @@ export async function verifyProducts(
   switch (marketplace) {
     case "amazon":
       return verifyAmazon(products);
-    case "bestbuy":
-      return verifyBestBuy(products);
+    case "walmart":
+      return verifySerpApi("walmart", products);
     default:
-      return verifySerpApi(marketplace, products);
+      // Only Amazon and Walmart are verified; all others pass through as ok.
+      return products.map((p) => ({
+        productId: p.id,
+        status: "ok",
+        fields: [],
+        liveData: {},
+      }));
   }
 }
 
