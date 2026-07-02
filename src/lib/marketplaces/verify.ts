@@ -432,7 +432,7 @@ function compareToLive(
   const brandMatch = !p.brand || !liveBrand || brandsMatch(p.brand, liveBrand);
   fields.push({ field: "brand", label: "Brand", stored: p.brand ?? "N/A", live: liveBrand ?? "N/A", match: brandMatch, severity: brandMatch ? "ok" : "warning" });
 
-  // Images — check vendor has image and Amazon listing has images
+  // Images — check vendor has image and marketplace listing has images
   const liveImages = Array.isArray(liveData.images) ? liveData.images as string[] : [];
   const hasLiveImages = liveImages.length > 0;
   // Vendor image: stored imageUrl field OR any image-like URL in vendorData
@@ -444,11 +444,11 @@ function compareToLive(
     return null;
   })();
   const hasVendorImage = !!vendorImgUrl;
-  const imgMatch = !hasVendorImage || hasLiveImages; // only flag if vendor has image but Amazon doesn't
+  const imgMatch = !hasVendorImage || hasLiveImages;
   fields.push({
     field: "images", label: "Images",
     stored: vendorImgUrl ? "Vendor image provided" : "N/A",
-    live: hasLiveImages ? `${liveImages.length} image${liveImages.length === 1 ? "" : "s"} on Amazon` : "No images on Amazon listing",
+    live: hasLiveImages ? `${liveImages.length} image${liveImages.length === 1 ? "" : "s"} on marketplace` : "No images on marketplace listing",
     match: imgMatch,
     severity: !hasVendorImage ? "ok" : hasLiveImages ? "ok" : "warning",
   });
@@ -468,11 +468,11 @@ function compareToLive(
     severity: descSim == null ? "ok" : descSim >= 0.1 ? "ok" : "warning",
   });
 
-  // Dimensions — try two sources; pick the one closer to Amazon's package dims.
+  // Dimensions — try two sources; pick the one closer to the marketplace package dims.
   // Source 1: stored dimensions string (may be product size like "90x90" for quilts)
   // Source 2: L/W/H columns from vendorData (individual item package dims)
   // IMPORTANT: dimension differences are NEVER a hard mismatch — max severity is "warning"
-  // because vendor product dims and Amazon package dims use different measurement conventions.
+  // because vendor product dims and marketplace package dims use different measurement conventions.
   const vendorDimStr = (vdRaw.dimensions as string | null) ?? null;
   const dims1 = vendorDimStr ? parseDims(vendorDimStr) : null;
 

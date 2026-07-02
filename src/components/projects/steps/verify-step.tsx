@@ -98,7 +98,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
         <div>
           <h2 className="text-lg font-semibold">Marketplace Verification</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Compare catalog data against live Amazon &amp; Walmart listings — title, images, description &amp; dimensions
+            Compare catalog data against live {marketplaceLabel} listings — title, images, description &amp; dimensions
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -163,7 +163,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
           </div>
           <p className="text-xs text-muted-foreground mb-6">
             {marketplace === "amazon_us" ? (
-              <><span className="font-medium text-green-700">{verifiedCount} SKU{verifiedCount !== 1 ? "s" : ""}</span> will be included in the Amazon export file (Matched only). Warnings, mismatches and discontinued items are excluded.</>
+              <><span className="font-medium text-green-700">{verifiedCount} SKU{verifiedCount !== 1 ? "s" : ""}</span> will be included in the {marketplaceLabel} export file (Matched only). Warnings, mismatches and discontinued items are excluded.</>
             ) : (
               <><span className="font-medium text-green-700">{verifiedCount + warningCount + notFoundCount} SKU{(verifiedCount + warningCount + notFoundCount) !== 1 ? "s" : ""}</span> will be included in the export file (Match + Warning + Not Found). Mismatches and discontinued items are excluded.</>
             )}
