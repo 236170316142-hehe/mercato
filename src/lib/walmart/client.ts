@@ -51,26 +51,72 @@ export type WalmartItem = {
   brand?: string;
 };
 
+function extractItems(data: Record<string, unknown>): WalmartItem[] {
+  // Handle multiple response shapes from the Walmart Marketplace API
+  const candidates = [
+    data.items,
+    data.itemResponse,
+    data.data,
+    (data.list as Record<string, unknown> | null)?.items,
+    (data.list as Record<string, unknown> | null)?.ItemResponse,
+  ];
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.length > 0) return c as WalmartItem[];
+  }
+  return [];
+}
+
 export async function searchWalmartByUpc(upc: string): Promise<WalmartItem | null> {
   const token = await getToken();
-  const res = await fetch(
+
+  // Strategy 1: catalog search with PRODUCT_ID searchType (UPC lookup)
+  const r1 = await fetch(
+    `${BASE}/items/catalog/search?query=${encodeURIComponent(upc)}&searchType=PRODUCT_ID&productIdType=UPC&startIndex=0&count=5`,
+    { headers: baseHeaders(token) }
+  );
+  if (r1.ok) {
+    const d = await r1.json() as Record<string, unknown>;
+    const items = extractItems(d);
+    const match = items.find((i) => i.upc === upc) ?? items[0] ?? null;
+    if (match) return match;
+  }
+
+  // Strategy 2: text search with the UPC string
+  const r2 = await fetch(
     `${BASE}/items/walmart/search?query=${encodeURIComponent(upc)}&searchType=TEXT&startIndex=0&count=5`,
     { headers: baseHeaders(token) }
   );
-  if (!res.ok) return null;
-  const data = await res.json();
-  const items: WalmartItem[] = data.items ?? data.itemResponse ?? [];
-  return items.find((i) => i.upc === upc) ?? items[0] ?? null;
+  if (r2.ok) {
+    const d = await r2.json() as Record<string, unknown>;
+    const items = extractItems(d);
+    // Only accept if the UPC actually matches — prevents wrong product returns
+    return items.find((i) => i.upc === upc) ?? null;
+  }
+
+  return null;
 }
 
 export async function searchWalmartByName(query: string): Promise<WalmartItem | null> {
   const token = await getToken();
-  const res = await fetch(
+
+  // catalog/search endpoint first
+  const r1 = await fetch(
+    `${BASE}/items/catalog/search?query=${encodeURIComponent(query)}&searchType=TEXT&startIndex=0&count=10`,
+    { headers: baseHeaders(token) }
+  );
+  if (r1.ok) {
+    const d = await r1.json() as Record<string, unknown>;
+    const items = extractItems(d);
+    if (items.length > 0) return items[0];
+  }
+
+  // Fallback to items/walmart/search
+  const r2 = await fetch(
     `${BASE}/items/walmart/search?query=${encodeURIComponent(query)}&searchType=TEXT&startIndex=0&count=10`,
     { headers: baseHeaders(token) }
   );
-  if (!res.ok) return null;
-  const data = await res.json();
-  const items: WalmartItem[] = data.items ?? data.itemResponse ?? [];
+  if (!r2.ok) return null;
+  const d = await r2.json() as Record<string, unknown>;
+  const items = extractItems(d);
   return items[0] ?? null;
 }

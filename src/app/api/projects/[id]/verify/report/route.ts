@@ -11,7 +11,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const project = await prisma.project.findUnique({
     where: { id },
-    include: {
+    select: {
+      id: true,
+      userId: true,
+      marketplace: true,
       products: {
         select: {
           id: true, name: true, vendorSku: true, upc: true, brand: true,
@@ -27,10 +30,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   // Build CSV
   const FIELD_ORDER = ["title", "brand", "images", "description", "dimensions"];
+  const mpLabel =
+    project.marketplace === "walmart" ? "Walmart" :
+    project.marketplace === "amazon_us" ? "Amazon US" :
+    "Amazon";
 
   const header = [
     "SKU", "UPC", "Product Name", "Overall Status",
-    ...FIELD_ORDER.flatMap(f => [`${capitalize(f)} (Catalog)`, `${capitalize(f)} (Amazon)`, `${capitalize(f)} Result`]),
+    ...FIELD_ORDER.flatMap(f => [`${capitalize(f)} (Catalog)`, `${capitalize(f)} (${mpLabel})`, `${capitalize(f)} Result`]),
   ].map(h => `"${h}"`).join(",");
 
   const rows = project.products.map((p) => {

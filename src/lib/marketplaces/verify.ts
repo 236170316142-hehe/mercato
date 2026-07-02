@@ -305,27 +305,32 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
 async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
   const { searchWalmartByUpc, searchWalmartByName } = await import("@/lib/walmart/client");
   const CONCURRENCY = 3;
+
+  // Mark discontinued products immediately
+  const discontinuedResults: VerifyResult[] = products
+    .filter((p) => isDiscontinuedInVendorData(p.vendorData))
+    .map((p) => ({ productId: p.id, status: "discontinued" as const, fields: [], liveData: {} }));
+  const activeProducts = products.filter((p) => !isDiscontinuedInVendorData(p.vendorData));
+
   const results: VerifyResult[] = [];
 
-  for (let i = 0; i < products.length; i += CONCURRENCY) {
-    const batch = products.slice(i, i + CONCURRENCY);
+  for (let i = 0; i < activeProducts.length; i += CONCURRENCY) {
+    const batch = activeProducts.slice(i, i + CONCURRENCY);
     const settled = await Promise.allSettled(batch.map(async (p) => {
       let item = null;
 
-      // Strategy 1: UPC lookup
       if (p.upc) {
+        // Has a UPC — do UPC-based lookup only. If Walmart doesn't carry it by UPC,
+        // a keyword search would match random products with the same name (e.g. "Juniper" plant
+        // instead of "Juniper" quilt set). Better to return not_found than a wrong match.
         item = await searchWalmartByUpc(p.upc).catch(() => null);
-      }
-
-      // Strategy 2: Name + brand search
-      if (!item) {
+      } else {
+        // No UPC — try brand + name, then name alone
         const query = [p.brand, p.name].filter(Boolean).join(" ").trim();
         item = await searchWalmartByName(query).catch(() => null);
-      }
-
-      // Strategy 3: Name only
-      if (!item && p.name) {
-        item = await searchWalmartByName(p.name).catch(() => null);
+        if (!item && p.name) {
+          item = await searchWalmartByName(p.name).catch(() => null);
+        }
       }
 
       if (!item) return notFound(p.id);
@@ -346,7 +351,7 @@ async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
     }
   }
 
-  return results;
+  return [...discontinuedResults, ...results];
 }
 
 // ── BestBuy ───────────────────────────────────────────────────────────────────

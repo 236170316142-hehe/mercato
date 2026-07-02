@@ -64,6 +64,12 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const hasResults = products.some((p) => p.verifyStatus);
 
+  const marketplaceLabel =
+    marketplace === "walmart" ? "Walmart" :
+    marketplace === "amazon_us" ? "Amazon US" :
+    marketplace === "amazon" ? "Amazon" :
+    marketplace.charAt(0).toUpperCase() + marketplace.slice(1);
+
   const visibleProducts = activeFilter
     ? products.filter((p) => (p.verifyStatus ?? "not_found") === activeFilter)
     : products;
@@ -175,7 +181,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
           <ShieldCheck className="w-12 h-12 text-muted-foreground mb-4" />
           <h3 className="text-base font-semibold mb-1">Ready to verify</h3>
           <p className="text-sm text-muted-foreground max-w-sm">
-            We&apos;ll check each product against the live Amazon listing and flag any discrepancies in title, images, description and dimensions.
+            We&apos;ll check each product against the live {marketplaceLabel} listing and flag any discrepancies in title, images, description and dimensions.
           </p>
         </div>
       )}
@@ -183,7 +189,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
       {loading && (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <Loader2 className="w-10 h-10 animate-spin text-primary mb-4" />
-          <p className="text-sm font-medium">Verifying products against Amazon…</p>
+          <p className="text-sm font-medium">Verifying products against {marketplaceLabel}…</p>
           <p className="text-xs text-muted-foreground mt-1">This may take a few minutes</p>
         </div>
       )}
@@ -263,7 +269,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                           <p className="font-medium line-clamp-2">{f.stored}</p>
                         </div>
                         <div>
-                          <p className="text-muted-foreground mb-0.5">Amazon</p>
+                          <p className="text-muted-foreground mb-0.5">{marketplaceLabel}</p>
                           <p className="font-medium line-clamp-2">{f.live}</p>
                         </div>
                       </div>
