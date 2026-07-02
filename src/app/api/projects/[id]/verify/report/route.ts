@@ -51,11 +51,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return cells.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",");
   });
 
-  const csv = [header, ...rows].join("\n");
+  const csv = "﻿" + [header, ...rows].join("\n");
 
   return new Response(csv, {
     headers: {
-      "Content-Type": "text/csv",
+      "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="verification-report-${id}.csv"`,
     },
   });
