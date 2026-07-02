@@ -333,7 +333,7 @@ async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
       const priceInCents = item.price != null ? Math.round(item.price * 100) : null;
       return compareToLive(
         p,
-        item.productName ?? null,
+        item.productName ?? "",
         item.brand ?? null,
         priceInCents,
         item as unknown as Record<string, unknown>,
