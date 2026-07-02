@@ -77,8 +77,9 @@ async function generateXlsx(products: Product[], columns: Column[], sheetName: s
 function getProductField(p: Product, key: string): unknown {
   const nk = key.toLowerCase().replace(/[\s_\-]+/g, "_").trim();
   const vd = p.vendorData as Record<string, unknown> | null;
+  const ld = p.liveData as Record<string, unknown> | null;
 
-  // Look up a value from vendorData by any of the given normalized aliases
+  // Look up from vendorData by any of the given normalized aliases
   const fromVendor = (...aliases: string[]): unknown => {
     if (!vd) return undefined;
     for (const alias of aliases) {
@@ -90,27 +91,42 @@ function getProductField(p: Product, key: string): unknown {
     return undefined;
   };
 
-  // Resolve price: product field first, then any vendor column that looks like a price
+  // Look up from liveData (Keepa NormalizedProduct)
+  const fromLive = (field: string): unknown => ld?.[field] ?? undefined;
+
+  // Keepa prices are in cents — convert to dollars
+  const livePrice = typeof ld?.price === "number" && ld.price > 0 ? ld.price / 100 : null;
+  // Verified ASIN from Keepa
+  const verifiedAsin = typeof ld?.asin === "string" ? ld.asin : null;
+
+  // Resolve price: product DB field → vendor data → Keepa live price
   const price = p.price != null
     ? p.price
-    : (fromVendor("price", "retail_price", "unit_price", "cost", "msrp", "list_price") ?? "");
+    : (fromVendor("price", "retail_price", "unit_price", "cost", "msrp", "list_price") ?? livePrice ?? "");
 
   const coreMap: Record<string, unknown> = {
-    // Name / Title
-    name: p.name, title: p.name, product_name: p.name, item_name: p.name,
+    // Name / Title — prefer vendor name, fall back to verified Amazon title
+    name: p.name || fromLive("title") || "",
+    title: p.name || fromLive("title") || "",
+    product_name: p.name || fromLive("title") || "",
+    item_name: p.name || fromLive("title") || "",
 
     // SKU
     sku: p.vendorSku, vendor_sku: p.vendorSku, seller_sku: p.vendorSku, merchant_sku: p.vendorSku,
 
-    // IDs
-    upc: p.upc, ean: p.upc, barcode: p.upc, gtin: p.upc,
-    asin: p.asin, merchant_suggested_asin: p.asin ?? "",
+    // IDs — fall back to liveData (verified ASIN from Keepa) when DB field is null
+    upc: p.upc ?? fromVendor("upc", "ean", "barcode", "gtin", "product_id", "item_number") ?? "",
+    ean: p.upc ?? fromVendor("ean", "upc", "barcode", "gtin") ?? "",
+    barcode: p.upc ?? fromVendor("barcode", "upc", "ean") ?? "",
+    gtin: p.upc ?? fromVendor("gtin", "upc", "ean") ?? "",
+    asin: p.asin ?? verifiedAsin ?? "",
+    merchant_suggested_asin: p.asin ?? verifiedAsin ?? "",
 
     // External/Product ID — both Amazon naming conventions
-    external_product_id: p.upc ?? p.asin ?? "",
-    external_product_id_type: p.upc ? "UPC" : p.asin ? "ASIN" : "",
-    product_id: p.upc ?? p.asin ?? "",
-    product_id_type: p.upc ? "UPC" : p.asin ? "ASIN" : "",
+    external_product_id: p.upc ?? fromVendor("upc", "ean", "barcode") ?? p.asin ?? verifiedAsin ?? "",
+    external_product_id_type: (p.upc || fromVendor("upc", "ean", "barcode")) ? "UPC" : (p.asin || verifiedAsin) ? "ASIN" : "",
+    product_id: p.upc ?? fromVendor("upc", "ean", "barcode", "product_id") ?? p.asin ?? verifiedAsin ?? "",
+    product_id_type: (p.upc || fromVendor("upc", "ean", "barcode")) ? "UPC" : (p.asin || verifiedAsin) ? "ASIN" : "",
 
     // Listing actions
     listing_action: "Add",
@@ -118,11 +134,14 @@ function getProductField(p: Product, key: string): unknown {
     update_delete: "PartialUpdate",
     operation_type: "Update",
 
-    // Brand / Manufacturer
-    brand: p.brand, brand_name: p.brand, manufacturer: p.brand,
+    // Brand / Manufacturer — fall back to verified Amazon brand
+    brand: p.brand || fromLive("brand") || "",
+    brand_name: p.brand || fromLive("brand") || "",
+    manufacturer: p.brand || fromLive("brand") || "",
 
-    // Description & bullets
-    description: p.description, product_description: p.description ?? "",
+    // Description & bullets — fall back to verified Amazon description
+    description: p.description || fromLive("description") || "",
+    product_description: p.description || fromLive("description") || "",
     bullet_point1: fromVendor("bullet_point1", "bullet1", "feature1", "key_feature_1") ?? "",
     bullet_point2: fromVendor("bullet_point2", "bullet2", "feature2", "key_feature_2") ?? "",
     bullet_point3: fromVendor("bullet_point3", "bullet3", "feature3", "key_feature_3") ?? "",
@@ -145,9 +164,10 @@ function getProductField(p: Product, key: string): unknown {
     quantity: fromVendor("quantity", "qty", "stock", "inventory", "available_qty", "on_hand") ?? "1",
     fulfillment_latency: fromVendor("lead_time", "fulfillment_latency", "handling_time") ?? "",
 
-    // Image
-    image_url: p.imageUrl, imageurl: p.imageUrl,
-    main_image_url: p.imageUrl ?? "",
+    // Image — fall back to verified Amazon image
+    image_url: p.imageUrl || fromLive("image") || "",
+    imageurl: p.imageUrl || fromLive("image") || "",
+    main_image_url: p.imageUrl || fromLive("image") || "",
     other_image_url1: fromVendor("image_url2", "other_image_url1", "alternate_image1") ?? "",
 
     // Category

@@ -59,17 +59,24 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       for (let j = 0; j < processed.length; j += 10) {
         const sub = processed.slice(j, j + 10);
         await Promise.all(
-          sub.map((r) =>
-            prisma.product.update({
+          sub.map((r) => {
+            const ld = r.liveData as Record<string, unknown> | null;
+            const verifiedAsin = typeof ld?.asin === "string" ? ld.asin : null;
+            // Keepa prices are in cents (e.g. 1999 = $19.99)
+            const verifiedPrice = typeof ld?.price === "number" && ld.price > 0
+              ? ld.price / 100 : null;
+            return prisma.product.update({
               where: { id: r.productId },
               data: {
                 verifyStatus: r.status,
                 verifyFields: r.fields as object[],
                 liveData: r.liveData as object,
                 verifiedAt: new Date(),
+                ...(verifiedAsin ? { asin: verifiedAsin } : {}),
+                ...(verifiedPrice ? { price: verifiedPrice } : {}),
               },
-            })
-          )
+            });
+          })
         );
       }
 
