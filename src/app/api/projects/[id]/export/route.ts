@@ -28,7 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   await prisma.project.update({ where: { id }, data: { status: "exporting" } });
 
   try {
-    const zipBuffer = await generateExportZip(project.products, templates);
+    const zipBuffer = await generateExportZip(project.products, templates, project.marketplace);
     await prisma.project.update({ where: { id }, data: { status: "done" } });
 
     return new Response(zipBuffer as unknown as BodyInit, {

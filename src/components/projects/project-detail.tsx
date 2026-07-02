@@ -45,6 +45,8 @@ const STEPS = [
   { key: "done",         label: "Export",       icon: Download,    desc: "Generate & download ZIP" },
 ];
 
+const AMAZON_SKIP_CATEGORIZE = true;
+
 
 function stepIndex(status: string) {
   if (["verifying", "verified"].includes(status)) return 1;
@@ -193,6 +195,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         <div className="flex items-center gap-0">
           {STEPS.map((step, idx) => {
             const Icon = step.icon;
+            const isAmazonCategorize = AMAZON_SKIP_CATEGORIZE && project.marketplace === "amazon" && idx === 2;
             const done = currentStepIndex > idx;
             const active = activeStep === idx;
             const current = currentStepIndex === idx;
@@ -201,23 +204,24 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
             return (
               <div key={step.key} className="flex items-center flex-1 last:flex-none">
                 <button
-                  onClick={() => idx <= currentStepIndex && setActiveStep(idx)}
-                  disabled={idx > currentStepIndex}
+                  onClick={() => !isAmazonCategorize && idx <= currentStepIndex && setActiveStep(idx)}
+                  disabled={isAmazonCategorize || idx > currentStepIndex}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 rounded-xl transition-all",
                     active ? "bg-primary/10" : "hover:bg-accent",
-                    idx > currentStepIndex && "opacity-40 cursor-not-allowed"
+                    (isAmazonCategorize || idx > currentStepIndex) && "opacity-40 cursor-not-allowed"
                   )}
                 >
                   <div className={cn(
                     "w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-colors",
+                    isAmazonCategorize ? "bg-muted text-muted-foreground" :
                     done ? "bg-primary text-primary-foreground" :
                     active ? "bg-primary text-primary-foreground" :
                     "bg-muted text-muted-foreground"
                   )}>
                     {isLoading ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : done ? (
+                    ) : done && !isAmazonCategorize ? (
                       <CheckCircle2 className="w-4 h-4" />
                     ) : (
                       <Icon className="w-4 h-4" />
@@ -227,7 +231,9 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
                     <p className={cn("text-xs font-semibold", active ? "text-primary" : done ? "text-foreground" : "text-muted-foreground")}>
                       {step.label}
                     </p>
-                    <p className="text-xs text-muted-foreground">{step.desc}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {isAmazonCategorize ? "Not required for Amazon" : step.desc}
+                    </p>
                   </div>
                 </button>
                 {idx < STEPS.length - 1 && (
@@ -264,7 +270,8 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
             onRunVerify={runVerify}
             onApproveProduct={handleApproveProduct}
             onMarkDiscontinued={handleMarkDiscontinued}
-            onNext={() => setActiveStep(2)}
+            marketplace={project.marketplace}
+            onNext={() => setActiveStep(project.marketplace === "amazon" ? 3 : 2)}
           />
         )}
         {activeStep === 2 && (

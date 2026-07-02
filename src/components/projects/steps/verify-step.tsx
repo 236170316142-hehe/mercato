@@ -41,8 +41,9 @@ const FIELD_SEVERITY = {
   mismatch: "text-red-600",
 };
 
-export function VerifyStep({ projectId, products, verifiedCount, warningCount, mismatchCount, notFoundCount, discontinuedCount, loading, projectStatus, onRunVerify, onApproveProduct, onMarkDiscontinued, onNext }: {
+export function VerifyStep({ projectId, marketplace, products, verifiedCount, warningCount, mismatchCount, notFoundCount, discontinuedCount, loading, projectStatus, onRunVerify, onApproveProduct, onMarkDiscontinued, onNext }: {
   projectId: string;
+  marketplace: string;
   products: Product[];
   verifiedCount: number;
   warningCount: number;
@@ -155,7 +156,11 @@ export function VerifyStep({ projectId, products, verifiedCount, warningCount, m
             })}
           </div>
           <p className="text-xs text-muted-foreground mb-6">
-            <span className="font-medium text-green-700">{verifiedCount + warningCount + notFoundCount} SKU{(verifiedCount + warningCount + notFoundCount) !== 1 ? "s" : ""}</span> will be included in the export file (Match + Warning + Not Found). Mismatches and discontinued items are excluded.
+            {marketplace === "amazon" ? (
+              <><span className="font-medium text-green-700">{verifiedCount} SKU{verifiedCount !== 1 ? "s" : ""}</span> will be included in the Amazon export file (Matched only). Warnings, mismatches and discontinued items are excluded.</>
+            ) : (
+              <><span className="font-medium text-green-700">{verifiedCount + warningCount + notFoundCount} SKU{(verifiedCount + warningCount + notFoundCount) !== 1 ? "s" : ""}</span> will be included in the export file (Match + Warning + Not Found). Mismatches and discontinued items are excluded.</>
+            )}
             {activeFilter && (
               <> &nbsp;·&nbsp; Showing <span className="font-medium">{visibleProducts.length}</span> {activeFilter.replace("_", " ")} product{visibleProducts.length !== 1 ? "s" : ""}.{" "}
                 <button onClick={() => setActiveFilter(null)} className="underline hover:no-underline">Clear filter</button>

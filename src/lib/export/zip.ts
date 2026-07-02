@@ -7,15 +7,17 @@ type Column = { key: string; label: string; required?: boolean };
 export async function generateExportZip(
   products: Product[],
   templates: ExportTemplate[],
+  marketplace = "amazon",
 ): Promise<Buffer> {
   const zip = new JSZip();
 
   for (const template of templates) {
     const columns = template.columns as Column[];
-    // Only include products that passed verification; if not yet verified, include all.
     const anyVerified = products.some((p) => p.verifyStatus != null);
     const passedVerification = anyVerified
-      ? products.filter((p) => p.verifyStatus === "ok" || p.verifyStatus === "warning" || p.verifyStatus === "not_found")
+      ? marketplace === "amazon"
+        ? products.filter((p) => p.verifyStatus === "ok")
+        : products.filter((p) => p.verifyStatus === "ok" || p.verifyStatus === "warning" || p.verifyStatus === "not_found")
       : products;
     // Further filter by template's category scope
     const filtered = template.category

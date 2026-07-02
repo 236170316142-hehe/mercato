@@ -34,7 +34,15 @@ export function ExportStep({ projectId, marketplace, products, verifiedCount, pr
   useEffect(() => {
     fetch(`/api/templates?marketplace=${marketplace}`)
       .then((r) => r.json())
-      .then((data) => { setTemplates(data.templates ?? []); setFetching(false); })
+      .then((data) => {
+        const tpls: Template[] = data.templates ?? [];
+        setTemplates(tpls);
+        // Auto-select all templates for Amazon (single template workflow)
+        if (marketplace === "amazon" && tpls.length > 0) {
+          setSelected(tpls.map((t) => t.id));
+        }
+        setFetching(false);
+      })
       .catch(() => setFetching(false));
   }, [marketplace]);
 
