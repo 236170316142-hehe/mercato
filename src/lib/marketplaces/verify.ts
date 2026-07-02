@@ -41,7 +41,7 @@ export async function verifyProducts(
     case "amazon":
       return verifyAmazon(products);
     case "walmart":
-      return verifySerpApi("walmart", products);
+      return verifyWalmart(products);
     default:
       // Only Amazon and Walmart are verified; all others pass through as ok.
       return products.map((p) => ({
@@ -298,6 +298,55 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     ?? { productId: p.id, status: "skipped" as const, fields: [] as FieldResult[], liveData: {} }
   );
   return [...discontinuedResults, ...activeResults];
+}
+
+// ── Walmart (Marketplace API) ─────────────────────────────────────────────────
+
+async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
+  const { searchWalmartByUpc, searchWalmartByName } = await import("@/lib/walmart/client");
+  const CONCURRENCY = 3;
+  const results: VerifyResult[] = [];
+
+  for (let i = 0; i < products.length; i += CONCURRENCY) {
+    const batch = products.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(batch.map(async (p) => {
+      let item = null;
+
+      // Strategy 1: UPC lookup
+      if (p.upc) {
+        item = await searchWalmartByUpc(p.upc).catch(() => null);
+      }
+
+      // Strategy 2: Name + brand search
+      if (!item) {
+        const query = [p.brand, p.name].filter(Boolean).join(" ").trim();
+        item = await searchWalmartByName(query).catch(() => null);
+      }
+
+      // Strategy 3: Name only
+      if (!item && p.name) {
+        item = await searchWalmartByName(p.name).catch(() => null);
+      }
+
+      if (!item) return notFound(p.id);
+
+      const priceInCents = item.price != null ? Math.round(item.price * 100) : null;
+      return compareToLive(
+        p,
+        item.productName ?? null,
+        item.brand ?? null,
+        priceInCents,
+        item as unknown as Record<string, unknown>,
+      );
+    }));
+
+    for (let j = 0; j < settled.length; j++) {
+      const s = settled[j];
+      results.push(s.status === "fulfilled" ? s.value : notFound(batch[j].id));
+    }
+  }
+
+  return results;
 }
 
 // ── BestBuy ───────────────────────────────────────────────────────────────────
