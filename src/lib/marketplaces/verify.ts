@@ -159,7 +159,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       byTerm.get(term)!.push(p);
     }
 
-    const CONCURRENCY = 8;
+    const CONCURRENCY = 2;
     const entries = [...byTerm.entries()];
     for (let i = 0; i < entries.length; i += CONCURRENCY) {
       const left = getLastTokenInfo()?.tokensLeft;
