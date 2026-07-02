@@ -7,9 +7,10 @@ import { Upload, FileSpreadsheet, Loader2, X, CheckCircle2 } from "lucide-react"
 import { cn } from "@/lib/utils";
 
 const MARKETPLACES = [
-  { id: "amazon", label: "Amazon", emoji: "🟠", desc: "Via Keepa API" },
-  { id: "bestbuy", label: "Best Buy", emoji: "🔵", desc: "Official API" },
+  { id: "amazon_us", label: "Amazon US", emoji: "🟠", desc: "Keepa · No category step" },
+  { id: "amazon", label: "Amazon", emoji: "🟧", desc: "Via Keepa API" },
   { id: "walmart", label: "Walmart", emoji: "🔷", desc: "Affiliate API" },
+  { id: "bestbuy", label: "Best Buy", emoji: "🔵", desc: "Official API" },
   { id: "temu", label: "Temu", emoji: "🟣", desc: "Via SerpAPI" },
   { id: "mathis", label: "Mathis", emoji: "🟤", desc: "Via SerpAPI" },
   { id: "sears", label: "Sears", emoji: "⚫", desc: "Via SerpAPI" },

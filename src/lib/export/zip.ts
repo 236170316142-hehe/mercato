@@ -15,7 +15,7 @@ export async function generateExportZip(
     const columns = template.columns as Column[];
     const anyVerified = products.some((p) => p.verifyStatus != null);
     const passedVerification = anyVerified
-      ? marketplace === "amazon"
+      ? marketplace === "amazon_us"
         ? products.filter((p) => p.verifyStatus === "ok")
         : products.filter((p) => p.verifyStatus === "ok" || p.verifyStatus === "warning" || p.verifyStatus === "not_found")
       : products;

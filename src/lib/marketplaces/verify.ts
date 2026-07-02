@@ -37,6 +37,7 @@ export async function verifyProducts(
   products: Product[],
 ): Promise<VerifyResult[]> {
   switch (marketplace) {
+    case "amazon_us":
     case "amazon":
       return verifyAmazon(products);
     case "walmart":

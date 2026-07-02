@@ -14,7 +14,7 @@ type Template = {
   createdAt: Date | string;
 };
 
-const MARKETPLACES = ["amazon", "bestbuy", "walmart", "temu", "mathis", "sears"];
+const MARKETPLACES = ["amazon_us", "amazon", "walmart", "bestbuy", "temu", "mathis", "sears"];
 
 type ColumnDef = { key: string; label: string };
 

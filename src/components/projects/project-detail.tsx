@@ -56,12 +56,12 @@ function stepIndex(status: string) {
 }
 
 const MARKETPLACE_LABELS: Record<string, string> = {
-  amazon: "Amazon", bestbuy: "Best Buy", walmart: "Walmart",
+  amazon_us: "Amazon US", amazon: "Amazon", bestbuy: "Best Buy", walmart: "Walmart",
   temu: "Temu", mathis: "Mathis", sears: "Sears",
 };
 
 const MARKETPLACE_EMOJI: Record<string, string> = {
-  amazon: "🟠", bestbuy: "🔵", walmart: "🔷", temu: "🟣", mathis: "🟤", sears: "⚫",
+  amazon_us: "🟠", amazon: "🟧", bestbuy: "🔵", walmart: "🔷", temu: "🟣", mathis: "🟤", sears: "⚫",
 };
 
 export function ProjectDetail({ project: initial, products: initialProducts }: {
@@ -195,7 +195,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         <div className="flex items-center gap-0">
           {STEPS.map((step, idx) => {
             const Icon = step.icon;
-            const isAmazonCategorize = AMAZON_SKIP_CATEGORIZE && project.marketplace === "amazon" && idx === 2;
+            const isAmazonCategorize = AMAZON_SKIP_CATEGORIZE && project.marketplace === "amazon_us" && idx === 2;
             const done = currentStepIndex > idx;
             const active = activeStep === idx;
             const current = currentStepIndex === idx;
@@ -271,7 +271,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
             onApproveProduct={handleApproveProduct}
             onMarkDiscontinued={handleMarkDiscontinued}
             marketplace={project.marketplace}
-            onNext={() => setActiveStep(project.marketplace === "amazon" ? 3 : 2)}
+            onNext={() => setActiveStep(project.marketplace === "amazon_us" ? 3 : 2)}
           />
         )}
         {activeStep === 2 && (

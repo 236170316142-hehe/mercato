@@ -38,7 +38,7 @@ export function ExportStep({ projectId, marketplace, products, verifiedCount, pr
         const tpls: Template[] = data.templates ?? [];
         setTemplates(tpls);
         // Auto-select all templates for Amazon (single template workflow)
-        if (marketplace === "amazon" && tpls.length > 0) {
+        if (marketplace === "amazon_us" && tpls.length > 0) {
           setSelected(tpls.map((t) => t.id));
         }
         setFetching(false);
