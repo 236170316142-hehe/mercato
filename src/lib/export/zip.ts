@@ -75,84 +75,96 @@ async function generateXlsx(products: Product[], columns: Column[], sheetName: s
 }
 
 function getProductField(p: Product, key: string): unknown {
-  // Normalize key: lowercase, collapse whitespace/hyphens/underscores
   const nk = key.toLowerCase().replace(/[\s_\-]+/g, "_").trim();
+  const vd = p.vendorData as Record<string, unknown> | null;
 
-  // Core product fields — short keys and full Amazon column name variants
+  // Look up a value from vendorData by any of the given normalized aliases
+  const fromVendor = (...aliases: string[]): unknown => {
+    if (!vd) return undefined;
+    for (const alias of aliases) {
+      const na = alias.toLowerCase().replace(/[\s_\-]+/g, "_").trim();
+      if (alias in vd) return vd[alias];
+      const hit = Object.keys(vd).find((k) => k.toLowerCase().replace(/[\s_\-]+/g, "_").trim() === na);
+      if (hit !== undefined) return vd[hit];
+    }
+    return undefined;
+  };
+
+  // Resolve price: product field first, then any vendor column that looks like a price
+  const price = p.price != null
+    ? p.price
+    : (fromVendor("price", "retail_price", "unit_price", "cost", "msrp", "list_price") ?? "");
+
   const coreMap: Record<string, unknown> = {
     // Name / Title
-    name: p.name,
-    title: p.name,
-    product_name: p.name,
-    item_name: p.name,
-    feed_product_type: p.marketplaceCategory ?? "",
+    name: p.name, title: p.name, product_name: p.name, item_name: p.name,
 
     // SKU
-    sku: p.vendorSku,
-    vendor_sku: p.vendorSku,
-    seller_sku: p.vendorSku,
-    merchant_sku: p.vendorSku,
+    sku: p.vendorSku, vendor_sku: p.vendorSku, seller_sku: p.vendorSku, merchant_sku: p.vendorSku,
 
     // IDs
-    upc: p.upc,
-    ean: p.upc,
-    barcode: p.upc,
-    gtin: p.upc,
-    asin: p.asin,
-    merchant_suggested_asin: p.asin ?? "",
+    upc: p.upc, ean: p.upc, barcode: p.upc, gtin: p.upc,
+    asin: p.asin, merchant_suggested_asin: p.asin ?? "",
 
-    // External Product ID (Amazon ListingLoader convention)
+    // External/Product ID — both Amazon naming conventions
     external_product_id: p.upc ?? p.asin ?? "",
     external_product_id_type: p.upc ? "UPC" : p.asin ? "ASIN" : "",
+    product_id: p.upc ?? p.asin ?? "",
+    product_id_type: p.upc ? "UPC" : p.asin ? "ASIN" : "",
 
-    // Listing action for Amazon flat files (always "Add" for new/update)
+    // Listing actions
     listing_action: "Add",
+    add_delete: "a",
     update_delete: "PartialUpdate",
     operation_type: "Update",
 
     // Brand / Manufacturer
-    brand: p.brand,
-    brand_name: p.brand,
-    manufacturer: p.brand,
+    brand: p.brand, brand_name: p.brand, manufacturer: p.brand,
 
-    // Description
-    description: p.description,
-    product_description: p.description ?? "",
-    bullet_point1: "",
-    bullet_point2: "",
-    bullet_point3: "",
-    bullet_point4: "",
-    bullet_point5: "",
+    // Description & bullets
+    description: p.description, product_description: p.description ?? "",
+    bullet_point1: fromVendor("bullet_point1", "bullet1", "feature1", "key_feature_1") ?? "",
+    bullet_point2: fromVendor("bullet_point2", "bullet2", "feature2", "key_feature_2") ?? "",
+    bullet_point3: fromVendor("bullet_point3", "bullet3", "feature3", "key_feature_3") ?? "",
+    bullet_point4: fromVendor("bullet_point4", "bullet4", "feature4") ?? "",
+    bullet_point5: fromVendor("bullet_point5", "bullet5", "feature5") ?? "",
 
-    // Price
-    price: p.price,
-    standard_price: p.price ?? "",
-    sale_price: "",
-    msrp: p.price ?? "",
+    // Price variants
+    price,
+    standard_price: price,
+    msrp: fromVendor("msrp", "list_price") ?? price,
+    sale_price: fromVendor("sale_price", "promo_price") ?? "",
+    minimum_seller_allowed_price: fromVendor("min_price", "minimum_price", "map_price") ?? price,
+    maximum_seller_allowed_price: fromVendor("max_price", "maximum_price") ?? "",
+
+    // Condition & quantity
+    item_condition: "New",
+    condition: "New",
+    condition_type: "New",
+    condition_note: "",
+    quantity: fromVendor("quantity", "qty", "stock", "inventory", "available_qty", "on_hand") ?? "1",
+    fulfillment_latency: fromVendor("lead_time", "fulfillment_latency", "handling_time") ?? "",
 
     // Image
-    image_url: p.imageUrl,
-    imageurl: p.imageUrl,
+    image_url: p.imageUrl, imageurl: p.imageUrl,
     main_image_url: p.imageUrl ?? "",
-    other_image_url1: "",
+    other_image_url1: fromVendor("image_url2", "other_image_url1", "alternate_image1") ?? "",
 
     // Category
-    category: p.marketplaceCategory,
-    category_path: p.categoryPath,
+    feed_product_type: p.marketplaceCategory ?? "",
+    category: p.marketplaceCategory, category_path: p.categoryPath,
     item_type: p.marketplaceCategory ?? "",
     item_type_name: p.categoryPath ?? p.marketplaceCategory ?? "",
     browse_node: "",
 
-    // Misc Amazon fields we leave blank
-    unspsc_code: "",
-    national_stock_number: "",
+    // Misc
     merchant_catalog_number: p.vendorSku ?? "",
+    unspsc_code: "", national_stock_number: "",
   };
 
   if (nk in coreMap) return coreMap[nk];
 
-  // Fall back to vendorData (raw spreadsheet columns) — exact then case-insensitive
-  const vd = p.vendorData as Record<string, unknown> | null;
+  // Fall back to vendorData — exact match first, then case-insensitive normalized
   if (vd) {
     if (key in vd) return vd[key];
     const match = Object.keys(vd).find(
