@@ -335,13 +335,19 @@ async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
 
       if (!item) return notFound(p.id);
 
-      const priceInCents = item.price != null ? Math.round(item.price * 100) : null;
+      const priceInCents = item.salePrice != null ? Math.round(item.salePrice * 100) : null;
+      // Map Affiliate API fields to what compareToLive expects
+      const liveDataForCompare = {
+        ...item,
+        images: [item.largeImage, item.thumbnailImage].filter(Boolean),
+        description: item.shortDescription ?? item.longDescription ?? "",
+      };
       return compareToLive(
         p,
-        item.productName ?? "",
-        item.brand ?? null,
+        item.name ?? "",
+        item.brandName ?? null,
         priceInCents,
-        item as unknown as Record<string, unknown>,
+        liveDataForCompare as unknown as Record<string, unknown>,
       );
     }));
 
