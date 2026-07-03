@@ -54,11 +54,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Token fetch threw", log });
   }
 
+  const channelType = process.env.WALMART_CHANNEL_TYPE_ID ?? "9ebb75c2-1baf-4238-89f7-59a6c37bc347";
   const headers = {
     "Authorization": `Bearer ${token}`,
     "WM_SEC.ACCESS_TOKEN": token,
     "WM_QOS.CORRELATION_ID": correlationId(),
     "WM_SVC.NAME": "Mercato",
+    "WM_CONSUMER.CHANNEL.TYPE": channelType,
     "Accept": "application/json",
   };
 
