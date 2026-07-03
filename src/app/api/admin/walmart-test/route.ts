@@ -62,33 +62,60 @@ export async function GET(req: NextRequest) {
     "Accept": "application/json",
   };
 
-  // Step 2: POST catalog search by UPC (correct method)
+  // Format A: query params in URL (POST with no body)
   try {
-    const r1 = await fetch(`${BASE}/items/catalog/search`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ query: upc, searchType: "PRODUCT_ID", productIdType: "UPC", count: 5, startIndex: 0 }),
-    });
-    const b1 = await r1.text();
-    log.catalogSearchPOSTStatus = r1.status;
-    log.catalogSearchPOSTBody = b1.slice(0, 2000);
-  } catch (e) {
-    log.catalogSearchPOSTError = String(e);
-  }
+    const urlA = `${BASE}/items/catalog/search?query=${encodeURIComponent(upc)}&searchType=PRODUCT_ID&productIdType=UPC&count=5&startIndex=0`;
+    const rA = await fetch(urlA, { method: "POST", headers });
+    const bA = await rA.text();
+    log.fmtA_url = urlA;
+    log.fmtA_status = rA.status;
+    log.fmtA_body = bA.slice(0, 1000);
+  } catch (e) { log.fmtA_error = String(e); }
 
-  // Step 3: POST catalog search by keyword (product name)
+  // Format B: minimal JSON body — just query
   try {
-    const r2 = await fetch(`${BASE}/items/catalog/search`, {
+    const rB = await fetch(`${BASE}/items/catalog/search`, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ query: "juniper quilt", searchType: "KEYWORD", count: 5, startIndex: 0 }),
+      body: JSON.stringify({ query: upc }),
     });
-    const b2 = await r2.text();
-    log.catalogSearchKeywordStatus = r2.status;
-    log.catalogSearchKeywordBody = b2.slice(0, 2000);
-  } catch (e) {
-    log.catalogSearchKeywordError = String(e);
-  }
+    const bB = await rB.text();
+    log.fmtB_status = rB.status;
+    log.fmtB_body = bB.slice(0, 1000);
+  } catch (e) { log.fmtB_error = String(e); }
+
+  // Format C: queryTerm instead of query
+  try {
+    const rC = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ queryTerm: upc, searchType: "PRODUCT_ID", productIdType: "UPC" }),
+    });
+    const bC = await rC.text();
+    log.fmtC_status = rC.status;
+    log.fmtC_body = bC.slice(0, 1000);
+  } catch (e) { log.fmtC_error = String(e); }
+
+  // Format D: form-encoded body
+  try {
+    const rD = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
+      body: `query=${encodeURIComponent(upc)}&searchType=PRODUCT_ID&productIdType=UPC`,
+    });
+    const bD = await rD.text();
+    log.fmtD_status = rD.status;
+    log.fmtD_body = bD.slice(0, 1000);
+  } catch (e) { log.fmtD_error = String(e); }
+
+  // Format E: keyword search with URL params
+  try {
+    const urlE = `${BASE}/items/catalog/search?query=${encodeURIComponent("juniper quilt GHF")}&searchType=KEYWORD&count=5`;
+    const rE = await fetch(urlE, { method: "POST", headers });
+    const bE = await rE.text();
+    log.fmtE_status = rE.status;
+    log.fmtE_body = bE.slice(0, 1000);
+  } catch (e) { log.fmtE_error = String(e); }
 
   // Step 4: Try GET /v3/items (list seller's own items)
   try {
