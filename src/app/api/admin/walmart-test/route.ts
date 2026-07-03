@@ -62,60 +62,67 @@ export async function GET(req: NextRequest) {
     "Accept": "application/json",
   };
 
-  // Format A: query params in URL (POST with no body)
+  const jsonHeaders = { ...headers, "Content-Type": "application/json" };
+
+  // Format A: queryTerm + filters array with upc
   try {
-    const urlA = `${BASE}/items/catalog/search?query=${encodeURIComponent(upc)}&searchType=PRODUCT_ID&productIdType=UPC&count=5&startIndex=0`;
-    const rA = await fetch(urlA, { method: "POST", headers });
-    const bA = await rA.text();
-    log.fmtA_url = urlA;
+    const rA = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ queryTerm: upc, filters: [{ name: "upc", values: [upc] }] }),
+    });
     log.fmtA_status = rA.status;
-    log.fmtA_body = bA.slice(0, 1000);
+    log.fmtA_body = (await rA.text()).slice(0, 1000);
   } catch (e) { log.fmtA_error = String(e); }
 
-  // Format B: minimal JSON body — just query
+  // Format B: queryTerm + filters with productIdType
   try {
     const rB = await fetch(`${BASE}/items/catalog/search`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ query: upc }),
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ queryTerm: upc, filters: [{ name: "productIdType", values: ["UPC"] }, { name: "productId", values: [upc] }] }),
     });
-    const bB = await rB.text();
     log.fmtB_status = rB.status;
-    log.fmtB_body = bB.slice(0, 1000);
+    log.fmtB_body = (await rB.text()).slice(0, 1000);
   } catch (e) { log.fmtB_error = String(e); }
 
-  // Format C: queryTerm instead of query
+  // Format C: just queryTerm, no other fields
   try {
     const rC = await fetch(`${BASE}/items/catalog/search`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ queryTerm: upc, searchType: "PRODUCT_ID", productIdType: "UPC" }),
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ queryTerm: upc }),
     });
-    const bC = await rC.text();
     log.fmtC_status = rC.status;
-    log.fmtC_body = bC.slice(0, 1000);
+    log.fmtC_body = (await rC.text()).slice(0, 1000);
   } catch (e) { log.fmtC_error = String(e); }
 
-  // Format D: form-encoded body
+  // Format D: queryTerm keyword search (product name)
   try {
     const rD = await fetch(`${BASE}/items/catalog/search`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded" },
-      body: `query=${encodeURIComponent(upc)}&searchType=PRODUCT_ID&productIdType=UPC`,
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ queryTerm: "juniper quilt GHF" }),
     });
-    const bD = await rD.text();
     log.fmtD_status = rD.status;
-    log.fmtD_body = bD.slice(0, 1000);
+    log.fmtD_body = (await rD.text()).slice(0, 1000);
   } catch (e) { log.fmtD_error = String(e); }
 
-  // Format E: keyword search with URL params
+  // Format E: nested query object
   try {
-    const urlE = `${BASE}/items/catalog/search?query=${encodeURIComponent("juniper quilt GHF")}&searchType=KEYWORD&count=5`;
-    const rE = await fetch(urlE, { method: "POST", headers });
-    const bE = await rE.text();
+    const rE = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ query: { queryTerm: upc, type: "PRODUCT_ID" }, filters: { productIdType: "UPC" } }),
+    });
     log.fmtE_status = rE.status;
-    log.fmtE_body = bE.slice(0, 1000);
+    log.fmtE_body = (await rE.text()).slice(0, 1000);
   } catch (e) { log.fmtE_error = String(e); }
+
+  // Format F: idType filter
+  try {
+    const rF = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ queryTerm: upc, idType: "UPC" }),
+    });
+    log.fmtF_status = rF.status;
+    log.fmtF_body = (await rF.text()).slice(0, 1000);
+  } catch (e) { log.fmtF_error = String(e); }
 
   // Step 4: Try GET /v3/items (list seller's own items)
   try {
