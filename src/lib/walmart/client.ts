@@ -11,6 +11,7 @@ function baseHeaders(token: string) {
     "WM_QOS.CORRELATION_ID": correlationId(),
     "WM_SVC.NAME": "Mercato",
     "Accept": "application/json",
+    "Content-Type": "application/json",
   };
 }
 
@@ -42,7 +43,9 @@ async function getToken(): Promise<string> {
 
 export type WalmartItem = {
   itemId?: string;
+  wpid?: string;
   upc?: string;
+  gtin?: string;
   sku?: string;
   productName?: string;
   price?: number;
@@ -51,46 +54,85 @@ export type WalmartItem = {
   brand?: string;
 };
 
+function normalizeItem(raw: Record<string, unknown>): WalmartItem {
+  // Price can be a number or { amount, currency }
+  let price: number | undefined;
+  if (typeof raw.price === "number") price = raw.price;
+  else if (raw.price && typeof (raw.price as Record<string,unknown>).amount === "number") {
+    price = (raw.price as Record<string, number>).amount;
+  }
+  return {
+    itemId: raw.itemId as string | undefined ?? raw.wpid as string | undefined,
+    wpid: raw.wpid as string | undefined,
+    upc: raw.upc as string | undefined,
+    gtin: raw.gtin as string | undefined,
+    sku: raw.sku as string | undefined,
+    productName: raw.productName as string | undefined ?? raw.name as string | undefined,
+    price,
+    imageUrl: raw.imageUrl as string | undefined,
+    shortDescription: raw.shortDescription as string | undefined,
+    brand: raw.brand as string | undefined,
+  };
+}
+
 function extractItems(data: Record<string, unknown>): WalmartItem[] {
-  // Handle multiple response shapes from the Walmart Marketplace API
   const candidates = [
     data.items,
+    data.ItemResponse,
     data.itemResponse,
     data.data,
     (data.list as Record<string, unknown> | null)?.items,
     (data.list as Record<string, unknown> | null)?.ItemResponse,
+    (data.payload as Record<string, unknown> | null)?.items,
   ];
   for (const c of candidates) {
-    if (Array.isArray(c) && c.length > 0) return c as WalmartItem[];
+    if (Array.isArray(c) && c.length > 0) {
+      return c.map((i) => normalizeItem(i as Record<string, unknown>));
+    }
   }
   return [];
 }
 
 export async function searchWalmartByUpc(upc: string): Promise<WalmartItem | null> {
   const token = await getToken();
+  const h = baseHeaders(token);
 
-  // Strategy 1: catalog search with PRODUCT_ID searchType (UPC lookup)
-  const r1 = await fetch(
-    `${BASE}/items/catalog/search?query=${encodeURIComponent(upc)}&searchType=PRODUCT_ID&productIdType=UPC&startIndex=0&count=5`,
-    { headers: baseHeaders(token) }
-  );
-  if (r1.ok) {
-    const d = await r1.json() as Record<string, unknown>;
-    const items = extractItems(d);
-    const match = items.find((i) => i.upc === upc) ?? items[0] ?? null;
-    if (match) return match;
+  // Strategy 1: POST catalog search by UPC (correct method per API spec)
+  try {
+    const r1 = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({
+        query: upc,
+        searchType: "PRODUCT_ID",
+        productIdType: "UPC",
+        count: 5,
+        startIndex: 0,
+      }),
+    });
+    if (r1.ok) {
+      const d = await r1.json() as Record<string, unknown>;
+      const items = extractItems(d);
+      const match = items.find((i) => i.upc === upc || i.gtin?.endsWith(upc)) ?? items[0] ?? null;
+      if (match) return match;
+    } else {
+      console.error(`[walmart] POST catalog/search status ${r1.status}:`, await r1.text().catch(() => ""));
+    }
+  } catch (e) {
+    console.error("[walmart] POST catalog/search error:", e);
   }
 
-  // Strategy 2: text search with the UPC string
-  const r2 = await fetch(
-    `${BASE}/items/walmart/search?query=${encodeURIComponent(upc)}&searchType=TEXT&startIndex=0&count=5`,
-    { headers: baseHeaders(token) }
-  );
-  if (r2.ok) {
-    const d = await r2.json() as Record<string, unknown>;
-    const items = extractItems(d);
-    // Only accept if the UPC actually matches — prevents wrong product returns
-    return items.find((i) => i.upc === upc) ?? null;
+  // Strategy 2: Search seller's own items by UPC (GET /v3/items with upc filter)
+  try {
+    const r2 = await fetch(`${BASE}/items?limit=10`, { headers: h });
+    if (r2.ok) {
+      const d = await r2.json() as Record<string, unknown>;
+      const items = extractItems(d);
+      const match = items.find((i) => i.upc === upc || i.gtin?.endsWith(upc));
+      if (match) return match;
+    }
+  } catch (e) {
+    console.error("[walmart] GET /items error:", e);
   }
 
   return null;
@@ -98,25 +140,30 @@ export async function searchWalmartByUpc(upc: string): Promise<WalmartItem | nul
 
 export async function searchWalmartByName(query: string): Promise<WalmartItem | null> {
   const token = await getToken();
+  const h = baseHeaders(token);
 
-  // catalog/search endpoint first
-  const r1 = await fetch(
-    `${BASE}/items/catalog/search?query=${encodeURIComponent(query)}&searchType=TEXT&startIndex=0&count=10`,
-    { headers: baseHeaders(token) }
-  );
-  if (r1.ok) {
-    const d = await r1.json() as Record<string, unknown>;
-    const items = extractItems(d);
-    if (items.length > 0) return items[0];
+  // POST catalog search by keyword
+  try {
+    const r1 = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({
+        query,
+        searchType: "KEYWORD",
+        count: 10,
+        startIndex: 0,
+      }),
+    });
+    if (r1.ok) {
+      const d = await r1.json() as Record<string, unknown>;
+      const items = extractItems(d);
+      if (items.length > 0) return items[0];
+    } else {
+      console.error(`[walmart] POST catalog/search (name) status ${r1.status}:`, await r1.text().catch(() => ""));
+    }
+  } catch (e) {
+    console.error("[walmart] POST catalog/search (name) error:", e);
   }
 
-  // Fallback to items/walmart/search
-  const r2 = await fetch(
-    `${BASE}/items/walmart/search?query=${encodeURIComponent(query)}&searchType=TEXT&startIndex=0&count=10`,
-    { headers: baseHeaders(token) }
-  );
-  if (!r2.ok) return null;
-  const d = await r2.json() as Record<string, unknown>;
-  const items = extractItems(d);
-  return items[0] ?? null;
+  return null;
 }

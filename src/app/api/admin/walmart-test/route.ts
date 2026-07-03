@@ -62,28 +62,32 @@ export async function GET(req: NextRequest) {
     "Accept": "application/json",
   };
 
-  // Step 2: Catalog search by UPC (PRODUCT_ID)
+  // Step 2: POST catalog search by UPC (correct method)
   try {
-    const url1 = `${BASE}/items/catalog/search?query=${encodeURIComponent(upc)}&searchType=PRODUCT_ID&productIdType=UPC&startIndex=0&count=5`;
-    log.catalogSearchUrl = url1;
-    const r1 = await fetch(url1, { headers });
+    const r1 = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: upc, searchType: "PRODUCT_ID", productIdType: "UPC", count: 5, startIndex: 0 }),
+    });
     const b1 = await r1.text();
-    log.catalogSearchStatus = r1.status;
-    log.catalogSearchBody = b1.slice(0, 2000);
+    log.catalogSearchPOSTStatus = r1.status;
+    log.catalogSearchPOSTBody = b1.slice(0, 2000);
   } catch (e) {
-    log.catalogSearchError = String(e);
+    log.catalogSearchPOSTError = String(e);
   }
 
-  // Step 3: Walmart item search by UPC (TEXT)
+  // Step 3: POST catalog search by keyword (product name)
   try {
-    const url2 = `${BASE}/items/walmart/search?query=${encodeURIComponent(upc)}&searchType=TEXT&startIndex=0&count=5`;
-    log.walmartSearchUrl = url2;
-    const r2 = await fetch(url2, { headers });
+    const r2 = await fetch(`${BASE}/items/catalog/search`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "juniper quilt", searchType: "KEYWORD", count: 5, startIndex: 0 }),
+    });
     const b2 = await r2.text();
-    log.walmartSearchStatus = r2.status;
-    log.walmartSearchBody = b2.slice(0, 2000);
+    log.catalogSearchKeywordStatus = r2.status;
+    log.catalogSearchKeywordBody = b2.slice(0, 2000);
   } catch (e) {
-    log.walmartSearchError = String(e);
+    log.catalogSearchKeywordError = String(e);
   }
 
   // Step 4: Try GET /v3/items (list seller's own items)
