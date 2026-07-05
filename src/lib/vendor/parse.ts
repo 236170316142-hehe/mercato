@@ -227,9 +227,14 @@ function gridToRows(grid: string[][]): VendorRow[] {
       raw[h] = row[i] ?? "";
     });
 
-    const name = get(cols.productCol)
+    // If productCol value is a bare 1-2 digit number (pack count, item count, etc.),
+    // it's the wrong column — fall through to the description column instead.
+    const rawProductVal = get(cols.productCol);
+    const isPureShortNumber = /^\d{1,2}$/.test(rawProductVal);
+    const name = (!isPureShortNumber ? rawProductVal : null)
       || get(cols.descriptionCol)
       || headers.map((_, i) => row[i]).find((v) => v && v.trim().length > 2)
+      || rawProductVal
       || "";
 
     if (!name) return null;
