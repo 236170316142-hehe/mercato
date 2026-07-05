@@ -52,17 +52,25 @@ function generateAuthHeaders(): Record<string, string> {
   return result;
 }
 
+function normalizeUpc(upc: string): string {
+  const digits = upc.replace(/\D/g, "");
+  // UPC-A is 12 digits; many vendor files drop the leading zero — restore it
+  if (digits.length === 11) return "0" + digits;
+  return digits;
+}
+
 export async function searchWalmartByUpc(upc: string): Promise<WalmartItem | null> {
+  const normalized = normalizeUpc(upc);
   try {
     const headers = generateAuthHeaders();
-    const res = await fetch(`${BASE}/items?upc=${encodeURIComponent(upc)}`, { headers });
+    const res = await fetch(`${BASE}/items?upc=${encodeURIComponent(normalized)}`, { headers });
     if (!res.ok) {
       console.error(`[walmart] UPC search ${res.status}:`, await res.text().catch(() => ""));
       return null;
     }
     const data = await res.json() as Record<string, unknown>;
     const items = (data.items as WalmartItem[] | undefined) ?? [];
-    return items.find((i) => i.upc === upc) ?? items[0] ?? null;
+    return items.find((i) => normalizeUpc(i.upc ?? "") === normalized) ?? items[0] ?? null;
   } catch (e) {
     console.error("[walmart] UPC search error:", e);
     return null;

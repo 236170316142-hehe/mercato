@@ -50,10 +50,16 @@ export async function GET(req: NextRequest) {
     keyVersion: process.env.WALMART_AFFILIATE_KEY_VERSION ?? "1 (default)",
   };
 
+  // Normalize UPC: pad 11-digit UPCs to 12 digits
+  const digits = upc.replace(/\D/g, "");
+  const normalizedUpc = digits.length === 11 ? "0" + digits : digits;
+  log.upcInput = upc;
+  log.upcNormalized = normalizedUpc;
+
   // Test 1: UPC lookup
   try {
     const headers = generateAuthHeaders();
-    const res = await fetch(`${BASE}/items?upc=${encodeURIComponent(upc)}`, { headers });
+    const res = await fetch(`${BASE}/items?upc=${encodeURIComponent(normalizedUpc)}`, { headers });
     const body = await res.text();
     log.upcLookup = { status: res.status, body: body.slice(0, 2000) };
   } catch (e) {
