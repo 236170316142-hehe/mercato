@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminGuard } from "@/lib/auth-helpers";
 import { createSign } from "crypto";
+import { prisma } from "@/lib/db";
 
 const BASE = "https://developer.api.walmart.com/api-proxy/service/affil/product/v2";
 
@@ -40,6 +41,7 @@ export async function GET(req: NextRequest) {
   if (response) return response;
 
   const upc = req.nextUrl.searchParams.get("upc") ?? "636047400413";
+  const projectId = req.nextUrl.searchParams.get("project");
   const log: Record<string, unknown> = {};
 
   log.env = {
@@ -58,14 +60,36 @@ export async function GET(req: NextRequest) {
     log.upcLookupError = String(e);
   }
 
-  // Test 2: Keyword search
+  // Test 2: Keyword search (fixed endpoint)
   try {
     const headers = generateAuthHeaders();
-    const res = await fetch(`${BASE}/searches?query=juniper+quilt&numItems=3`, { headers });
+    const res = await fetch(`${BASE}/search?query=juniper+quilt&numItems=3`, { headers });
     const body = await res.text();
     log.keywordSearch = { status: res.status, body: body.slice(0, 2000) };
   } catch (e) {
     log.keywordSearchError = String(e);
+  }
+
+  // Test 3: Check what the DB products actually look like for a Walmart project
+  if (projectId) {
+    try {
+      const products = await prisma.product.findMany({
+        where: { projectId },
+        select: { id: true, name: true, upc: true, brand: true, vendorSku: true },
+        take: 10,
+      });
+      const upcCount = products.filter(p => p.upc).length;
+      log.dbProducts = {
+        shown: products.length,
+        withUpc: upcCount,
+        withoutUpc: products.length - upcCount,
+        samples: products.slice(0, 5),
+      };
+    } catch (e) {
+      log.dbProductsError = String(e);
+    }
+  } else {
+    log.dbProductsNote = "Add ?project=<projectId> to see actual product UPCs from DB";
   }
 
   return NextResponse.json({ log });

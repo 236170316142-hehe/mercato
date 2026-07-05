@@ -72,7 +72,7 @@ export async function searchWalmartByUpc(upc: string): Promise<WalmartItem | nul
 export async function searchWalmartByName(query: string): Promise<WalmartItem | null> {
   try {
     const headers = generateAuthHeaders();
-    const res = await fetch(`${BASE}/searches?query=${encodeURIComponent(query)}&numItems=5`, { headers });
+    const res = await fetch(`${BASE}/search?query=${encodeURIComponent(query)}&numItems=5`, { headers });
     if (!res.ok) {
       console.error(`[walmart] Name search ${res.status}:`, await res.text().catch(() => ""));
       return null;
