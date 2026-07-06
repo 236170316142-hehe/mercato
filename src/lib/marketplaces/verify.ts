@@ -64,9 +64,14 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     .map((p) => ({ productId: p.id, status: "discontinued" as const, fields: [], liveData: {} }));
   const activeProducts = products.filter((p) => !isDiscontinuedInVendorData(p.vendorData));
 
-  const withAsin     = activeProducts.filter((p) => p.asin);
-  const withUpcOnly  = activeProducts.filter((p) => !p.asin && p.upc);
-  const withNameOnly = activeProducts.filter((p) => !p.asin && !p.upc);
+  // Only trust ASINs that look like real Amazon ASINs (B + 9 alphanumeric chars).
+  // Numeric-looking values like "43664.043078" are product codes, not ASINs — treat
+  // them as having no ASIN so they fall through to UPC / keyword search.
+  const ASIN_RE = /^B[0-9A-Z]{9}$/i;
+  const withAsin     = activeProducts.filter((p) => p.asin && ASIN_RE.test(p.asin));
+  const asinInvalid  = activeProducts.filter((p) => p.asin && !ASIN_RE.test(p.asin));
+  const withUpcOnly  = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && p.upc);
+  const withNameOnly = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && !p.upc);
 
   // Fetch by ASIN
   const asinResults = new Map<string, VerifyResult>();
@@ -75,13 +80,11 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     const raw = await getProducts(1, asins, { stats: 1, rating: true });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const live = normalizeMany(raw, 1) as any[];
-    if (!live.length) throw new Error("Could not fetch Amazon data. Keepa API tokens may be exhausted — please top up and try again.");
+    // Don't throw on empty — Keepa may simply not carry these ASINs. Mark as not_found and continue.
     const liveMap = new Map(live.map((l) => [l.asin as string, l]));
     for (const p of withAsin) {
       const lp = liveMap.get(p.asin!);
       if (!lp) { asinResults.set(p.id, notFound(p.id)); continue; }
-      // If the ASIN resolves to a product whose name shares no words with the vendor name,
-      // treat it as a wrong match rather than a mismatch (the ASIN in the vendor file may be stale).
       const nameSim = titleSim(p.name, lp.title as string);
       if (nameSim < 0.25) {
         asinResults.set(p.id, notFound(p.id));
@@ -90,6 +93,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       }
     }
   }
+  void asinInvalid; // they flow into withUpcOnly / withNameOnly above
 
   // Fetch by UPC/barcode code
   const upcResults = new Map<string, VerifyResult>();
@@ -152,10 +156,12 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     const { refreshKeepaTokens } = await import("@/lib/keepa/client");
     const tokenInfo = await refreshKeepaTokens();
     if (tokenInfo != null && tokenInfo.tokensLeft < 200) {
-      throw new Error(
-        `Keepa API tokens too low (${tokenInfo.tokensLeft} left, need ≥ 200). ` +
-        `Tokens refill in ~${Math.ceil(tokenInfo.refillIn / 60)} min — please wait and try again.`
-      );
+      // Tokens too low — skip keyword searches rather than crashing the whole batch
+      for (const p of keywordPool) nameResults.set(p.id, { productId: p.id, status: "skipped", fields: [], liveData: {} });
+      return [...discontinuedResults, ...activeProducts.map((p) =>
+        asinResults.get(p.id) ?? upcResults.get(p.id) ?? nameResults.get(p.id)
+        ?? { productId: p.id, status: "skipped" as const, fields: [] as FieldResult[], liveData: {} }
+      )];
     }
 
     // Deduplicate by brand+name so identical products share one search pass
