@@ -117,6 +117,7 @@ model ExportTemplate {
   category    String?
   fileFormat  String   @default("xlsx") // xlsx | csv
   columns     Json     // [{ key, label, required }]
+  fileData    Bytes?   // raw uploaded template file — used as base workbook on export
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

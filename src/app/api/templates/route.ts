@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
         category: resolvedCategory,
         fileFormat: ext === ".csv" || ext === ".tsv" ? "csv" : "xlsx",
         columns,
+        fileData: buffer,
       },
     });
 
