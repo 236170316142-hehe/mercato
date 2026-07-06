@@ -19,9 +19,10 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts Account[]
-  sessions Session[]
-  projects Project[]
+  accounts  Account[]
+  sessions  Session[]
+  projects  Project[]
+  templates ExportTemplate[]
 }
 
 model Account {
@@ -110,6 +111,7 @@ model Product {
 
 model ExportTemplate {
   id          String   @id @default(cuid())
+  userId      String?  // null = global (admin-created); set = user-private
   name        String
   marketplace String
   category    String?
@@ -117,4 +119,6 @@ model ExportTemplate {
   columns     Json     // [{ key, label, required }]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

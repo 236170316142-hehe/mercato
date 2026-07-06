@@ -1,6 +1,6 @@
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { authGuard, adminGuard } from "@/lib/auth-helpers";
+import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import { readXlsxGrid } from "@/lib/vendor/xlsx-lite";
 
@@ -8,12 +8,17 @@ const MAX_BYTES = 15 * 1024 * 1024;
 const ALLOWED_EXT = new Set([".xlsx", ".xlsm", ".csv", ".tsv"]);
 
 export async function GET(req: NextRequest) {
-  const { response } = await authGuard();
+  const { user, response } = await authGuard();
   if (response) return response;
 
   const marketplace = req.nextUrl.searchParams.get("marketplace");
+
+  // Return user's own templates + global (admin) templates (userId = null)
   const templates = await prisma.exportTemplate.findMany({
-    where: marketplace ? { marketplace } : undefined,
+    where: {
+      ...(marketplace ? { marketplace } : {}),
+      OR: [{ userId: user!.id }, { userId: null }],
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -21,7 +26,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { response } = await adminGuard();
+  const { user, response } = await authGuard();
   if (response) return response;
 
   const contentType = req.headers.get("content-type") ?? "";
@@ -59,7 +64,6 @@ export async function POST(req: NextRequest) {
       headers = firstLine.split(delim).map((h) => h.replace(/^"|"$/g, "").trim()).filter(Boolean);
     } else {
       const { grid } = await readXlsxGrid(buffer, 30);
-      // Find header row: most non-empty cells in first 25 rows
       let bestIdx = 0, bestCount = -1;
       for (let i = 0; i < Math.min(grid.length, 25); i++) {
         const count = grid[i].filter((c) => c.trim() !== "").length;
@@ -76,7 +80,14 @@ export async function POST(req: NextRequest) {
     }));
 
     const template = await prisma.exportTemplate.create({
-      data: { name, marketplace, category, fileFormat: ext === ".csv" || ext === ".tsv" ? "csv" : "xlsx", columns },
+      data: {
+        userId: user!.id,
+        name,
+        marketplace,
+        category,
+        fileFormat: ext === ".csv" || ext === ".tsv" ? "csv" : "xlsx",
+        columns,
+      },
     });
 
     return NextResponse.json({ ...template, detectedColumns: headers.length });
@@ -91,18 +102,33 @@ export async function POST(req: NextRequest) {
   }
 
   const template = await prisma.exportTemplate.create({
-    data: { name, marketplace, category: category ?? null, fileFormat: fileFormat ?? "xlsx", columns },
+    data: {
+      userId: user!.id,
+      name,
+      marketplace,
+      category: category ?? null,
+      fileFormat: fileFormat ?? "xlsx",
+      columns,
+    },
   });
 
   return NextResponse.json(template);
 }
 
 export async function DELETE(req: NextRequest) {
-  const { response } = await adminGuard();
+  const { user, response } = await authGuard();
   if (response) return response;
 
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+
+  const template = await prisma.exportTemplate.findUnique({ where: { id } });
+  if (!template) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Users can only delete their own templates; admins can delete any
+  if (template.userId !== user!.id && user!.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   await prisma.exportTemplate.delete({ where: { id } });
   return NextResponse.json({ ok: true });

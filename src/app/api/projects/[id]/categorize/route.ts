@@ -18,9 +18,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  // Fetch template categories for this marketplace to constrain AI to exact names
+  // Fetch template categories visible to this user to constrain AI to exact names
   const marketplaceTemplates = await prisma.exportTemplate.findMany({
-    where: { marketplace: project.marketplace },
+    where: {
+      marketplace: project.marketplace,
+      OR: [{ userId: user!.id }, { userId: null }],
+    },
     select: { category: true },
   });
   const availableCategories = [

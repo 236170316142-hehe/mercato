@@ -19,7 +19,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       where: { id },
       include: { products: true },
     }),
-    prisma.exportTemplate.findMany({ where: { id: { in: templateIds } } }),
+    prisma.exportTemplate.findMany({
+      where: {
+        id: { in: templateIds },
+        OR: [{ userId: user!.id }, { userId: null }],
+      },
+    }),
   ]);
 
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
