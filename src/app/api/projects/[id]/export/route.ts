@@ -18,23 +18,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "templateId or templateIds required" }, { status: 400 });
   }
 
-  const [project, templates] = await Promise.all([
-    prisma.project.findUnique({ where: { id }, include: { products: true } }),
-    prisma.exportTemplate.findMany({
-      where: {
-        id: templateId ? templateId : { in: templateIds },
-        OR: [{ userId: user!.id }, { userId: null }],
-      },
-    }),
-  ]);
-
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  if (!templates.length) return NextResponse.json({ error: "Template not found" }, { status: 404 });
-
-  await prisma.project.update({ where: { id }, data: { status: "exporting" } });
-
   try {
+    const [project, templates] = await Promise.all([
+      prisma.project.findUnique({ where: { id }, include: { products: true } }),
+      prisma.exportTemplate.findMany({
+        where: {
+          id: templateId ? templateId : { in: templateIds },
+          OR: [{ userId: user!.id }, { userId: null }],
+        },
+      }),
+    ]);
+
+    if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!templates.length) return NextResponse.json({ error: "Template not found" }, { status: 404 });
+
+    await prisma.project.update({ where: { id }, data: { status: "exporting" } });
+
     const zipBuffer = templateId
       ? await generateCategoryZip(project.products, templates[0], project.marketplace)
       : await generateExportZip(project.products, templates, project.marketplace);
@@ -48,8 +48,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       },
     });
   } catch (err) {
-    await prisma.project.update({ where: { id }, data: { status: "categorized" } });
-    const msg = err instanceof Error ? err.message : "Export failed";
+    await prisma.project.update({ where: { id }, data: { status: "categorized" } }).catch(() => {});
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[export] failed:", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
