@@ -19,6 +19,7 @@ export function AppHeader({ user }: { user: User }) {
 
   const userNav = [
     { href: "/projects", label: "Projects", icon: FolderOpen },
+    { href: "/templates", label: "Templates", icon: FileText },
   ];
 
   const adminNav = [
