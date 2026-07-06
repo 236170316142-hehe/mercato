@@ -1,27 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
-import { generateExportZip } from "@/lib/export/zip";
+import { generateCategoryZip, generateExportZip } from "@/lib/export/zip";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { user, response } = await authGuard();
   if (response) return response;
   const { id } = await params;
 
-  const { templateIds } = await req.json();
+  const body = await req.json();
+  // New mode: single templateId → one file per category
+  // Legacy mode: templateIds array → one file per template
+  const templateId: string | undefined = body.templateId;
+  const templateIds: string[] = body.templateIds ?? [];
 
-  if (!templateIds?.length) {
-    return NextResponse.json({ error: "templateIds required" }, { status: 400 });
+  if (!templateId && !templateIds.length) {
+    return NextResponse.json({ error: "templateId or templateIds required" }, { status: 400 });
   }
 
   const [project, templates] = await Promise.all([
-    prisma.project.findUnique({
-      where: { id },
-      include: { products: true },
-    }),
+    prisma.project.findUnique({ where: { id }, include: { products: true } }),
     prisma.exportTemplate.findMany({
       where: {
-        id: { in: templateIds },
+        id: templateId ? templateId : { in: templateIds },
         OR: [{ userId: user!.id }, { userId: null }],
       },
     }),
@@ -29,11 +30,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!templates.length) return NextResponse.json({ error: "Template not found" }, { status: 404 });
 
   await prisma.project.update({ where: { id }, data: { status: "exporting" } });
 
   try {
-    const zipBuffer = await generateExportZip(project.products, templates, project.marketplace);
+    const zipBuffer = templateId
+      ? await generateCategoryZip(project.products, templates[0], project.marketplace)
+      : await generateExportZip(project.products, templates, project.marketplace);
+
     await prisma.project.update({ where: { id }, data: { status: "done" } });
 
     return new Response(zipBuffer as unknown as BodyInit, {

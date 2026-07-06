@@ -4,33 +4,66 @@ import type { Product, ExportTemplate } from "@prisma/client";
 
 type Column = { key: string; label: string; required?: boolean };
 
+// ── Category-split export (primary mode) ─────────────────────────────────────
+// One template format → one file per product category, all bundled in a ZIP.
+
+export async function generateCategoryZip(
+  products: Product[],
+  template: ExportTemplate,
+  marketplace = "amazon",
+): Promise<Buffer> {
+  const zip = new JSZip();
+  const columns = template.columns as Column[];
+
+  const eligible = eligibleProducts(products, marketplace);
+
+  // Group by category; uncategorized products go into "_Uncategorized"
+  const groups = new Map<string, Product[]>();
+  for (const p of eligible) {
+    const cat = p.marketplaceCategory ?? "_Uncategorized";
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push(p);
+  }
+
+  const fileData = template.fileData ? (template.fileData as Buffer) : null;
+
+  for (const [category, categoryProducts] of groups) {
+    const fileName = sanitize(category);
+    if (template.fileFormat === "csv") {
+      zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
+    } else {
+      const buffer = fileData
+        ? await fillTemplateXlsx(categoryProducts, columns, fileData)
+        : await createXlsxFromScratch(categoryProducts, columns, category);
+      zip.file(`${fileName}.xlsx`, buffer);
+    }
+  }
+
+  return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
+}
+
+// ── Legacy multi-template export (kept for backward compat) ──────────────────
+
 export async function generateExportZip(
   products: Product[],
   templates: ExportTemplate[],
   marketplace = "amazon",
 ): Promise<Buffer> {
   const zip = new JSZip();
+  const eligible = eligibleProducts(products, marketplace);
 
   for (const template of templates) {
     const columns = template.columns as Column[];
-    const anyVerified = products.some((p) => p.verifyStatus != null);
-    const passedVerification = anyVerified
-      ? marketplace === "amazon_us"
-        ? products.filter((p) => p.verifyStatus === "ok")
-        : products.filter((p) => ["ok", "warning", "not_found"].includes(p.verifyStatus ?? ""))
-      : products;
-
-    // Filter by template's category scope
     const filtered = template.category
-      ? passedVerification.filter((p) => p.marketplaceCategory === template.category)
-      : passedVerification;
+      ? eligible.filter((p) => p.marketplaceCategory === template.category)
+      : eligible;
 
     const fileName = sanitize(template.name);
+    const fileData = template.fileData ? (template.fileData as Buffer) : null;
 
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(filtered, columns));
     } else {
-      const fileData = template.fileData ? (template.fileData as Buffer) : null;
       const buffer = fileData
         ? await fillTemplateXlsx(filtered, columns, fileData)
         : await createXlsxFromScratch(filtered, columns, template.name);
@@ -39,6 +72,14 @@ export async function generateExportZip(
   }
 
   return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
+}
+
+function eligibleProducts(products: Product[], marketplace: string): Product[] {
+  const anyVerified = products.some((p) => p.verifyStatus != null);
+  if (!anyVerified) return products;
+  return marketplace === "amazon_us"
+    ? products.filter((p) => p.verifyStatus === "ok")
+    : products.filter((p) => ["ok", "warning", "not_found"].includes(p.verifyStatus ?? ""));
 }
 
 // ── Fill existing template file with product rows ─────────────────────────────
