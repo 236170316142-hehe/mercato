@@ -94,16 +94,28 @@ async function fillTemplateXlsx(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await wb.xlsx.load(fileData as any);
 
-  const ws = wb.worksheets[0];
+  // Prefer a sheet literally named "Template" (Temu / multi-tab workbooks).
+  // Fall back to the sheet with the most rows, then worksheets[0].
+  const ws =
+    wb.worksheets.find((s) => /^template$/i.test(s.name)) ??
+    wb.worksheets.reduce(
+      (best, s) => ((s.rowCount ?? 0) > (best.rowCount ?? 0) ? s : best),
+      wb.worksheets[0],
+    );
   if (!ws) return createXlsxFromScratch(products, columns, "Sheet1");
 
-  // Find the header row — the row with the highest count of non-empty cells
+  // Find the header row: row with the most *literal* (non-formula) non-empty cells.
+  // Formula-heavy data rows would otherwise score higher than the real header.
   let headerRowNum = 1;
-  let maxCells = 0;
+  let maxLiteralCells = 0;
   ws.eachRow((row, rowNumber) => {
     let count = 0;
-    row.eachCell(() => count++);
-    if (count > maxCells) { maxCells = count; headerRowNum = rowNumber; }
+    row.eachCell((cell) => {
+      const v = cell.value;
+      const isFormula = v !== null && typeof v === "object" && "formula" in (v as object);
+      if (!isFormula && v !== null && v !== undefined && v !== "") count++;
+    });
+    if (count > maxLiteralCells) { maxLiteralCells = count; headerRowNum = rowNumber; }
   });
 
   // Build a map: normalised header text → 1-based column index
@@ -114,12 +126,6 @@ async function fillTemplateXlsx(
     if (text) headerToCol.set(text, colNumber);
   });
 
-  // Remove all rows after the header
-  const lastRow = ws.lastRow?.number ?? headerRowNum;
-  for (let r = lastRow; r > headerRowNum; r--) {
-    ws.spliceRows(r, 1);
-  }
-
   // Map each column definition to a column index in the template
   const colIndexMap: [Column, number][] = [];
   for (const col of columns) {
@@ -129,13 +135,41 @@ async function fillTemplateXlsx(
     if (idx !== undefined) colIndexMap.push([col, idx]);
   }
 
-  // Add one row per product
-  for (const p of products) {
-    const newRow = ws.addRow([]);
+  // Determine the first data row.
+  // Some templates (e.g. Temu) have hidden instruction rows between the header and the
+  // first data row. Scan forward up to 10 rows to find the first row that either has
+  // formula cells (pre-built Temu VLOOKUP rows) or is entirely empty.
+  let firstDataRow = headerRowNum + 1;
+  for (let r = headerRowNum + 1; r <= headerRowNum + 10; r++) {
+    const row = ws.getRow(r);
+    let hasFormula = false;
+    let hasLiteralText = false;
+    row.eachCell((cell) => {
+      const v = cell.value;
+      if (v !== null && typeof v === "object" && "formula" in (v as object)) hasFormula = true;
+      else if (v !== null && v !== undefined && v !== "") hasLiteralText = true;
+    });
+    // Formula rows or empty rows are data-area rows; stop at first non-literal row
+    if (hasFormula || !hasLiteralText) { firstDataRow = r; break; }
+  }
+
+  // Write product rows directly into the data area, overwriting any existing
+  // cell values or formula cells. This works for both plain and formula-based templates.
+  for (let i = 0; i < products.length; i++) {
+    const row = ws.getRow(firstDataRow + i);
+    row.eachCell((cell) => { cell.value = null; });
     for (const [col, colIdx] of colIndexMap) {
-      newRow.getCell(colIdx).value = (getProductField(p, col.key) ?? "") as ExcelJS.CellValue;
+      row.getCell(colIdx).value = (getProductField(products[i], col.key) ?? "") as ExcelJS.CellValue;
     }
-    newRow.commit();
+    row.commit();
+  }
+
+  // Clear any remaining template rows beyond the products we wrote
+  const lastRow = ws.lastRow?.number ?? firstDataRow;
+  for (let r = firstDataRow + products.length; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    row.eachCell((cell) => { cell.value = null; });
+    row.commit();
   }
 
   return wb.xlsx.writeBuffer() as unknown as Promise<Buffer>;
