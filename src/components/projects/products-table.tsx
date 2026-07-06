@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, ShieldCheck, Loader2, ChevronRight } from "lucide-react";
+import { Search, ShieldCheck, Tag, Loader2, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Product = {
@@ -22,12 +22,13 @@ const STATUS_BADGE: Record<string, string> = {
   discontinued: "bg-purple-100 text-purple-700",
 };
 
-export function ProductsTable({ products, onNext, onRunVerify, loading, projectStatus }: {
+export function ProductsTable({ products, onNext, onRunVerify, loading, projectStatus, skipVerify }: {
   products: Product[];
   onNext: () => void;
   onRunVerify: () => void;
   loading: boolean;
   projectStatus: string;
+  skipVerify?: boolean;
 }) {
   const [search, setSearch] = useState("");
 
@@ -43,6 +44,12 @@ export function ProductsTable({ products, onNext, onRunVerify, loading, projectS
 
   const hasVerified = products.some((p) => p.verifyStatus);
 
+  const ctaIcon = skipVerify ? <Tag className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />;
+  const ctaLabel = skipVerify
+    ? "Categorize →"
+    : loading ? "Verifying…" : hasVerified ? "View verification →" : "Run verification";
+  const ctaAction = skipVerify ? onNext : (hasVerified ? onNext : onRunVerify);
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
@@ -53,16 +60,12 @@ export function ProductsTable({ products, onNext, onRunVerify, loading, projectS
           </p>
         </div>
         <button
-          onClick={hasVerified ? onNext : onRunVerify}
+          onClick={ctaAction}
           disabled={loading}
           className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
         >
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <ShieldCheck className="w-4 h-4" />
-          )}
-          {loading ? "Verifying…" : hasVerified ? "View verification →" : "Run verification"}
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : ctaIcon}
+          {ctaLabel}
         </button>
       </div>
 

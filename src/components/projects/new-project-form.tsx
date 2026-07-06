@@ -6,21 +6,27 @@ import { toast } from "sonner";
 import { Upload, FileSpreadsheet, Loader2, X, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const MARKETPLACES = [
-  { id: "amazon_us", label: "Amazon US", emoji: "🟠", desc: "Keepa · No category step" },
-  { id: "amazon", label: "Amazon", emoji: "🟧", desc: "Via Keepa API" },
-  { id: "walmart", label: "Walmart", emoji: "🔷", desc: "Affiliate API" },
-  { id: "bestbuy", label: "Best Buy", emoji: "🔵", desc: "Official API" },
-  { id: "temu", label: "Temu", emoji: "🟣", desc: "Via SerpAPI" },
-  { id: "mathis", label: "Mathis", emoji: "🟤", desc: "Via SerpAPI" },
-  { id: "sears", label: "Sears", emoji: "⚫", desc: "Via SerpAPI" },
-];
+// Top-level tiles; Amazon expands to a US/International sub-toggle
+const MARKETPLACE_TILES = [
+  { id: "amazon", label: "Amazon", emoji: "🟠" },
+  { id: "walmart", label: "Walmart", emoji: "🔷" },
+  { id: "bestbuy", label: "Best Buy", emoji: "🔵" },
+  { id: "temu", label: "Temu", emoji: "🟣" },
+  { id: "mathis", label: "Mathis", emoji: "🟤" },
+  { id: "sears", label: "Sears", emoji: "⚫" },
+] as const;
+
+const AMAZON_VARIANTS = [
+  { id: "amazon_us", label: "US" },
+  { id: "amazon", label: "International" },
+] as const;
 
 export function NewProjectForm() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [marketplace, setMarketplace] = useState("");
+  const [amazonGroup, setAmazonGroup] = useState(false); // true when Amazon tile is selected
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -135,26 +141,57 @@ export function NewProjectForm() {
       <div>
         <label className="block text-sm font-medium mb-2">Marketplace</label>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {MARKETPLACES.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => setMarketplace(m.id)}
-              className={cn(
-                "flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all text-sm",
-                marketplace === m.id
-                  ? "border-primary bg-primary/5 ring-1 ring-primary"
-                  : "border-border hover:border-primary/40 hover:bg-accent"
-              )}
-            >
-              <span className="text-lg">{m.emoji}</span>
-              <div>
-                <p className="font-medium leading-tight">{m.label}</p>
-                <p className="text-xs text-muted-foreground">{m.desc}</p>
-              </div>
-            </button>
-          ))}
+          {MARKETPLACE_TILES.map((m) => {
+            const isAmazon = m.id === "amazon";
+            const isActive = isAmazon ? amazonGroup : marketplace === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => {
+                  if (isAmazon) {
+                    setAmazonGroup(true);
+                    if (!marketplace.startsWith("amazon")) setMarketplace("amazon_us");
+                  } else {
+                    setAmazonGroup(false);
+                    setMarketplace(m.id);
+                  }
+                }}
+                className={cn(
+                  "flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all text-sm",
+                  isActive
+                    ? "border-primary bg-primary/5 ring-1 ring-primary"
+                    : "border-border hover:border-primary/40 hover:bg-accent"
+                )}
+              >
+                <span className="text-lg">{m.emoji}</span>
+                <p className="font-medium">{m.label}</p>
+              </button>
+            );
+          })}
         </div>
+
+        {/* Amazon sub-variant toggle */}
+        {amazonGroup && (
+          <div className="mt-2 flex items-center gap-2 p-3 rounded-xl border bg-muted/40">
+            <span className="text-xs text-muted-foreground mr-1">Region:</span>
+            {AMAZON_VARIANTS.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => setMarketplace(v.id)}
+                className={cn(
+                  "px-3 py-1 rounded-lg text-xs font-medium transition-all border",
+                  marketplace === v.id
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border hover:border-primary/40 hover:bg-accent"
+                )}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <button

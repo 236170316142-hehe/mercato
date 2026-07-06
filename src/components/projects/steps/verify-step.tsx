@@ -22,6 +22,7 @@ type Product = {
   name: string;
   vendorSku: string | null;
   upc: string | null;
+  asin: string | null;
   verifyStatus: string | null;
   verifyFields: Record<string, unknown>[] | null;
   verifiedAt: Date | null;
@@ -249,7 +250,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
 
                 {isOpen && (
                   <div className="border-t bg-muted/20 divide-y">
-                    {/* SKU & UPC always shown */}
+                    {/* SKU, UPC, ASIN always shown */}
                     <div className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
                       <span className="font-medium text-muted-foreground">SKU</span>
                       <p className="font-medium">{p.vendorSku ?? "—"}</p>
@@ -260,6 +261,18 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                       <p className="font-medium">{p.upc ?? "—"}</p>
                       <div />
                     </div>
+                    {(p.asin || marketplace === "amazon" || marketplace === "amazon_us") && (
+                      <div className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
+                        <span className="font-medium text-muted-foreground">ASIN</span>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium font-mono">{p.asin ?? "—"}</p>
+                          {p.asin && p.verifiedAt && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">auto-detected</span>
+                          )}
+                        </div>
+                        <div />
+                      </div>
+                    )}
                     {/* Field comparison rows */}
                     {fields.map((f) => (
                       <div key={f.field} className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">

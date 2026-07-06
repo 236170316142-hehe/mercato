@@ -46,6 +46,8 @@ const STEPS = [
 ];
 
 const AMAZON_SKIP_CATEGORIZE = true;
+// These marketplaces have no public API for verification — skip straight to Categorize
+const SKIP_VERIFY = new Set(["temu", "bestbuy", "mathis", "sears"]);
 
 
 function stepIndex(status: string) {
@@ -69,9 +71,15 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
   products: Product[];
 }) {
   const router = useRouter();
+  const skipVerify = SKIP_VERIFY.has(initial.marketplace);
   const [project, setProject] = useState(initial);
   const [products, setProducts] = useState(initialProducts);
-  const [activeStep, setActiveStep] = useState(() => stepIndex(initial.status));
+  const [activeStep, setActiveStep] = useState(() => {
+    const idx = stepIndex(initial.status);
+    // If this marketplace skips verification and we land on the verify step, advance to categorize
+    if (SKIP_VERIFY.has(initial.marketplace) && idx === 1) return 2;
+    return idx;
+  });
   const [loading, setLoading] = useState(false);
 
   const currentStepIndex = stepIndex(project.status);
@@ -195,8 +203,12 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         <div className="flex items-center gap-0">
           {STEPS.map((step, idx) => {
             const Icon = step.icon;
+            const isSkipVerifyStep = skipVerify && idx === 1;
             const isAmazonCategorize = AMAZON_SKIP_CATEGORIZE && project.marketplace === "amazon_us" && idx === 2;
-            const done = currentStepIndex > idx;
+            const isSkipped = isSkipVerifyStep || isAmazonCategorize;
+            // For skip-verify marketplaces, step 2 (Categorize) is reachable once the project is uploaded
+            const maxStep = skipVerify ? Math.max(currentStepIndex, 2) : currentStepIndex;
+            const done = !isSkipped && maxStep > idx;
             const active = activeStep === idx;
             const current = currentStepIndex === idx;
             const isLoading = loading && current;
@@ -204,24 +216,24 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
             return (
               <div key={step.key} className="flex items-center flex-1 last:flex-none">
                 <button
-                  onClick={() => !isAmazonCategorize && idx <= currentStepIndex && setActiveStep(idx)}
-                  disabled={isAmazonCategorize || idx > currentStepIndex}
+                  onClick={() => !isSkipped && idx <= maxStep && setActiveStep(idx)}
+                  disabled={isSkipped || idx > maxStep}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 rounded-xl transition-all",
                     active ? "bg-primary/10" : "hover:bg-accent",
-                    (isAmazonCategorize || idx > currentStepIndex) && "opacity-40 cursor-not-allowed"
+                    (isSkipped || idx > maxStep) && "opacity-40 cursor-not-allowed"
                   )}
                 >
                   <div className={cn(
                     "w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-colors",
-                    isAmazonCategorize ? "bg-muted text-muted-foreground" :
+                    isSkipped ? "bg-muted text-muted-foreground" :
                     done ? "bg-primary text-primary-foreground" :
                     active ? "bg-primary text-primary-foreground" :
                     "bg-muted text-muted-foreground"
                   )}>
                     {isLoading ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : done && !isAmazonCategorize ? (
+                    ) : done ? (
                       <CheckCircle2 className="w-4 h-4" />
                     ) : (
                       <Icon className="w-4 h-4" />
@@ -232,7 +244,9 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
                       {step.label}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {isAmazonCategorize ? "Not required for Amazon" : step.desc}
+                      {isSkipVerifyStep ? "Not required" :
+                       isAmazonCategorize ? "Not required for Amazon" :
+                       step.desc}
                     </p>
                   </div>
                 </button>
@@ -250,10 +264,11 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         {activeStep === 0 && (
           <ProductsTable
             products={products}
-            onNext={() => { setActiveStep(1); }}
+            onNext={() => setActiveStep(skipVerify ? 2 : 1)}
             onRunVerify={runVerify}
             loading={loading}
             projectStatus={project.status}
+            skipVerify={skipVerify}
           />
         )}
         {activeStep === 1 && (
