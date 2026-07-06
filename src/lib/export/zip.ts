@@ -191,13 +191,14 @@ function getProductField(p: Product, key: string): unknown {
   const vd = p.vendorData as Record<string, unknown> | null;
   const ld = p.liveData as Record<string, unknown> | null;
 
+  // Look up from vendorData — exact match first, then normalised key
   const fromVendor = (...aliases: string[]): unknown => {
     if (!vd) return undefined;
     for (const alias of aliases) {
       const na = normalizeKey(alias);
-      if (alias in vd) return vd[alias];
+      if (alias in vd) { const v = vd[alias]; if (v !== "" && v != null) return v; }
       const hit = Object.keys(vd).find((k) => normalizeKey(k) === na);
-      if (hit !== undefined) return vd[hit];
+      if (hit !== undefined) { const v = vd[hit]; if (v !== "" && v != null) return v; }
     }
     return undefined;
   };
@@ -209,7 +210,37 @@ function getProductField(p: Product, key: string): unknown {
 
   const price = p.price != null
     ? p.price
-    : (fromVendor("price", "retail_price", "unit_price", "cost", "msrp", "list_price") ?? livePrice ?? "");
+    : (fromVendor("price", "retail_price", "unit_price", "cost", "msrp", "list_price", "wholesale") ?? livePrice ?? "");
+
+  // ── Broad ID search across vendor data ──────────────────────────────────────
+  // Covers any column a vendor might use for item/style/model/catalog numbers
+  const anyVendorId = fromVendor(
+    "item", "item_no", "item_number", "item_id", "item_#",
+    "sku", "sku_id", "sku_no",
+    "style", "style_no", "style_number", "style_id", "style_#",
+    "model", "model_no", "model_number", "model_id",
+    "part_no", "part_number", "part_id",
+    "product_no", "product_number", "product_code",
+    "article_no", "article_number", "article_id", "article",
+    "catalog_no", "catalog_number", "cat_no",
+    "design_no", "design_number", "design_id",
+    "reference", "ref", "ref_no",
+    "stock_no", "stock_number",
+    "collection_code", "collection_id",
+  );
+
+  // Guaranteed unique ID: prefer meaningful identifiers, fall back to DB id (always non-empty)
+  const goodsId   = p.upc ?? p.vendorSku ?? anyVendorId ?? p.id;
+  const skuId     = p.vendorSku ?? p.upc ?? anyVendorId ?? p.id;
+  const productId = p.upc ?? p.vendorSku ?? anyVendorId ?? p.asin ?? verifiedAsin ?? p.id;
+
+  // ── Description / details — prefer vendor text, fall back to product name ──
+  const descriptionText =
+    p.description ||
+    (fromVendor("description", "long_description", "details", "notes", "specs", "specifications") as string | undefined) ||
+    p.name ||
+    (fromLive("description") as string | undefined) ||
+    "";
 
   const coreMap: Record<string, unknown> = {
     // Name / Title
@@ -218,23 +249,22 @@ function getProductField(p: Product, key: string): unknown {
     product_name: p.name || fromLive("title") || "",
     item_name: p.name || fromLive("title") || "",
 
-    // SKU
-    sku: p.vendorSku, vendor_sku: p.vendorSku, seller_sku: p.vendorSku,
-    merchant_sku: p.vendorSku, sku_id: p.vendorSku,
+    // SKU fields — guaranteed non-empty
+    sku: skuId, vendor_sku: skuId, seller_sku: skuId, merchant_sku: skuId, sku_id: skuId,
 
-    // IDs
-    upc: p.upc ?? fromVendor("upc", "ean", "barcode", "gtin", "product_id", "item_number") ?? "",
+    // Barcode IDs
+    upc: p.upc ?? fromVendor("upc", "ean", "barcode", "gtin") ?? "",
     ean: p.upc ?? fromVendor("ean", "upc", "barcode", "gtin") ?? "",
     barcode: p.upc ?? fromVendor("barcode", "upc", "ean") ?? "",
     gtin: p.upc ?? fromVendor("gtin", "upc", "ean") ?? "",
     asin: p.asin ?? verifiedAsin ?? "",
     merchant_suggested_asin: p.asin ?? verifiedAsin ?? "",
 
-    // Temu / generic marketplace IDs
-    goods_id: p.upc ?? p.vendorSku ?? "",
-    product_id: p.upc ?? fromVendor("upc", "ean", "barcode", "product_id") ?? p.asin ?? verifiedAsin ?? "",
+    // Temu / marketplace generic IDs — guaranteed non-empty
+    goods_id: goodsId,
+    product_id: productId,
 
-    // External ID (Amazon flat-file)
+    // Amazon flat-file external ID
     external_product_id: p.upc ?? fromVendor("upc", "ean", "barcode") ?? p.asin ?? verifiedAsin ?? "",
     external_product_id_type: (p.upc || fromVendor("upc", "ean", "barcode")) ? "UPC" : (p.asin || verifiedAsin) ? "ASIN" : "",
     product_id_type: (p.upc || fromVendor("upc", "ean", "barcode")) ? "UPC" : (p.asin || verifiedAsin) ? "ASIN" : "",
@@ -245,20 +275,21 @@ function getProductField(p: Product, key: string): unknown {
     update_delete: "PartialUpdate",
     operation_type: "Update",
 
-    // Status (Temu / Best Buy / generic)
-    status: fromVendor("status") ?? "on_sale",
+    // Status
+    status: fromVendor("status", "item_status", "product_status", "active") ?? "on_sale",
     active: "Y",
 
     // Brand / Manufacturer
-    brand: p.brand || fromLive("brand") || "",
-    brand_name: p.brand || fromLive("brand") || "",
-    manufacturer: p.brand || fromLive("brand") || "",
+    brand: p.brand || (fromVendor("brand", "brand_name", "manufacturer", "maker") as string) || fromLive("brand") || "",
+    brand_name: p.brand || (fromVendor("brand", "brand_name", "manufacturer") as string) || fromLive("brand") || "",
+    manufacturer: p.brand || (fromVendor("manufacturer", "brand", "maker") as string) || fromLive("brand") || "",
 
-    // Description / Details
-    description: p.description || fromLive("description") || fromVendor("details", "description") || "",
-    product_description: p.description || fromLive("description") || "",
-    details: p.description || fromLive("description") || fromVendor("details", "description") || "",
-    bullet_point1: fromVendor("bullet_point1", "bullet1", "feature1", "key_feature_1") ?? "",
+    // Description / Details — never empty (falls back to product name)
+    description: descriptionText,
+    product_description: descriptionText,
+    details: descriptionText,
+    long_description: descriptionText,
+    bullet_point1: fromVendor("bullet_point1", "bullet1", "feature1", "key_feature_1") ?? p.name ?? "",
     bullet_point2: fromVendor("bullet_point2", "bullet2", "feature2", "key_feature_2") ?? "",
     bullet_point3: fromVendor("bullet_point3", "bullet3", "feature3", "key_feature_3") ?? "",
     bullet_point4: fromVendor("bullet_point4", "bullet4", "feature4") ?? "",
@@ -267,8 +298,8 @@ function getProductField(p: Product, key: string): unknown {
     // Price
     price,
     standard_price: price,
-    msrp: fromVendor("msrp", "list_price") ?? price,
-    sale_price: fromVendor("sale_price", "promo_price") ?? "",
+    msrp: fromVendor("msrp", "list_price", "retail_price") ?? price,
+    sale_price: fromVendor("sale_price", "promo_price") ?? price,
     minimum_seller_allowed_price: fromVendor("min_price", "minimum_price", "map_price") ?? price,
     maximum_seller_allowed_price: fromVendor("max_price", "maximum_price") ?? "",
 
@@ -280,40 +311,55 @@ function getProductField(p: Product, key: string): unknown {
     quantity: fromVendor("quantity", "qty", "stock", "inventory", "available_qty", "on_hand") ?? "1",
     fulfillment_latency: fromVendor("lead_time", "fulfillment_latency", "handling_time") ?? "",
 
+    // Dimensions
+    dimensions: fromVendor("dimensions", "dims", "size", "product_size") ?? "",
+    length: fromVendor("length", "item_length") ?? "",
+    width: fromVendor("width", "item_width") ?? "",
+    height: fromVendor("height", "item_height", "depth") ?? "",
+    weight: fromVendor("weight", "item_weight", "unit_weight") ?? "",
+
     // Image
     image_url: p.imageUrl || fromLive("image") || "",
     imageurl: p.imageUrl || fromLive("image") || "",
     main_image_url: p.imageUrl || fromLive("image") || "",
     other_image_url1: fromVendor("image_url2", "other_image_url1", "alternate_image1") ?? "",
 
-    // Category
+    // Category — always filled from AI categorisation
     category: p.marketplaceCategory ?? "",
     category_name: p.marketplaceCategory ?? "",
     feed_product_type: p.marketplaceCategory ?? "",
     item_type: p.marketplaceCategory ?? "",
     item_type_name: p.categoryPath ?? p.marketplaceCategory ?? "",
-    category_path: p.categoryPath ?? "",
-    browse_node: "",
+    category_path: p.categoryPath ?? p.marketplaceCategory ?? "",
+    browse_node: p.categoryPath ?? "",
     product_type: p.marketplaceCategory ?? "",
 
-    // Customisation / technique (Temu-specific — pass through from vendorData if present)
-    customization_processing_technique: fromVendor("customization_processing_technique", "processing_technique") ?? "",
-    primary_technique: fromVendor("primary_technique", "technique") ?? "",
-    secondary_technique: fromVendor("secondary_technique") ?? "",
+    // Temu-specific technique fields — pass through vendor data if present
+    customization_processing_technique: fromVendor("customization_processing_technique", "processing_technique", "technique") ?? "",
+    primary_technique: fromVendor("primary_technique", "technique", "process") ?? "",
+    secondary_technique: fromVendor("secondary_technique", "secondary_process") ?? "",
+    customization_option: fromVendor("customization_option", "customization") ?? "",
 
     // Misc
-    merchant_catalog_number: p.vendorSku ?? "",
-    unspsc_code: "",
-    national_stock_number: "",
+    merchant_catalog_number: skuId,
+    unspsc_code: fromVendor("unspsc_code", "unspsc") ?? "",
+    national_stock_number: fromVendor("national_stock_number", "nsn") ?? "",
+    country_of_origin: fromVendor("country_of_origin", "country", "made_in", "origin") ?? "",
+    material: fromVendor("material", "materials", "fabric", "composition") ?? "",
+    color: fromVendor("color", "colour", "color_name") ?? "",
+    size: fromVendor("size", "item_size", "dimensions") ?? "",
+    age_group: fromVendor("age_group", "age", "age_range") ?? "",
+    gender: fromVendor("gender", "target_gender") ?? "",
+    pack_size: fromVendor("pack_size", "pack", "pieces_per_pack", "units_per_pack", "qty_per_pack") ?? "",
   };
 
   if (nk in coreMap) return coreMap[nk];
 
-  // Fall back to vendorData — exact match first, then normalised
+  // Fall back to vendorData — exact match first, then normalised key
   if (vd) {
-    if (key in vd) return vd[key];
+    if (key in vd) { const v = vd[key]; if (v !== "" && v != null) return v; }
     const match = Object.keys(vd).find((k) => normalizeKey(k) === nk);
-    if (match) return vd[match];
+    if (match) { const v = vd[match]; if (v !== "" && v != null) return v; }
   }
 
   return "";
