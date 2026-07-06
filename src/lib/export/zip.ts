@@ -5,15 +5,17 @@ import type { Product, ExportTemplate } from "@prisma/client";
 type Column = { key: string; label: string; required?: boolean };
 
 // ── Category-split export (primary mode) ─────────────────────────────────────
-// One template format → one file per product category, all bundled in a ZIP.
+// Each category is auto-matched to the closest template by name similarity.
+// The defaultTemplateId is used as the fallback when no close match is found.
 
 export async function generateCategoryZip(
   products: Product[],
-  template: ExportTemplate,
+  templates: ExportTemplate[],
   marketplace = "amazon",
+  defaultTemplateId?: string,
 ): Promise<Buffer> {
   const zip = new JSZip();
-  const columns = template.columns as Column[];
+  const fallback = templates.find((t) => t.id === defaultTemplateId) ?? templates[0];
 
   const eligible = eligibleProducts(products, marketplace);
 
@@ -25,10 +27,12 @@ export async function generateCategoryZip(
     groups.get(cat)!.push(p);
   }
 
-  const fileData = template.fileData ? (template.fileData as Buffer) : null;
-
   for (const [category, categoryProducts] of groups) {
+    const template = findBestTemplate(category, templates, fallback);
+    const columns = template.columns as Column[];
+    const fileData = template.fileData ? (template.fileData as Buffer) : null;
     const fileName = sanitize(category);
+
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
     } else {
@@ -40,6 +44,38 @@ export async function generateCategoryZip(
   }
 
   return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
+}
+
+// Pick the best-matching template for a category using word-overlap scoring.
+// Falls back to the provided default when no template scores above zero.
+export function findBestTemplate<T extends { id: string; name: string }>(
+  category: string,
+  templates: T[],
+  fallback: T,
+): T {
+  if (templates.length <= 1) return fallback;
+
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const normCat = norm(category);
+  const catWords = normCat.split(" ").filter((w) => w.length > 2);
+
+  let best = fallback;
+  let bestScore = 0;
+
+  for (const t of templates) {
+    const normName = norm(t.name);
+    const nameWords = normName.split(" ").filter((w) => w.length > 2);
+
+    let score = 0;
+    for (const word of catWords) if (nameWords.includes(word)) score += 2;
+    for (const word of nameWords) if (catWords.includes(word)) score += 1;
+    if (normName.includes(normCat)) score += 5;
+    if (normCat.includes(normName)) score += 3;
+
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+
+  return best;
 }
 
 // ── Legacy multi-template export (kept for backward compat) ──────────────────

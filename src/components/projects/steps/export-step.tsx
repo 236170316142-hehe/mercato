@@ -1,9 +1,29 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Download, FileSpreadsheet, Loader2, CheckCircle2, Package } from "lucide-react";
+import { Download, FileSpreadsheet, Loader2, CheckCircle2, Package, Shuffle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+function matchTemplate(category: string, templates: Template[], fallback: Template): Template {
+  if (templates.length <= 1) return fallback;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const normCat = norm(category);
+  const catWords = normCat.split(" ").filter((w) => w.length > 2);
+  let best = fallback;
+  let bestScore = 0;
+  for (const t of templates) {
+    const normName = norm(t.name);
+    const nameWords = normName.split(" ").filter((w) => w.length > 2);
+    let score = 0;
+    for (const word of catWords) if (nameWords.includes(word)) score += 2;
+    for (const word of nameWords) if (catWords.includes(word)) score += 1;
+    if (normName.includes(normCat)) score += 5;
+    if (normCat.includes(normName)) score += 3;
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+  return best;
+}
 
 type Template = {
   id: string;
@@ -135,7 +155,8 @@ export function ExportStep({ projectId, marketplace, products, verifiedCount, pr
             </div>
           ) : (
             <div>
-              <h3 className="text-sm font-medium mb-2">Template format</h3>
+              <h3 className="text-sm font-medium mb-1">Fallback template</h3>
+              <p className="text-xs text-muted-foreground mb-2">Used for categories that don&apos;t closely match any template name</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {templates.map((t) => (
                   <button
@@ -170,17 +191,27 @@ export function ExportStep({ projectId, marketplace, products, verifiedCount, pr
             <div>
               <h3 className="text-sm font-medium mb-2">
                 Files that will be created
-                <span className="ml-2 text-xs text-muted-foreground font-normal">using {selectedTemplate.name} columns</span>
+                <span className="ml-2 text-xs text-muted-foreground font-normal">— template auto-matched per category</span>
               </h3>
               <div className="border rounded-xl divide-y overflow-hidden">
-                {categories.map(([category, count]) => (
-                  <div key={category} className="flex items-center gap-3 px-4 py-2.5">
-                    <FileSpreadsheet className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <span className="text-sm flex-1 truncate">{category}</span>
-                    <span className="text-xs text-muted-foreground shrink-0">{count} product{count !== 1 ? "s" : ""}</span>
-                    <span className="text-xs text-muted-foreground shrink-0">{selectedTemplate.fileFormat.toUpperCase()}</span>
-                  </div>
-                ))}
+                {categories.map(([category, count]) => {
+                  const matched = matchTemplate(category, templates, selectedTemplate);
+                  const isDefault = matched.id === selectedTemplate.id;
+                  return (
+                    <div key={category} className="flex items-center gap-3 px-4 py-2.5">
+                      <FileSpreadsheet className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <span className="text-sm flex-1 truncate">{category}</span>
+                      <span className={cn(
+                        "text-xs shrink-0 flex items-center gap-1",
+                        isDefault ? "text-muted-foreground" : "text-blue-600 font-medium"
+                      )}>
+                        {!isDefault && <Shuffle className="w-3 h-3" />}
+                        {matched.name}
+                      </span>
+                      <span className="text-xs text-muted-foreground shrink-0">{count} product{count !== 1 ? "s" : ""}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

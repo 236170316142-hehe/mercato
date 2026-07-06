@@ -19,25 +19,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   try {
-    const [project, templates] = await Promise.all([
-      prisma.project.findUnique({ where: { id }, include: { products: true } }),
-      prisma.exportTemplate.findMany({
-        where: {
-          id: templateId ? templateId : { in: templateIds },
-          OR: [{ userId: user!.id }, { userId: null }],
-        },
-      }),
-    ]);
-
+    const project = await prisma.project.findUnique({ where: { id }, include: { products: true } });
     if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
     if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    if (!templates.length) return NextResponse.json({ error: "Template not found" }, { status: 404 });
+
+    // For category-split mode: fetch ALL templates for this marketplace so auto-matching works.
+    // For legacy mode: fetch only the requested template IDs.
+    const allTemplates = await prisma.exportTemplate.findMany({
+      where: templateId
+        ? { marketplace: project.marketplace, OR: [{ userId: user!.id }, { userId: null }] }
+        : { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
+    });
+    if (!allTemplates.length) return NextResponse.json({ error: "No templates found" }, { status: 404 });
 
     await prisma.project.update({ where: { id }, data: { status: "exporting" } });
 
     const zipBuffer = templateId
-      ? await generateCategoryZip(project.products, templates[0], project.marketplace)
-      : await generateExportZip(project.products, templates, project.marketplace);
+      ? await generateCategoryZip(project.products, allTemplates, project.marketplace, templateId)
+      : await generateExportZip(project.products, allTemplates, project.marketplace);
 
     await prisma.project.update({ where: { id }, data: { status: "done" } });
 
