@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { FileText, Plus, Trash2, X, ChevronDown, ChevronUp, Upload, FileSpreadsheet } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +41,7 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
   // File upload mode state
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [fileForm, setFileForm] = useState({ name: "", marketplace: "amazon", category: "" });
+  const [detectedCategory, setDetectedCategory] = useState<string | null>(null);
 
   // Manual mode state
   const [manualForm, setManualForm] = useState({
@@ -55,12 +56,29 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
     if (file) pickFile(file);
   }
 
-  function pickFile(file: File) {
+  const pickFile = useCallback(async (file: File) => {
     setUploadFile(file);
+    setDetectedCategory(null);
     // Auto-fill name from filename (strip extension)
     const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
-    setFileForm((f) => ({ ...f, name: f.name || baseName }));
-  }
+    setFileForm((f) => ({ ...f, name: f.name || baseName, category: "" }));
+
+    // Detect category from file content in background
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/templates/detect", { method: "POST", body: fd });
+      if (res.ok) {
+        const data = await res.json() as { category: string | null };
+        if (data.category) {
+          setDetectedCategory(data.category);
+          setFileForm((f) => ({ ...f, category: f.category || data.category || "" }));
+        }
+      }
+    } catch {
+      // Detection failed silently — user can type manually
+    }
+  }, []);
 
   async function handleFileSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -80,6 +98,7 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
       setTemplates((prev) => [tpl, ...prev]);
       setUploadFile(null);
       setFileForm({ name: "", marketplace: "amazon", category: "" });
+      setDetectedCategory(null);
       setShowAdd(false);
     } catch (e) {
       setError((e as Error).message);
@@ -238,12 +257,20 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
                 >
                   {MARKETPLACES.map((mp) => <option key={mp} value={mp} className="capitalize">{mp}</option>)}
                 </select>
-                <input
-                  placeholder="Category (optional)"
-                  value={fileForm.category}
-                  onChange={(e) => setFileForm((f) => ({ ...f, category: e.target.value }))}
-                  className="h-9 rounded-lg border bg-background px-3 text-sm sm:col-span-2"
-                />
+                <div className="sm:col-span-2">
+                  <label className="text-xs text-muted-foreground mb-1 block">
+                    Category
+                    {detectedCategory && (
+                      <span className="ml-2 text-xs font-medium text-primary">auto-detected</span>
+                    )}
+                  </label>
+                  <input
+                    placeholder="Auto-detected from file — override if needed"
+                    value={fileForm.category || detectedCategory || ""}
+                    onChange={(e) => setFileForm((f) => ({ ...f, category: e.target.value }))}
+                    className="h-9 w-full rounded-lg border bg-background px-3 text-sm"
+                  />
+                </div>
               </div>
 
               <div className="flex gap-2 justify-end">

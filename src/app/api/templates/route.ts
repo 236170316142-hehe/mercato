@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import { readXlsxGrid } from "@/lib/vendor/xlsx-lite";
+import { detectTemplateCategory } from "@/lib/ai/detect-template-category";
 
 const MAX_BYTES = 15 * 1024 * 1024;
 const ALLOWED_EXT = new Set([".xlsx", ".xlsm", ".csv", ".tsv"]);
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     let headers: string[] = [];
+    let sheetName: string | null = null;
 
     if (ext === ".csv" || ext === ".tsv") {
       const text = buffer.toString("utf-8").replace(/^﻿/, "");
@@ -63,13 +65,14 @@ export async function POST(req: NextRequest) {
       const firstLine = text.split(/\r?\n/)[0] ?? "";
       headers = firstLine.split(delim).map((h) => h.replace(/^"|"$/g, "").trim()).filter(Boolean);
     } else {
-      const { grid } = await readXlsxGrid(buffer, 30);
+      const result = await readXlsxGrid(buffer, 30);
+      sheetName = result.sheetName;
       let bestIdx = 0, bestCount = -1;
-      for (let i = 0; i < Math.min(grid.length, 25); i++) {
-        const count = grid[i].filter((c) => c.trim() !== "").length;
+      for (let i = 0; i < Math.min(result.grid.length, 25); i++) {
+        const count = result.grid[i].filter((c) => c.trim() !== "").length;
         if (count >= 2 && count > bestCount) { bestCount = count; bestIdx = i; }
       }
-      headers = (grid[bestIdx] ?? []).map((h) => h.trim()).filter(Boolean);
+      headers = (result.grid[bestIdx] ?? []).map((h) => h.trim()).filter(Boolean);
     }
 
     if (!headers.length) return NextResponse.json({ error: "No column headers found in file" }, { status: 400 });
@@ -79,18 +82,21 @@ export async function POST(req: NextRequest) {
       label: key.charAt(0).toUpperCase() + key.slice(1).replace(/[_-]/g, " "),
     }));
 
+    // Auto-detect category if not provided
+    const resolvedCategory = category || await detectTemplateCategory(file.name, sheetName, headers) || null;
+
     const template = await prisma.exportTemplate.create({
       data: {
         userId: user!.id,
         name,
         marketplace,
-        category,
+        category: resolvedCategory,
         fileFormat: ext === ".csv" || ext === ".tsv" ? "csv" : "xlsx",
         columns,
       },
     });
 
-    return NextResponse.json({ ...template, detectedColumns: headers.length });
+    return NextResponse.json({ ...template, detectedColumns: headers.length, suggestedCategory: resolvedCategory });
   }
 
   // ── JSON path (manual column entry) ──────────────────────────────────────
