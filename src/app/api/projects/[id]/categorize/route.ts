@@ -18,10 +18,23 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  // Fetch template categories for this marketplace to constrain AI to exact names
+  const marketplaceTemplates = await prisma.exportTemplate.findMany({
+    where: { marketplace: project.marketplace },
+    select: { category: true },
+  });
+  const availableCategories = [
+    ...new Set(marketplaceTemplates.map((t) => t.category).filter((c): c is string => !!c)),
+  ];
+
   await prisma.project.update({ where: { id }, data: { status: "categorizing" } });
 
   try {
-    const results = await categorizeProducts(project.marketplace, project.products);
+    const results = await categorizeProducts(
+      project.marketplace,
+      project.products,
+      availableCategories.length ? availableCategories : undefined,
+    );
 
     await Promise.all(
       results.map((r) =>
@@ -39,7 +52,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     await prisma.project.update({ where: { id }, data: { status: "categorized" } });
 
-    return NextResponse.json({ categorized: results.length });
+    return NextResponse.json({ categorized: results.length, categories: availableCategories });
   } catch (err) {
     await prisma.project.update({ where: { id }, data: { status: "verified" } });
     const msg = err instanceof Error ? err.message : "Categorization failed";

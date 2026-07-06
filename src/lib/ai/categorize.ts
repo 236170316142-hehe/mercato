@@ -29,8 +29,11 @@ const MARKETPLACE_TAXONOMIES: Record<string, string> = {
 export async function categorizeProducts(
   marketplace: string,
   products: ProductInput[],
+  availableCategories?: string[],
 ): Promise<CategorizeResult[]> {
-  const taxonomy = MARKETPLACE_TAXONOMIES[marketplace] ?? `${marketplace} product categories`;
+  const taxonomy = availableCategories?.length
+    ? `exactly one of these categories (use the name verbatim):\n${availableCategories.map((c) => `- ${c}`).join("\n")}`
+    : (MARKETPLACE_TAXONOMIES[marketplace] ?? `${marketplace} product categories`);
   const model = process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
   const BATCH = 20;
@@ -64,7 +67,7 @@ async function categorizeBatch(
     .map((p, idx) => `${idx + 1}. "${p.name}"${p.brand ? ` by ${p.brand}` : ""}${p.description ? ` — ${p.description.slice(0, 80)}` : ""}`)
     .join("\n");
 
-  const prompt = `You are a product categorization expert. Categorize each product into the correct ${taxonomy}.
+  const prompt = `You are a product categorization expert. Categorize each product into ${taxonomy}.
 
 Products to categorize:
 ${list}
@@ -76,8 +79,8 @@ Respond with a JSON array only (no markdown, no explanation):
 ]
 
 Rules:
-- category: the most specific matching category name
-- path: full breadcrumb path with " > " separators
+- category: must be EXACTLY one of the allowed category names (copy verbatim, no paraphrasing)
+- path: full breadcrumb path with " > " separators (use the category as the leaf)
 - confidence: 0.0 to 1.0 based on how certain you are
 - Return exactly ${products.length} items in the same order`;
 
