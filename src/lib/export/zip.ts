@@ -39,14 +39,19 @@ export async function generateCategoryZip(
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
     } else {
-      const buffer = fileData
-        ? await fillTemplateXlsx(categoryProducts, columns, fileData)
-        : await createXlsxFromScratch(categoryProducts, columns, category);
+      let buffer: Buffer;
+      try {
+        buffer = fileData
+          ? await fillTemplateXlsx(categoryProducts, columns, fileData)
+          : await createXlsxFromScratch(categoryProducts, columns, category);
+      } catch (e) {
+        console.error(`[export] template fill failed for "${category}", falling back to scratch:`, e);
+        buffer = await createXlsxFromScratch(categoryProducts, columns, category);
+      }
       zip.file(`${fileName}.xlsx`, buffer);
     }
   }
 
-  // parsedCache unused beyond scope — kept for future optimisation
   void parsedCache;
 
   return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
@@ -200,11 +205,16 @@ async function fillTemplateXlsx(
     if (hasFormula || !hasLiteralText) { firstDataRow = r; break; }
   }
 
-  // Remove all existing data rows in ONE splice — avoids the slow per-row loop
+  // Remove all existing data rows in ONE splice — avoids the slow per-row loop.
+  // Guard against edge cases: spliceRows(n, 0) is a no-op; negative count must not happen.
   const lastRow = ws.lastRow?.number ?? headerRowNum;
-  const existingDataRows = lastRow - headerRowNum;
+  const existingDataRows = Math.max(0, lastRow - headerRowNum);
   if (existingDataRows > 0) {
-    ws.spliceRows(headerRowNum + 1, existingDataRows);
+    try {
+      ws.spliceRows(headerRowNum + 1, existingDataRows);
+    } catch {
+      // Some complex templates (merged cells, named ranges) reject spliceRows — ignore and overwrite in place
+    }
   }
 
   // Append product rows after the header

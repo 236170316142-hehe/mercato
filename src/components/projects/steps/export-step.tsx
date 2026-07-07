@@ -78,8 +78,10 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
         body: JSON.stringify({ autoMatch: true }),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Export failed");
+        const text = await res.text().catch(() => "");
+        let msg = "Export failed";
+        try { msg = (JSON.parse(text) as { error?: string }).error ?? text.slice(0, 300) || msg; } catch { msg = text.slice(0, 300) || msg; }
+        toast.error(msg);
         return;
       }
       const blob = await res.blob();
