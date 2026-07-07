@@ -18,15 +18,18 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  // Fetch all templates visible to this user and use their names as the allowed category list.
+  // Fetch templates for this marketplace and use their names as the allowed category list.
   // Template name is the canonical category — if a category field is set it takes priority,
   // otherwise the name itself is used (since users name templates after the category they represent).
-  const userTemplates = await prisma.exportTemplate.findMany({
-    where: { OR: [{ userId: user!.id }, { userId: null }] },
+  const marketplaceTemplates = await prisma.exportTemplate.findMany({
+    where: {
+      marketplace: project.marketplace,
+      OR: [{ userId: user!.id }, { userId: null }],
+    },
     select: { name: true, category: true },
   });
   const availableCategories = [
-    ...new Set(userTemplates.map((t) => t.category || t.name).filter(Boolean)),
+    ...new Set(marketplaceTemplates.map((t) => t.category || t.name).filter(Boolean)),
   ] as string[];
 
   await prisma.project.update({ where: { id }, data: { status: "categorizing" } });

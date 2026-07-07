@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // For legacy mode: fetch only the requested template IDs.
     const allTemplates = await prisma.exportTemplate.findMany({
       where: templateId
-        ? { OR: [{ userId: user!.id }, { userId: null }] }
+        ? { marketplace: project.marketplace, OR: [{ userId: user!.id }, { userId: null }] }
         : { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
     });
     if (!allTemplates.length) return NextResponse.json({ error: "No templates found" }, { status: 404 });

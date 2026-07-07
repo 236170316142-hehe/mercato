@@ -52,7 +52,7 @@ export function ExportStep({ projectId, marketplace, products, verifiedCount, pr
   const [fetching, setFetching] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/templates`)
+    fetch(`/api/templates?marketplace=${marketplace}`)
       .then((r) => r.json())
       .then((data) => {
         const tpls: Template[] = data.templates ?? [];
