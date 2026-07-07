@@ -90,6 +90,8 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
       a.click();
       URL.revokeObjectURL(url);
       toast.success(`ZIP downloaded — ${categories.length} file${categories.length !== 1 ? "s" : ""}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed — check server logs");
     } finally {
       setLoading(false);
     }

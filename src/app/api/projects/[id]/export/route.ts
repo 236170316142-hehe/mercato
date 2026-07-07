@@ -3,6 +3,8 @@ import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import { generateCategoryZip, generateExportZip } from "@/lib/export/zip";
 
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { user, response } = await authGuard();
   if (response) return response;

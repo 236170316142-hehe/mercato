@@ -34,7 +34,11 @@ export async function categorizeProducts(
   const taxonomy = availableCategories?.length
     ? `exactly one of these categories (use the name verbatim):\n${availableCategories.map((c) => `- ${c}`).join("\n")}`
     : (MARKETPLACE_TAXONOMIES[marketplace] ?? `${marketplace} product categories`);
-  const model = process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+
+  // Use Sonnet for better accuracy when categories are constrained to template names
+  const model = availableCategories?.length
+    ? (process.env.CATEGORIZE_ANTHROPIC_MODEL ?? process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-sonnet-5-20251101")
+    : (process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001");
 
   const BATCH = 20;
   const PARALLEL = 5; // run 5 AI calls concurrently
@@ -79,10 +83,12 @@ Respond with a JSON array only (no markdown, no explanation):
 ]
 
 Rules:
-- category: must be EXACTLY one of the allowed category names (copy verbatim, no paraphrasing)
-- path: full breadcrumb path with " > " separators (use the category as the leaf)
-- confidence: 0.0 to 1.0 based on how certain you are
-- Return exactly ${products.length} items in the same order`;
+- category: must be EXACTLY one of the allowed category names listed above — copy it verbatim, do not paraphrase or invent new names
+- Distribute products across ALL relevant categories — do not put everything into one catch-all category
+- Pick the MOST SPECIFIC category that fits; only use a general category if no specific one applies
+- path: full breadcrumb with " > " separators ending at the category name
+- confidence: 0.0–1.0
+- Return exactly ${products.length} items in the same order as the input`;
 
   const { text } = await generateText({
     model: anthropic(model),
