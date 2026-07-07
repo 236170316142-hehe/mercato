@@ -8,14 +8,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (response) return response;
   const { id } = await params;
 
-  const body = await req.json();
-  // New mode: single templateId → one file per category
-  // Legacy mode: templateIds array → one file per template
+  const body = await req.json().catch(() => ({}));
+  // Auto mode: no templateId — use all marketplace templates with auto-matching
+  // Legacy single: templateId → specific fallback template
+  // Legacy multi: templateIds[] → one file per template
+  const autoMatch: boolean = body.autoMatch ?? false;
   const templateId: string | undefined = body.templateId;
   const templateIds: string[] = body.templateIds ?? [];
 
-  if (!templateId && !templateIds.length) {
-    return NextResponse.json({ error: "templateId or templateIds required" }, { status: 400 });
+  if (!autoMatch && !templateId && !templateIds.length) {
+    return NextResponse.json({ error: "autoMatch, templateId or templateIds required" }, { status: 400 });
   }
 
   try {
@@ -26,15 +28,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // For category-split mode: fetch ALL templates for this marketplace so auto-matching works.
     // For legacy mode: fetch only the requested template IDs.
     const allTemplates = await prisma.exportTemplate.findMany({
-      where: templateId
+      where: (autoMatch || templateId)
         ? { marketplace: project.marketplace, OR: [{ userId: user!.id }, { userId: null }] }
         : { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
     });
-    if (!allTemplates.length) return NextResponse.json({ error: "No templates found" }, { status: 404 });
+    if (!allTemplates.length) return NextResponse.json({ error: "No templates found for this marketplace. Upload templates first." }, { status: 404 });
 
     await prisma.project.update({ where: { id }, data: { status: "exporting" } });
 
-    const zipBuffer = templateId
+    const zipBuffer = (autoMatch || templateId)
       ? await generateCategoryZip(project.products, allTemplates, project.marketplace, templateId)
       : await generateExportZip(project.products, allTemplates, project.marketplace);
 
