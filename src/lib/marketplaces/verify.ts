@@ -103,30 +103,52 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     const rawProducts = await getProductsByCode(1, upcs, { stats: 1 });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const liveNorm = normalizeMany(rawProducts, 1) as any[];
+
+    // One UPC can map to multiple ASINs (duplicates, variations, regional editions, etc.).
+    // Collect ALL candidates per UPC code so we can pick the best match, not just the last.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const upcToLive = new Map<string, typeof liveNorm[number]>();
+    const upcToLiveList = new Map<string, (typeof liveNorm[number])[]>();
     rawProducts.forEach((raw, idx) => {
       const norm = liveNorm[idx];
       if (!norm) return;
-      for (const code of [...(raw.eanList ?? []), ...(raw.upcList ?? [])]) {
-        if (typeof code === "string") upcToLive.set(code, norm);
+      const codes = [
+        ...(raw.eanList ?? []),
+        ...(raw.upcList ?? []),
+      ].filter((c): c is string => typeof c === "string");
+      for (const code of codes) {
+        if (!upcToLiveList.has(code)) upcToLiveList.set(code, []);
+        upcToLiveList.get(code)!.push(norm);
       }
-      if (raw.asin) upcToLive.set(raw.asin, norm);
     });
+
     for (const p of withUpcOnly) {
-      const lp = upcToLive.get(p.upc!);
-      if (lp) {
-        // Sanity-check: UPC databases sometimes return the wrong product (e.g. a different GHF
-        // style registered under the same barcode family). If the vendor's product name shares
-        // no words with the Amazon title it's the wrong product → fall through to keyword search.
-        const nameSim = titleSim(p.name, lp.title as string);
-        if (nameSim < 0.3) {
-          upcNotFound.push(p); // wrong product returned → try keyword search
-        } else {
-          upcResults.set(p.id, compareToLive(p, lp.title as string, lp.brand as string ?? null, null, lp as Record<string, unknown>));
-        }
+      const candidates = upcToLiveList.get(p.upc!) ?? [];
+      if (!candidates.length) {
+        upcNotFound.push(p); // UPC not in Keepa → try keyword search
+        continue;
+      }
+
+      // Pick the ASIN whose title is most similar to the vendor's product name.
+      // This handles the common case where one UPC maps to multiple listings
+      // (duplicate entries, variant parents, wrong catalog merges, etc.).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let best: any = candidates[0];
+      let bestSim = titleSim(p.name, best.title as string);
+      for (const candidate of candidates.slice(1)) {
+        const sim = titleSim(p.name, candidate.title as string);
+        if (sim > bestSim) { best = candidate; bestSim = sim; }
+      }
+
+      if (bestSim < 0.3) {
+        upcNotFound.push(p); // best candidate still doesn't match → try keyword search
       } else {
-        upcNotFound.push(p); // UPC not in Keepa → try keyword search before giving up
+        upcResults.set(p.id, compareToLive(
+          p,
+          best.title as string,
+          (best.brand as string) ?? null,
+          null,
+          best as Record<string, unknown>,
+        ));
       }
     }
   }
