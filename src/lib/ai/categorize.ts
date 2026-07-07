@@ -35,9 +35,10 @@ export async function categorizeProducts(
     ? `exactly one of these categories (use the name verbatim):\n${availableCategories.map((c) => `- ${c}`).join("\n")}`
     : (MARKETPLACE_TAXONOMIES[marketplace] ?? `${marketplace} product categories`);
 
-  // Use Sonnet for better accuracy when categories are constrained to template names
+  // When categorizing against exact template names, always use Sonnet for accuracy.
+  // CATEGORIZE_ANTHROPIC_MODEL can override this explicitly if needed.
   const model = availableCategories?.length
-    ? (process.env.CATEGORIZE_ANTHROPIC_MODEL ?? process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-sonnet-5-20251101")
+    ? (process.env.CATEGORIZE_ANTHROPIC_MODEL ?? "claude-sonnet-5")
     : (process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001");
 
   const BATCH = 20;
@@ -71,7 +72,7 @@ async function categorizeBatch(
     .map((p, idx) => `${idx + 1}. "${p.name}"${p.brand ? ` by ${p.brand}` : ""}${p.description ? ` — ${p.description.slice(0, 80)}` : ""}`)
     .join("\n");
 
-  const prompt = `You are a product categorization expert. Categorize each product into ${taxonomy}.
+  const prompt = `You are a product categorization expert for a retail store. Categorize each product into ${taxonomy}.
 
 Products to categorize:
 ${list}
@@ -82,11 +83,14 @@ Respond with a JSON array only (no markdown, no explanation):
   ...
 ]
 
-Rules:
-- category: must be EXACTLY one of the allowed category names listed above — copy it verbatim, do not paraphrase or invent new names
-- Distribute products across ALL relevant categories — do not put everything into one catch-all category
-- Pick the MOST SPECIFIC category that fits; only use a general category if no specific one applies
-- path: full breadcrumb with " > " separators ending at the category name
+Critical rules:
+- category must be EXACTLY one of the allowed category names listed above — copy verbatim, no changes whatsoever
+- Spread products across ALL matching categories — never pile everything into one bucket
+- Use the MOST SPECIFIC category that fits — generic or seasonal categories are absolute last resorts
+- "Seasonal" means holiday or season-specific decor ONLY — not a catch-all for uncertain products
+- "Decor" means decorative accessories, art, accent pieces ONLY
+- If a product clearly belongs to Rugs, Bedding & Bath, Mattress, Kitchen, Outdoor, Organization, Baby & Kids, or Home Improvement — always use that specific category, never Decor or Seasonal
+- path: breadcrumb with " > " separators, category name as the leaf node
 - confidence: 0.0–1.0
 - Return exactly ${products.length} items in the same order as the input`;
 
