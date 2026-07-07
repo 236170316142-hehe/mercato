@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Download, FileSpreadsheet, Loader2, Package, Shuffle } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 
 type Template = {
   id: string;
@@ -48,7 +47,14 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
 }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState("");
   const [fetching, setFetching] = useState(true);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     fetch(`/api/templates?marketplace=${marketplace}`)
@@ -71,31 +77,72 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
 
   async function handleExport() {
     setLoading(true);
+    setStatusMsg("Starting export…");
     try {
-      const res = await fetch(`/api/projects/${projectId}/export`, {
+      // 1. Kick off the background job
+      const startRes = await fetch(`/api/projects/${projectId}/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ autoMatch: true }),
       });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
+
+      if (!startRes.ok) {
+        const text = await startRes.text().catch(() => "");
         let msg = "Export failed";
         try { msg = (JSON.parse(text) as { error?: string }).error ?? (text.slice(0, 300) || msg); } catch { msg = text.slice(0, 300) || msg; }
         toast.error(msg);
         return;
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `mercato-export-${projectId}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success(`ZIP downloaded — ${categories.length} file${categories.length !== 1 ? "s" : ""}`);
+
+      const { jobId } = (await startRes.json()) as { jobId: string };
+      setStatusMsg("Processing files…");
+
+      // 2. Poll until done (max 5 min)
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2500));
+        if (!mountedRef.current) return;
+
+        const pollRes = await fetch(
+          `/api/projects/${projectId}/export?jobId=${encodeURIComponent(jobId)}`
+        );
+
+        const contentType = pollRes.headers.get("content-type") ?? "";
+
+        if (contentType.includes("application/zip")) {
+          const blob = await pollRes.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `mercato-export-${projectId}.zip`;
+          a.click();
+          URL.revokeObjectURL(url);
+          toast.success(`ZIP downloaded — ${categories.length} file${categories.length !== 1 ? "s" : ""}`);
+          return;
+        }
+
+        if (!pollRes.ok) {
+          const data = await pollRes.json().catch(() => ({ error: "Export failed" })) as { error?: string };
+          toast.error(data.error ?? "Export failed");
+          return;
+        }
+
+        const data = (await pollRes.json()) as { status: string; error?: string };
+        if (data.status === "error") {
+          toast.error(data.error ?? "Export failed");
+          return;
+        }
+        // status === "processing" → keep polling
+      }
+
+      toast.error("Export timed out — please try again");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Export failed — check server logs");
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+        setStatusMsg("");
+      }
     }
   }
 
@@ -115,7 +162,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
           className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-          {loading ? "Generating ZIP…" : `Download ZIP (${categories.length} file${categories.length !== 1 ? "s" : ""})`}
+          {loading ? (statusMsg || "Generating ZIP…") : `Download ZIP (${categories.length} file${categories.length !== 1 ? "s" : ""})`}
         </button>
       </div>
 
