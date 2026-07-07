@@ -80,7 +80,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         let msg = "Export failed";
-        try { msg = (JSON.parse(text) as { error?: string }).error ?? text.slice(0, 300) || msg; } catch { msg = text.slice(0, 300) || msg; }
+        try { msg = (JSON.parse(text) as { error?: string }).error ?? (text.slice(0, 300) || msg); } catch { msg = text.slice(0, 300) || msg; }
         toast.error(msg);
         return;
       }
