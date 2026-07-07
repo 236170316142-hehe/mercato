@@ -332,6 +332,12 @@ function getProductField(p: Product, key: string): unknown {
 
     // SKU fields — guaranteed non-empty
     sku: skuId, vendor_sku: skuId, seller_sku: skuId, merchant_sku: skuId, sku_id: skuId,
+    shop_sku: skuId, shopsku: skuId, item_sku: skuId,
+
+    // Variant grouping — UPC or vendor SKU used as the group identifier
+    variant_group_code: p.upc ?? fromVendor("variant_group_code", "group_code", "style_no", "style_number", "style") ?? p.vendorSku ?? anyVendorId ?? "",
+    variant_code: p.upc ?? p.vendorSku ?? anyVendorId ?? "",
+    group_code: p.upc ?? p.vendorSku ?? anyVendorId ?? "",
 
     // Barcode IDs
     upc: p.upc ?? fromVendor("upc", "ean", "barcode", "gtin") ?? "",
@@ -399,11 +405,21 @@ function getProductField(p: Product, key: string): unknown {
     height: fromVendor("height", "item_height", "depth") ?? "",
     weight: fromVendor("weight", "item_weight", "unit_weight") ?? "",
 
-    // Image
+    // Image — covers generic keys and Mathis-specific names
     image_url: p.imageUrl || fromLive("image") || "",
     imageurl: p.imageUrl || fromLive("image") || "",
     main_image_url: p.imageUrl || fromLive("image") || "",
+    silo_image: p.imageUrl || fromVendor("silo_image", "image_url", "main_image", "hero_image", "primary_image") || fromLive("image") || "",
     other_image_url1: fromVendor("image_url2", "other_image_url1", "alternate_image1") ?? "",
+    product_image_2_url: fromVendor("product_image_2_url", "image_url2", "image_url_2", "image2", "alternate_image1", "secondary_image") ?? "",
+    product_image_3_url: fromVendor("product_image_3_url", "image_url3", "image_url_3", "image3", "alternate_image2") ?? "",
+    product_image_4_url: fromVendor("product_image_4_url", "image_url4", "image_url_4", "image4", "alternate_image3") ?? "",
+    product_image_5_url: fromVendor("product_image_5_url", "image_url5", "image_url_5", "image5", "alternate_image4") ?? "",
+    product_image_6_url: fromVendor("product_image_6_url", "image_url6", "image_url_6", "image6", "alternate_image5") ?? "",
+    product_image_7_url: fromVendor("product_image_7_url", "image_url7", "image_url_7", "image7", "alternate_image6") ?? "",
+    product_image_8_url: fromVendor("product_image_8_url", "image_url8", "image_url_8", "image8", "alternate_image7") ?? "",
+    product_image_9_url: fromVendor("product_image_9_url", "image_url9", "image_url_9", "image9", "alternate_image8") ?? "",
+    product_image_10_url: fromVendor("product_image_10_url", "image_url10", "image_url_10", "image10", "alternate_image9") ?? "",
 
     // Category — always filled from AI categorisation
     category: p.marketplaceCategory ?? "",
