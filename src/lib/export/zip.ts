@@ -27,18 +27,19 @@ export async function generateCategoryZip(
     groups.get(cat)!.push(p);
   }
 
-  // Pre-parse each unique template file once to avoid redundant XLSX parsing
-  const parsedCache = new Map<string, { headers: Map<string, number>; firstDataRow: number; sheetName: string } | null>();
+  // Process all categories in parallel — each Excel load is independent.
+  // Sequential processing was timing out on Render (~14 s per file × 5 = 70 s → 502).
+  const fileEntries = await Promise.all(
+    [...groups.entries()].map(async ([category, categoryProducts]) => {
+      const template = findBestTemplate(category, templates, fallback);
+      const columns = template.columns as Column[];
+      const fileData = template.fileData ? (template.fileData as Buffer) : null;
+      const fileName = sanitize(category);
 
-  for (const [category, categoryProducts] of groups) {
-    const template = findBestTemplate(category, templates, fallback);
-    const columns = template.columns as Column[];
-    const fileData = template.fileData ? (template.fileData as Buffer) : null;
-    const fileName = sanitize(category);
+      if (template.fileFormat === "csv") {
+        return { name: `${fileName}.csv`, data: generateCsv(categoryProducts, columns) };
+      }
 
-    if (template.fileFormat === "csv") {
-      zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
-    } else {
       let buffer: Buffer;
       try {
         buffer = fileData
@@ -48,11 +49,11 @@ export async function generateCategoryZip(
         console.error(`[export] template fill failed for "${category}", falling back to scratch:`, e);
         buffer = await createXlsxFromScratch(categoryProducts, columns, category);
       }
-      zip.file(`${fileName}.xlsx`, buffer);
-    }
-  }
+      return { name: `${fileName}.xlsx`, data: buffer };
+    })
+  );
 
-  void parsedCache;
+  for (const { name, data } of fileEntries) zip.file(name, data);
 
   return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
 }
