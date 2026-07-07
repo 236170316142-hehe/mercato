@@ -27,6 +27,9 @@ export async function generateCategoryZip(
     groups.get(cat)!.push(p);
   }
 
+  // Pre-parse each unique template file once to avoid redundant XLSX parsing
+  const parsedCache = new Map<string, { headers: Map<string, number>; firstDataRow: number; sheetName: string } | null>();
+
   for (const [category, categoryProducts] of groups) {
     const template = findBestTemplate(category, templates, fallback);
     const columns = template.columns as Column[];
@@ -42,6 +45,9 @@ export async function generateCategoryZip(
       zip.file(`${fileName}.xlsx`, buffer);
     }
   }
+
+  // parsedCache unused beyond scope — kept for future optimisation
+  void parsedCache;
 
   return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
 }
@@ -171,6 +177,12 @@ async function fillTemplateXlsx(
     if (idx !== undefined) colIndexMap.push([col, idx]);
   }
 
+  // If no columns matched the template headers, fall back to a fresh workbook
+  // so the file is never silently empty.
+  if (colIndexMap.length === 0) {
+    return createXlsxFromScratch(products, columns, ws.name);
+  }
+
   // Determine the first data row.
   // Some templates (e.g. Temu) have hidden instruction rows between the header and the
   // first data row. Scan forward up to 10 rows to find the first row that either has
@@ -185,27 +197,23 @@ async function fillTemplateXlsx(
       if (v !== null && typeof v === "object" && "formula" in (v as object)) hasFormula = true;
       else if (v !== null && v !== undefined && v !== "") hasLiteralText = true;
     });
-    // Formula rows or empty rows are data-area rows; stop at first non-literal row
     if (hasFormula || !hasLiteralText) { firstDataRow = r; break; }
   }
 
-  // Write product rows directly into the data area, overwriting any existing
-  // cell values or formula cells. This works for both plain and formula-based templates.
-  for (let i = 0; i < products.length; i++) {
-    const row = ws.getRow(firstDataRow + i);
-    row.eachCell((cell) => { cell.value = null; });
-    for (const [col, colIdx] of colIndexMap) {
-      row.getCell(colIdx).value = (getProductField(products[i], col.key) ?? "") as ExcelJS.CellValue;
-    }
-    row.commit();
+  // Remove all existing data rows in ONE splice — avoids the slow per-row loop
+  const lastRow = ws.lastRow?.number ?? headerRowNum;
+  const existingDataRows = lastRow - headerRowNum;
+  if (existingDataRows > 0) {
+    ws.spliceRows(headerRowNum + 1, existingDataRows);
   }
 
-  // Clear any remaining template rows beyond the products we wrote
-  const lastRow = ws.lastRow?.number ?? firstDataRow;
-  for (let r = firstDataRow + products.length; r <= lastRow; r++) {
-    const row = ws.getRow(r);
-    row.eachCell((cell) => { cell.value = null; });
-    row.commit();
+  // Append product rows after the header
+  for (const p of products) {
+    const newRow = ws.addRow([]);
+    for (const [col, colIdx] of colIndexMap) {
+      newRow.getCell(colIdx).value = (getProductField(p, col.key) ?? "") as ExcelJS.CellValue;
+    }
+    newRow.commit();
   }
 
   return wb.xlsx.writeBuffer() as unknown as Promise<Buffer>;
