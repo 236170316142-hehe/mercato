@@ -35,7 +35,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
 }
 
-// Start export job — returns immediately with { jobId }
+// Start export job — lightweight auth + existence check only, then returns { jobId } immediately.
+// All heavy DB queries (products, template fileData) run inside the background job.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { user, response } = await authGuard();
   if (response) return response;
@@ -50,47 +51,49 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "autoMatch, templateId or templateIds required" }, { status: 400 });
   }
 
-  try {
-    const project = await prisma.project.findUnique({ where: { id }, include: { products: true } });
-    if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Lightweight check — just ownership, no heavy data loaded
+  const projectMeta = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, userId: true, marketplace: true },
+  });
+  if (!projectMeta) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (projectMeta.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const allTemplates = await prisma.exportTemplate.findMany({
-      where: (autoMatch || templateId)
-        ? { marketplace: project.marketplace, OR: [{ userId: user!.id }, { userId: null }] }
-        : { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
-    });
-    if (!allTemplates.length) {
-      return NextResponse.json({ error: "No templates found for this marketplace. Upload templates first." }, { status: 404 });
+  const jobId = `${id}_${Date.now()}`;
+  createJob(jobId);
+
+  // Mark exporting — this is fast (no data load)
+  await prisma.project.update({ where: { id }, data: { status: "exporting" } });
+
+  // All heavy work (loading products JSON, loading template fileData BYTEA) runs here in background.
+  // The HTTP response returns the jobId above; client polls GET until done.
+  void (async () => {
+    try {
+      const [project, allTemplates] = await Promise.all([
+        prisma.project.findUnique({ where: { id }, include: { products: true } }),
+        prisma.exportTemplate.findMany({
+          where: (autoMatch || templateId)
+            ? { marketplace: projectMeta.marketplace, OR: [{ userId: user!.id }, { userId: null }] }
+            : { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
+        }),
+      ]);
+
+      if (!project) throw new Error("Project not found");
+      if (!allTemplates.length) throw new Error("No templates found for this marketplace. Upload templates first.");
+
+      const zipBuffer = (autoMatch || templateId)
+        ? await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId)
+        : await generateExportZip(project.products, allTemplates, projectMeta.marketplace);
+
+      resolveJob(jobId, zipBuffer as Buffer);
+      await prisma.project.update({ where: { id }, data: { status: "done" } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[export] background job failed:", msg);
+      rejectJob(jobId, msg);
+      await prisma.project.update({ where: { id }, data: { status: "categorized" } }).catch(() => {});
     }
+  })();
 
-    const jobId = `${id}_${Date.now()}`;
-    createJob(jobId);
-
-    await prisma.project.update({ where: { id }, data: { status: "exporting" } });
-
-    // Fire-and-forget: response returns to client immediately; processing continues in background.
-    // This works on Render (persistent Node.js process) — the event loop stays alive.
-    void (async () => {
-      try {
-        const zipBuffer = (autoMatch || templateId)
-          ? await generateCategoryZip(project.products, allTemplates, project.marketplace, templateId)
-          : await generateExportZip(project.products, allTemplates, project.marketplace);
-
-        resolveJob(jobId, zipBuffer as Buffer);
-        await prisma.project.update({ where: { id }, data: { status: "done" } });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error("[export] background job failed:", msg);
-        rejectJob(jobId, msg);
-        await prisma.project.update({ where: { id }, data: { status: "categorized" } }).catch(() => {});
-      }
-    })();
-
-    return NextResponse.json({ jobId });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[export] setup failed:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
+  return NextResponse.json({ jobId });
 }
