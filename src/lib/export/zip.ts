@@ -27,33 +27,25 @@ export async function generateCategoryZip(
     groups.get(cat)!.push(p);
   }
 
-  // Process all categories in parallel — each Excel load is independent.
-  // Sequential processing was timing out on Render (~14 s per file × 5 = 70 s → 502).
-  const fileEntries = await Promise.all(
-    [...groups.entries()].map(async ([category, categoryProducts]) => {
-      const template = findBestTemplate(category, templates, fallback);
-      const columns = template.columns as Column[];
-      const fileData = template.fileData ? (template.fileData as Buffer) : null;
-      const fileName = sanitize(category);
+  // Process categories sequentially with event-loop yields between each file.
+  // ExcelJS template loading (fillTemplateXlsx) is synchronous CPU work that blocks
+  // the Node.js event loop for 10–15 s per file, preventing poll requests from being
+  // served. We skip template file loading and use column definitions only (createXlsxFromScratch).
+  // This is non-blocking and completes in < 1 s total.
+  for (const [category, categoryProducts] of groups) {
+    await new Promise<void>((r) => setImmediate(r)); // yield so HTTP polls can be served
 
-      if (template.fileFormat === "csv") {
-        return { name: `${fileName}.csv`, data: generateCsv(categoryProducts, columns) };
-      }
+    const template = findBestTemplate(category, templates, fallback);
+    const columns = template.columns as Column[];
+    const fileName = sanitize(category);
 
-      let buffer: Buffer;
-      try {
-        buffer = fileData
-          ? await fillTemplateXlsx(categoryProducts, columns, fileData)
-          : await createXlsxFromScratch(categoryProducts, columns, category);
-      } catch (e) {
-        console.error(`[export] template fill failed for "${category}", falling back to scratch:`, e);
-        buffer = await createXlsxFromScratch(categoryProducts, columns, category);
-      }
-      return { name: `${fileName}.xlsx`, data: buffer };
-    })
-  );
-
-  for (const { name, data } of fileEntries) zip.file(name, data);
+    if (template.fileFormat === "csv") {
+      zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
+    } else {
+      const buffer = await createXlsxFromScratch(categoryProducts, columns, category);
+      zip.file(`${fileName}.xlsx`, buffer);
+    }
+  }
 
   return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
 }
