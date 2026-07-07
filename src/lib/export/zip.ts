@@ -222,34 +222,99 @@ async function fillTemplateXlsx(
   return wb.xlsx.writeBuffer() as unknown as Promise<Buffer>;
 }
 
-// ── Create a fresh workbook when no template file is stored ───────────────────
+// ── Create a fresh workbook — pure XML + JSZip, no ExcelJS ───────────────────
+// ExcelJS.writeBuffer() is CPU-bound and blocks the Node.js event loop for
+// several seconds per file. JSZip.generateAsync() uses native zlib (truly
+// async) so it never blocks the event loop, keeping GET polls responsive.
 
 async function createXlsxFromScratch(
   products: Product[],
   columns: Column[],
   sheetName: string,
 ): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet(sheetName.slice(0, 31));
+  // Build all rows: header first, then one row per product
+  const allRows: string[][] = [
+    columns.map((c) => c.label),
+    ...products.map((p) => columns.map((c) => String(getProductField(p, c.key) ?? ""))),
+  ];
 
-  ws.columns = columns.map((c) => ({
-    header: c.label,
-    key: c.key,
-    width: Math.max(c.label.length + 4, 20),
-  }));
+  // Shared-string table (XLSX stores text by index to deduplicate)
+  const ssArr: string[] = [];
+  const ssMap = new Map<string, number>();
+  const ssIdx = (s: string): number => {
+    let i = ssMap.get(s);
+    if (i === undefined) { i = ssArr.length; ssMap.set(s, i); ssArr.push(s); }
+    return i;
+  };
+  for (const row of allRows) for (const cell of row) ssIdx(cell);
 
-  ws.getRow(1).font = { bold: true };
-  ws.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+  // Column-letter helper: 1→A, 27→AA …
+  const colLetter = (n: number): string => {
+    let s = "";
+    while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
+    return s;
+  };
 
-  for (const p of products) {
-    const row: Record<string, unknown> = {};
-    for (const col of columns) {
-      row[col.key] = getProductField(p, col.key) ?? "";
-    }
-    ws.addRow(row);
-  }
+  // Sheet XML — numbers written inline, strings reference shared-string index
+  const rowXml = allRows.map((row, ri) => {
+    const cells = row.map((val, ci) => {
+      const ref = `${colLetter(ci + 1)}${ri + 1}`;
+      const isNum = val !== "" && !Number.isNaN(Number(val));
+      return isNum
+        ? `<c r="${ref}"><v>${x(val)}</v></c>`
+        : `<c r="${ref}" t="s"><v>${ssIdx(val)}</v></c>`;
+    }).join("");
+    return `<row r="${ri + 1}">${cells}</row>`;
+  }).join("");
 
-  return wb.xlsx.writeBuffer() as unknown as Promise<Buffer>;
+  const safeSheet = sheetName.slice(0, 31).replace(/[\\/*?[\]:]/g, "_");
+
+  const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<sheetData>${rowXml}</sheetData></worksheet>`;
+
+  const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${ssArr.length}" uniqueCount="${ssArr.length}">
+${ssArr.map((s) => `<si><t xml:space="preserve">${x(s)}</t></si>`).join("")}
+</sst>`;
+
+  const wbXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="${x(safeSheet)}" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+
+  const xlsxZip = new JSZip();
+  xlsxZip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`);
+  xlsxZip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`);
+  xlsxZip.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`);
+  xlsxZip.file("xl/workbook.xml", wbXml);
+  xlsxZip.file("xl/worksheets/sheet1.xml", sheetXml);
+  xlsxZip.file("xl/sharedStrings.xml", ssXml);
+  xlsxZip.file("xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts><font><sz val="11"/><name val="Calibri"/></font></fonts>
+<fills><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+<borders><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+</styleSheet>`);
+
+  return xlsxZip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }) as unknown as Promise<Buffer>;
 }
 
 // ── CSV ───────────────────────────────────────────────────────────────────────
@@ -566,4 +631,8 @@ function normalizeKey(s: string): string {
 
 function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9_\- ]/g, "").trim().replace(/\s+/g, "_");
+}
+
+function x(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
