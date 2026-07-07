@@ -437,6 +437,56 @@ function getProductField(p: Product, key: string): unknown {
     secondary_technique: fromVendor("secondary_technique", "secondary_process") ?? "",
     customization_option: fromVendor("customization_option", "customization") ?? "",
 
+    // More name/title aliases
+    product_title: p.name || fromLive("title") || "",
+    display_name: p.name || fromLive("title") || "",
+    short_name: p.name || "",
+
+    // Short / long description aliases
+    short_description: (descriptionText || "").slice(0, 200),
+    short_desc: (descriptionText || "").slice(0, 200),
+    full_description: descriptionText,
+    product_features: fromVendor("features", "product_features", "key_features", "highlights") ?? descriptionText,
+    features: fromVendor("features", "product_features", "key_features", "highlights") ?? descriptionText,
+    key_features: fromVendor("key_features", "features", "highlights") ?? descriptionText,
+    shelf_description: descriptionText,
+    site_description: descriptionText,
+
+    // Search / keywords
+    keywords: fromVendor("keywords", "tags", "search_terms", "meta_keywords") ?? "",
+    tags: fromVendor("tags", "keywords", "search_terms") ?? "",
+    search_terms: fromVendor("search_terms", "keywords", "tags") ?? "",
+
+    // Price / cost aliases
+    retail_price: fromVendor("retail_price", "msrp", "list_price", "rrp", "suggested_retail_price") ?? price,
+    map_price: fromVendor("map_price", "minimum_advertised_price", "min_price", "map") ?? price,
+    cost: fromVendor("cost", "cost_price", "wholesale_price", "vendor_price", "net_price") ?? "",
+    wholesale: fromVendor("wholesale", "wholesale_price", "cost_price", "net_price") ?? "",
+
+    // Dimension aliases (many retailer templates use "Item Width" etc.)
+    item_length: fromVendor("length", "item_length", "product_length") ?? "",
+    item_width: fromVendor("width", "item_width", "product_width") ?? "",
+    item_height: fromVendor("height", "item_height", "product_height", "depth") ?? "",
+    item_depth: fromVendor("depth", "item_depth", "height") ?? "",
+    item_weight: fromVendor("weight", "item_weight", "product_weight", "unit_weight") ?? "",
+    product_length: fromVendor("length", "item_length", "product_length") ?? "",
+    product_width: fromVendor("width", "item_width", "product_width") ?? "",
+    product_height: fromVendor("height", "item_height", "product_height") ?? "",
+    product_weight: fromVendor("weight", "item_weight", "product_weight") ?? "",
+    package_weight: fromVendor("package_weight", "shipping_weight", "gross_weight") ?? "",
+    shipping_weight: fromVendor("shipping_weight", "package_weight", "gross_weight") ?? "",
+    depth: fromVendor("depth", "item_depth", "height") ?? "",
+
+    // Color / finish / attribute aliases
+    primary_color: fromVendor("color", "colour", "primary_color", "color_name", "finish") ?? "",
+    colour: fromVendor("colour", "color", "color_name") ?? "",
+    color_name: fromVendor("color", "colour", "color_name") ?? "",
+    finish: fromVendor("finish", "color", "colour", "surface_finish") ?? "",
+    material_type: fromVendor("material", "materials", "material_type", "fabric", "fabric_type") ?? "",
+    fabric: fromVendor("fabric", "material", "materials", "fabric_type") ?? "",
+    product_type_keyword: p.marketplaceCategory ?? fromVendor("product_type", "item_type") ?? "",
+    item_type_keyword: p.marketplaceCategory ?? fromVendor("item_type", "product_type") ?? "",
+
     // Misc
     merchant_catalog_number: skuId,
     unspsc_code: fromVendor("unspsc_code", "unspsc") ?? "",
@@ -448,15 +498,61 @@ function getProductField(p: Product, key: string): unknown {
     age_group: fromVendor("age_group", "age", "age_range") ?? "",
     gender: fromVendor("gender", "target_gender") ?? "",
     pack_size: fromVendor("pack_size", "pack", "pieces_per_pack", "units_per_pack", "qty_per_pack") ?? "",
+
+    // Furniture / lifestyle (Mathis Brothers and similar)
+    assembly_required: fromVendor("assembly_required", "assembly", "requires_assembly", "self_assembly") ?? "",
+    warranty: fromVendor("warranty", "warranty_description", "warranty_period", "warranty_info") ?? "",
+    warranty_description: fromVendor("warranty_description", "warranty", "warranty_info") ?? "",
+    collection: fromVendor("collection", "collection_name", "product_collection", "series") ?? "",
+    style: fromVendor("style", "design_style", "furniture_style") ?? "",
+    number_of_pieces: fromVendor("pieces", "number_of_pieces", "set_pieces", "quantity_per_set") ?? "",
+    pieces: fromVendor("pieces", "number_of_pieces") ?? "",
   };
 
   if (nk in coreMap) return coreMap[nk];
 
-  // Fall back to vendorData — exact match first, then normalised key
   if (vd) {
+    // Exact key match
     if (key in vd) { const v = vd[key]; if (v !== "" && v != null) return v; }
-    const match = Object.keys(vd).find((k) => normalizeKey(k) === nk);
-    if (match) { const v = vd[match]; if (v !== "" && v != null) return v; }
+    // Normalized key match
+    const normHit = Object.keys(vd).find((k) => normalizeKey(k) === nk);
+    if (normHit) { const v = vd[normHit]; if (v !== "" && v != null) return v; }
+
+    // Numbered image/photo field: collect ALL image-URL-like keys from vendorData sorted,
+    // then return the nth one. e.g. "product_image_3_url" → n=3 → 3rd image key.
+    if (nk.includes("image") || nk.includes("photo") || nk.includes("img")) {
+      const imgNum = nk.match(/(\d+)/)?.[1];
+      if (imgNum) {
+        const n = parseInt(imgNum, 10);
+        const imgKeys = Object.keys(vd)
+          .filter((k) => { const nv = normalizeKey(k); return nv.includes("image") || nv.includes("photo") || nv.includes("img"); })
+          .sort();
+        const pick = imgKeys[n - 1];
+        if (pick) { const v = vd[pick]; if (v !== "" && v != null) return v; }
+      }
+    }
+
+    // Word-overlap fuzzy match — score ≥ 3 avoids false positives.
+    // +2 for each template word found in vendorData key, +1 for the reverse direction.
+    const nkWords = nk.split("_").filter((w) => w.length > 2);
+    if (nkWords.length >= 2) {
+      let fuzzyKey: string | undefined;
+      let bestScore = 0;
+      for (const vdKey of Object.keys(vd)) {
+        const vdWords = normalizeKey(vdKey).split("_").filter((w) => w.length > 2);
+        let score = 0;
+        for (const w of nkWords) if (vdWords.includes(w)) score += 2;
+        for (const w of vdWords) if (nkWords.includes(w)) score += 1;
+        if (score > bestScore) { bestScore = score; fuzzyKey = vdKey; }
+      }
+      if (fuzzyKey && bestScore >= 3) { const v = vd[fuzzyKey]; if (v !== "" && v != null) return v; }
+    }
+  }
+
+  // Last resort: normalized key match against liveData
+  if (ld) {
+    const ldHit = Object.keys(ld).find((k) => normalizeKey(k) === nk);
+    if (ldHit) { const v = ld[ldHit]; if (v !== "" && v != null) return v; }
   }
 
   return "";
