@@ -17,7 +17,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       marketplace: true,
       products: {
         select: {
-          id: true, name: true, vendorSku: true, upc: true, brand: true,
+          id: true, name: true, vendorSku: true, upc: true, asin: true, brand: true,
           verifyStatus: true, verifyFields: true,
         },
         orderBy: { name: "asc" },
@@ -36,7 +36,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     "Amazon";
 
   const header = [
-    "SKU", "UPC", "Product Name", "Overall Status",
+    "SKU", "UPC", "ASIN", "Product Name", "Overall Status",
     ...FIELD_ORDER.flatMap(f => [`${capitalize(f)} (Catalog)`, `${capitalize(f)} (${mpLabel})`, `${capitalize(f)} Result`]),
   ].map(h => `"${h}"`).join(",");
 
@@ -47,6 +47,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const cells = [
       p.vendorSku ?? "",
       p.upc ?? "",
+      p.asin ?? "",
       p.name,
       p.verifyStatus ?? "pending",
       ...FIELD_ORDER.flatMap(f => {
