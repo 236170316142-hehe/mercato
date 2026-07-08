@@ -46,7 +46,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     const cells = [
       p.vendorSku ?? "",
-      p.upc ?? "",
+      normalizeUpc(p.upc) ?? p.upc ?? "",
       p.asin ?? "",
       p.name,
       p.verifyStatus ?? "pending",
@@ -71,4 +71,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function normalizeUpc(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let s = String(raw).trim();
+  if (/^\d[\d.]*[eE][+\-]?\d+$/.test(s)) {
+    const n = Number(s);
+    if (!isNaN(n) && n > 0) s = Math.round(n).toString();
+  }
+  s = s.replace(/[^0-9]/g, "");
+  if (!s || s.length < 8) return null;
+  if (s.length < 12) s = s.padStart(12, "0");
+  if (s.length > 14) s = s.slice(-14);
+  return s;
 }

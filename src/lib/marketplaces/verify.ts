@@ -68,10 +68,40 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
   // Numeric-looking values like "43664.043078" are product codes, not ASINs — treat
   // them as having no ASIN so they fall through to UPC / keyword search.
   const ASIN_RE = /^B[0-9A-Z]{9}$/i;
+
+  // Normalize UPC from any vendor format:
+  //  • Scientific notation from Excel: "8.19E+11" → "819000000000"
+  //  • Floats with decimals: "819000000000.0" → "819000000000"
+  //  • Short UPCs: pad to 12 digits (UPC-A standard)
+  //  • Returns null if the result isn't 8–14 digits
+  const normalizeUpc = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    let s = String(raw).trim();
+    if (/^\d[\d.]*[eE][+\-]?\d+$/.test(s)) {
+      const n = Number(s);
+      if (!isNaN(n) && n > 0) s = Math.round(n).toString();
+    }
+    s = s.replace(/[^0-9]/g, "");
+    if (!s) return null;
+    if (s.length < 8) return null; // too short to be a real barcode
+    if (s.length < 12) s = s.padStart(12, "0"); // pad UPC-A
+    if (s.length > 14) s = s.slice(-14);
+    return s;
+  };
+
+  // Derive all barcode variants to try: UPC-12 + EAN-13 (prepend "0")
+  const upcVariants = (raw: string | null | undefined): string[] => {
+    const n = normalizeUpc(raw);
+    if (!n) return [];
+    if (n.length === 12) return [n, "0" + n]; // UPC-A + EAN-13
+    return [n];
+  };
+
   const withAsin     = activeProducts.filter((p) => p.asin && ASIN_RE.test(p.asin));
   const asinInvalid  = activeProducts.filter((p) => p.asin && !ASIN_RE.test(p.asin));
-  const withUpcOnly  = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && p.upc);
-  const withNameOnly = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && !p.upc);
+  // A product "has UPC" if p.upc normalizes to a valid barcode
+  const withUpcOnly  = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && !!normalizeUpc(p.upc));
+  const withNameOnly = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && !normalizeUpc(p.upc));
 
   // Fetch by ASIN
   const asinResults = new Map<string, VerifyResult>();
@@ -95,42 +125,49 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
   }
   void asinInvalid; // they flow into withUpcOnly / withNameOnly above
 
-  // Fetch by UPC/barcode code
+  // Fetch by UPC/EAN barcode
+  // Build a map: every normalized code variant → product, so Keepa response codes
+  // (which may be stored as EAN-13) can be matched back to the originating product.
   const upcResults = new Map<string, VerifyResult>();
-  const upcNotFound: Product[] = []; // UPC lookup miss → fall through to keyword search
+  const upcNotFound: Product[] = [];
   if (withUpcOnly.length) {
-    const upcs = withUpcOnly.map((p) => p.upc) as string[];
-    const rawProducts = await getProductsByCode(1, upcs, { stats: 1 });
+    const codeToProduct = new Map<string, Product>();
+    for (const p of withUpcOnly) {
+      for (const v of upcVariants(p.upc)) codeToProduct.set(v, p);
+    }
+    const allCodes = [...new Set(codeToProduct.keys())];
+
+    const rawProducts = await getProductsByCode(1, allCodes, { stats: 1 });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const liveNorm = normalizeMany(rawProducts, 1) as any[];
 
-    // One UPC can map to multiple ASINs (duplicates, variations, regional editions, etc.).
-    // Collect ALL candidates per UPC code so we can pick the best match, not just the last.
+    // Map every barcode Keepa returns → list of normalized live products
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const upcToLiveList = new Map<string, (typeof liveNorm[number])[]>();
+    const codeToLiveList = new Map<string, (typeof liveNorm[number])[]>();
     rawProducts.forEach((raw, idx) => {
       const norm = liveNorm[idx];
       if (!norm) return;
-      const codes = [
-        ...(raw.eanList ?? []),
-        ...(raw.upcList ?? []),
-      ].filter((c): c is string => typeof c === "string");
+      const codes = [...(raw.eanList ?? []), ...(raw.upcList ?? [])].filter((c): c is string => typeof c === "string");
       for (const code of codes) {
-        if (!upcToLiveList.has(code)) upcToLiveList.set(code, []);
-        upcToLiveList.get(code)!.push(norm);
+        if (!codeToLiveList.has(code)) codeToLiveList.set(code, []);
+        codeToLiveList.get(code)!.push(norm);
       }
     });
 
     for (const p of withUpcOnly) {
-      const candidates = upcToLiveList.get(p.upc!) ?? [];
+      // Collect candidates across all variants (UPC-12 + EAN-13)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const candidates: (typeof liveNorm[number])[] = [];
+      for (const v of upcVariants(p.upc)) {
+        for (const c of (codeToLiveList.get(v) ?? [])) candidates.push(c);
+      }
+
       if (!candidates.length) {
-        upcNotFound.push(p); // UPC not in Keepa → try keyword search
+        upcNotFound.push(p);
         continue;
       }
 
       // Pick the ASIN whose title is most similar to the vendor's product name.
-      // This handles the common case where one UPC maps to multiple listings
-      // (duplicate entries, variant parents, wrong catalog merges, etc.).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let best: any = candidates[0];
       let bestSim = titleSim(p.name, best.title as string);
@@ -139,8 +176,11 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
         if (sim > bestSim) { best = candidate; bestSim = sim; }
       }
 
-      if (bestSim < 0.3) {
-        upcNotFound.push(p); // best candidate still doesn't match → try keyword search
+      // A barcode IS the product identity — trust UPC match even with low title similarity.
+      // Only fall through if title is completely unrelated (< 0.1) which likely means a
+      // catalog error (wrong product merged onto the same barcode by a third-party seller).
+      if (bestSim < 0.1) {
+        upcNotFound.push(p);
       } else {
         upcResults.set(p.id, compareToLive(
           p,
@@ -248,7 +288,21 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
             return;
           }
 
+          // Extract vendor SKU — present on most products (model/part numbers appear
+          // in Amazon listing titles and are very precise identifiers).
+          const vendorSku = group[0].vendorSku?.trim() || null;
+          // A useful SKU is alphanumeric, ≥ 4 chars, not a pure integer (pure integers are often internal IDs)
+          const isUsefulSku = vendorSku && /^[A-Z0-9][A-Z0-9\-_]{3,}$/i.test(vendorSku) && !/^\d+$/.test(vendorSku);
+
           let match = null;
+
+          // ── Strategy 0: vendor SKU / model number ────────────────────────────────
+          // SKUs are the most precise identifier after ASINs and UPCs. Many Amazon
+          // listings include the manufacturer model number in the title.
+          if (!match && isUsefulSku) {
+            match = await searchAndPick(vendorSku!, 0.15);
+            if (!match && vendorBrand) match = await searchAndPick(`${vendorBrand} ${vendorSku}`.trim(), 0.15);
+          }
 
           // ── Strategy 1: each known full Amazon brand + product name ────────────
           // "Greenland Home Fashions Mermaid", then "Barefoot Bungalow Mermaid", etc.
