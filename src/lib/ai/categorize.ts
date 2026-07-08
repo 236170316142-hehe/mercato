@@ -21,8 +21,8 @@ export type CategorizeResult = {
 // Per-category descriptions so the AI knows exactly what belongs in each bucket.
 // Matched against the template/category name with the first matching pattern.
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
-  [/seasonal|holiday/i, "Holiday/seasonal merchandise ONLY: Christmas trees, ornaments, holiday lights/wreaths, Halloween costumes/decor, 4th of July items, Easter baskets. A throw pillow, sofa, rug, lamp, or artwork is NEVER seasonal."],
-  [/baby|kid|youth|child|nursery|toddler/i, "Nursery & children: cribs, changing tables, toddler beds, bunk beds, youth bedroom sets, kids desks, children's chairs, nursery gliders, kids storage."],
+  [/seasonal|holiday/i, "Teen & adult Halloween/holiday items: costumes for teens/adults (sizes L, XL, XXL, M/L, adult, 12/14 and up), adult costume props (wigs, hats, canes, adult socks), Christmas decorations, holiday lights/ornaments/wreaths. NOT for infants, babies, or small children (those go in Baby & Kids)."],
+  [/baby|kid|youth|child|nursery|toddler/i, "Everything for infants, babies, toddlers, and young children: baby clothing/costumes (sizes NB, 0-3M, 3-6M, 6-12M, 12-18M, 18-24M), toddler items (T1/T2/T3/T4, 2T/3T/4T), young children's costumes and clothing in kids sizes (S/4-6, M/7-8, M/8-10), baby toys, toddler toys, doll sets, stuffed animals, kids accessories (socks size 6 or smaller), cribs, toddler beds, nursery furniture, youth bedroom sets. KEY RULE: if the product name includes a baby/infant size or toddler designation, assign to this category."],
   [/mattress|sleep|foundation/i, "Sleep products: mattresses (innerspring, memory foam, hybrid, latex, pillow-top), box springs, mattress toppers/protectors, adjustable bases, bed pillows, mattress pads."],
   [/kitchen/i, "Kitchen furniture & storage: kitchen islands, bar stools, kitchen carts, breakfast bars, kitchen cabinets, pantry storage."],
   [/rug/i, "Floor coverings: area rugs, runners, accent rugs, outdoor rugs, rug pads — all sizes and styles."],
@@ -193,10 +193,14 @@ ${guide}`;
 STRICT RULES — violations are not acceptable:
 1. category = one of the names above, copied exactly character-for-character (no abbreviations, no variations)
 2. NEVER output "General", "Other", "Miscellaneous", "Unknown", or any name NOT in the category list
-3. "Seasonal" category = ONLY actual holiday/seasonal merchandise (Christmas ornaments, Halloween costumes, holiday lights). Sofas, rugs, pillows, lamps, wall art, bedding, mattresses, chairs, tables — NEVER Seasonal.
-4. [vendor category] hints in the product list are clues — use them to pick the right category from the list
+3. AGE/SIZE ROUTING (most important rule for costumes, clothing, toys):
+   - Product has infant/baby size (NB, 0-3M, 3-6M, 6-12M, 12-18M, 18-24M) → Baby & Kids
+   - Product has toddler size (T1, T2, T3, T4, 2T, 3T, 4T, "Toddler") → Baby & Kids
+   - Product has small children's size (S/4-6, M/7-8, M/8-10, size 6 or smaller) → Baby & Kids
+   - Product says "Adults", "Adult", teen sizes (L, XL, 12-14, 14-16, 16-18, M/L) → Seasonal (if costume/holiday item)
+4. [vendor category] hints in the product list are clues — use them along with the category guide above
 5. Spread products across the full range of categories based on what the product actually IS
-6. If unsure between two categories, pick the MORE SPECIFIC one that best fits the product type` : "";
+6. If unsure between two categories, pick the one whose category guide description best matches` : "";
 
   const prompt = `${storeContext} Categorize each product into ${categorySection}.
 
