@@ -51,12 +51,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   // in a category that has a matching export template.
   // For all other marketplaces: let the AI use the standard marketplace taxonomy freely —
   // templates are chosen by the user at export time, not at categorization time.
-  const isMathis = project.marketplace === "mathis";
+  const isMathis = project.marketplace.toLowerCase() === "mathis";
   let availableCategories: string[] = [];
   if (isMathis) {
     const marketplaceTemplates = await prisma.exportTemplate.findMany({
       where: {
-        marketplace: project.marketplace,
+        marketplace: { equals: project.marketplace, mode: "insensitive" },
         OR: [{ userId: user!.id }, { userId: null }],
       },
       select: { name: true, category: true },
