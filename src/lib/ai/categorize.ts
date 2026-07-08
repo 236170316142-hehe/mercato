@@ -3,11 +3,12 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-type ProductInput = {
+export type ProductInput = {
   id: string;
   name: string;
   brand: string | null;
   description: string | null;
+  vendorCategory?: string | null; // original vendor/spreadsheet category — used as a classification hint
 };
 
 export type CategorizeResult = {
@@ -17,31 +18,48 @@ export type CategorizeResult = {
   confidence: number;
 };
 
-const MARKETPLACE_TAXONOMIES: Record<string, string> = {
-  amazon: "Amazon product categories (e.g. Electronics > Cameras, Home & Kitchen > Cookware, Clothing > Men's Shoes)",
-  bestbuy: "Best Buy categories (e.g. TV & Home Theater, Computers & Tablets, Cell Phones, Appliances, Gaming)",
-  walmart: "Walmart categories (e.g. Electronics, Home, Clothing, Baby, Sports & Outdoors, Food)",
-  temu: "Temu categories (e.g. Women's Clothing, Home & Garden, Beauty & Health, Electronics, Sports)",
-  mathis: "Mathis Brothers categories (e.g. Living Room, Bedroom, Dining Room, Outdoor, Mattresses)",
-  sears: "Sears categories (e.g. Appliances, Tools, Clothing, Shoes, Electronics, Lawn & Garden)",
-};
+// Per-category descriptions so the AI knows exactly what belongs in each bucket.
+// Matched against the template/category name with the first matching pattern.
+const CATEGORY_HINTS: Array<[RegExp, string]> = [
+  [/seasonal|holiday/i, "Holiday/seasonal merchandise ONLY: Christmas trees, ornaments, holiday lights/wreaths, Halloween costumes/decor, 4th of July items, Easter baskets. A throw pillow, sofa, rug, lamp, or artwork is NEVER seasonal."],
+  [/baby|kid|youth|child|nursery|toddler/i, "Nursery & children: cribs, changing tables, toddler beds, bunk beds, youth bedroom sets, kids desks, children's chairs, nursery gliders, kids storage."],
+  [/mattress|sleep|foundation/i, "Sleep products: mattresses (innerspring, memory foam, hybrid, latex, pillow-top), box springs, mattress toppers/protectors, adjustable bases, bed pillows, mattress pads."],
+  [/kitchen/i, "Kitchen furniture & storage: kitchen islands, bar stools, kitchen carts, breakfast bars, kitchen cabinets, pantry storage."],
+  [/rug/i, "Floor coverings: area rugs, runners, accent rugs, outdoor rugs, rug pads — all sizes and styles."],
+  [/bedding|bath|linen/i, "Bed & bath textiles: comforter sets, duvet covers, sheet sets, pillowcases, bed skirts, blankets, throws, towels, bath accessories."],
+  [/outdoor|patio/i, "Outdoor/patio living: outdoor sofas, sectionals, lounge chairs, patio dining sets, fire pits, umbrellas, porch swings, garden benches, outdoor storage."],
+  [/living/i, "Living room furniture: sofas, sectionals, loveseats, recliners, accent chairs, ottomans, coffee tables, end tables, entertainment centers, TV stands, console tables, sofa tables."],
+  [/bedroom/i, "Adult bedroom furniture: beds, headboards, bed frames, platform beds, dressers, chests, nightstands, armoires, vanities, mirrors, bedroom sets."],
+  [/dining/i, "Dining room: dining tables, dining chairs, barstools, china cabinets, buffets, sideboards, bar carts, dining sets, kitchen tables."],
+  [/decor|accent/i, "Decorative accessories: wall art, wall decor, mirrors, sculptures, vases, candles, picture frames, decorative trays, throw pillows, accent lamps, artificial plants/flowers, clocks."],
+  [/lighting|lamp/i, "Light fixtures & lamps: chandeliers, pendant lights, ceiling fans, table lamps, floor lamps, wall sconces, lamp shades."],
+  [/office/i, "Home office: desks, writing tables, office chairs, task chairs, bookcases, filing cabinets, computer armoires, office sets."],
+  [/storage|organiz|shelv/i, "Storage & organization: shelving units, storage ottomans, bookcases, cabinets, media storage, baskets/bins, closet organizers, hall trees, coatracks."],
+  [/home\s*improv/i, "Home improvement: tools, hardware, flooring, fixtures, paint, repair/installation items."],
+  [/accent|entry|entryway/i, "Accent & entryway furniture: accent chairs, accent tables, console tables, hall trees, benches, entryway sets."],
+];
+
+function buildCategoryGuide(categories: string[]): string {
+  const lines: string[] = [];
+  for (const cat of categories) {
+    const hint = CATEGORY_HINTS.find(([pattern]) => pattern.test(cat));
+    lines.push(hint ? `  • "${cat}" → ${hint[1]}` : `  • "${cat}"`);
+  }
+  return lines.join("\n");
+}
 
 export async function categorizeProducts(
   marketplace: string,
   products: ProductInput[],
   availableCategories?: string[],
 ): Promise<CategorizeResult[]> {
-  const taxonomy = availableCategories?.length
-    ? `exactly one of these categories (use the name verbatim):\n${availableCategories.map((c) => `- ${c}`).join("\n")}`
-    : (MARKETPLACE_TAXONOMIES[marketplace] ?? `${marketplace} product categories`);
-
-  // When categorizing against exact template names, always use Sonnet for accuracy.
+  // Always use Sonnet when constrained to a specific template list — accuracy matters more than speed.
   const model = availableCategories?.length
     ? (process.env.CATEGORIZE_ANTHROPIC_MODEL ?? "claude-sonnet-5")
     : (process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001");
 
   const BATCH = 20;
-  const PARALLEL = 5;
+  const PARALLEL = 3; // reduced to avoid rate limits with Sonnet
 
   const batches: ProductInput[][] = [];
   for (let i = 0; i < products.length; i += BATCH) batches.push(products.slice(i, i + BATCH));
@@ -50,7 +68,7 @@ export async function categorizeProducts(
 
   for (let i = 0; i < batches.length; i += PARALLEL) {
     const group = batches.slice(i, i + PARALLEL);
-    const settled = await Promise.allSettled(group.map((b) => categorizeBatch(b, taxonomy, model, availableCategories)));
+    const settled = await Promise.allSettled(group.map((b) => categorizeBatch(b, marketplace, model, availableCategories)));
     settled.forEach((s, gi) => {
       const fallbackCat = availableCategories?.[0] ?? "General";
       const batchResults = s.status === "fulfilled" ? s.value : group[gi].map((p) => ({
@@ -61,25 +79,21 @@ export async function categorizeProducts(
   }
 
   // ── Validation pass ────────────────────────────────────────────────────────
-  // If the AI returned a category not in the allowed list (e.g. "General",
-  // "Other", "Miscellaneous"), retry those products with an ultra-strict prompt.
-  // If the retry still produces an off-list result, assign the closest category
-  // by word-overlap against the product name.
+  // Retry any products whose category is not in the allowed list.
+  // Final fallback: word-overlap between product name and category name.
   if (availableCategories?.length) {
     const allowed = new Set(availableCategories);
     const offListIds = new Set(allResults.filter((r) => !allowed.has(r.category)).map((r) => r.productId));
 
     if (offListIds.size > 0) {
       const retryInputs = products.filter((p) => offListIds.has(p.id));
-      const strictTaxonomy = `EXACTLY one of these categories — no exceptions, no alternatives:\n${availableCategories.map((c) => `- ${c}`).join("\n")}`;
-
       const retryBatches: ProductInput[][] = [];
       for (let i = 0; i < retryInputs.length; i += BATCH) retryBatches.push(retryInputs.slice(i, i + BATCH));
 
       const retryMap = new Map<string, CategorizeResult>();
       for (const batch of retryBatches) {
         try {
-          const batchResults = await categorizeBatch(batch, strictTaxonomy, model, availableCategories);
+          const batchResults = await categorizeBatch(batch, marketplace, model, availableCategories, true);
           for (const r of batchResults) retryMap.set(r.productId, r);
         } catch {
           for (const p of batch) {
@@ -93,7 +107,6 @@ export async function categorizeProducts(
         }
       }
 
-      // Merge retry results; fix any still-off-list with word-overlap fallback
       for (let i = 0; i < allResults.length; i++) {
         const r = allResults[i];
         if (!r?.productId || !offListIds.has(r.productId)) continue;
@@ -113,11 +126,10 @@ export async function categorizeProducts(
   return allResults;
 }
 
-// Word-overlap: pick the allowed category whose name shares the most words with the product name.
-// Used as last-resort fallback when AI keeps returning off-list results.
 function pickClosest(productName: string, allowed: string[]): string {
   if (!allowed.length) return "General";
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter((w) => w.length > 2);
+  const norm = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter((w) => w.length > 2);
   const nameWords = new Set(norm(productName));
   let best = allowed[0];
   let bestScore = -1;
@@ -133,41 +145,70 @@ function pickClosest(productName: string, allowed: string[]): string {
 
 async function categorizeBatch(
   products: ProductInput[],
-  taxonomy: string,
+  marketplace: string,
   model: string,
   availableCategories?: string[],
+  strictMode = false,
 ): Promise<CategorizeResult[]> {
-  const list = products
-    .map((p, idx) => `${idx + 1}. "${p.name}"${p.brand ? ` by ${p.brand}` : ""}${p.description ? ` — ${p.description.slice(0, 80)}` : ""}`)
-    .join("\n");
+  const isMathis = marketplace === "mathis";
 
-  const strictCategoryRule = availableCategories?.length
-    ? `- category MUST be EXACTLY one of the names listed above — copy character-for-character
-- NEVER output "General", "Other", "Misc", "Miscellaneous", "Unknown", or ANY word/phrase not in the list
-- If you are uncertain, pick the SINGLE most plausible category from the list — never invent a new one`
-    : `- category must be a valid ${taxonomy} category name`;
+  // Build per-product lines including vendor category hint
+  const list = products.map((p, idx) => {
+    let line = `${idx + 1}. "${p.name}"`;
+    if (p.brand) line += ` by ${p.brand}`;
+    if (p.description) line += ` — ${p.description.slice(0, 120)}`;
+    if (p.vendorCategory) line += ` [vendor category: ${p.vendorCategory}]`;
+    return line;
+  }).join("\n");
 
-  const prompt = `You are a product categorization expert for a retail store. Categorize each product into ${taxonomy}.
+  // Build the category section of the prompt
+  let categorySection: string;
+  if (availableCategories?.length) {
+    const guide = buildCategoryGuide(availableCategories);
+    categorySection = strictMode
+      ? `EXACTLY one of these categories (copy character-for-character — no variations allowed):
+${availableCategories.map((c) => `- ${c}`).join("\n")}`
+      : `exactly one of these categories:
+${availableCategories.map((c) => `- ${c}`).join("\n")}
 
-Products to categorize:
+Category guide — what belongs in each:
+${guide}`;
+  } else {
+    const taxonomies: Record<string, string> = {
+      amazon: "Amazon product categories (Electronics > Cameras, Home & Kitchen > Cookware, Clothing > Men's Shoes, etc.)",
+      bestbuy: "Best Buy categories (TV & Home Theater, Computers & Tablets, Cell Phones, Appliances, Gaming, etc.)",
+      walmart: "Walmart categories (Electronics, Home, Clothing, Baby, Sports & Outdoors, Food, etc.)",
+      temu: "Temu categories (Women's Clothing, Home & Garden, Beauty & Health, Electronics, Sports, etc.)",
+      mathis: "Mathis Brothers home furnishings categories (Living Room, Bedroom, Dining Room, Outdoor, Mattress, Rugs, Bedding & Bath, Baby & Kids, Decor, Lighting, Kitchen, Home Office, Storage, Seasonal, etc.)",
+      sears: "Sears categories (Appliances, Tools, Clothing, Shoes, Electronics, Lawn & Garden, etc.)",
+    };
+    categorySection = taxonomies[marketplace] ?? `${marketplace} product categories`;
+  }
+
+  const storeContext = isMathis
+    ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based home furnishings retailer selling furniture, mattresses, rugs, and home decor."
+    : "You are a product categorization expert for a major retail marketplace.";
+
+  const strictRules = availableCategories?.length ? `
+STRICT RULES — violations are not acceptable:
+1. category = one of the names above, copied exactly character-for-character (no abbreviations, no variations)
+2. NEVER output "General", "Other", "Miscellaneous", "Unknown", or any name NOT in the category list
+3. "Seasonal" category = ONLY actual holiday/seasonal merchandise (Christmas ornaments, Halloween costumes, holiday lights). Sofas, rugs, pillows, lamps, wall art, bedding, mattresses, chairs, tables — NEVER Seasonal.
+4. [vendor category] hints in the product list are clues — use them to pick the right category from the list
+5. Spread products across the full range of categories based on what the product actually IS
+6. If unsure between two categories, pick the MORE SPECIFIC one that best fits the product type` : "";
+
+  const prompt = `${storeContext} Categorize each product into ${categorySection}.
+
+Products:
 ${list}
 
 Respond with a JSON array only (no markdown, no explanation):
-[
-  { "index": 1, "category": "Category Name", "path": "Top Level > Sub Category > Leaf Category", "confidence": 0.95 },
-  ...
-]
-
-Critical rules:
-${strictCategoryRule}
-- Spread products across ALL matching categories — never pile everything into one bucket
-- Use the MOST SPECIFIC category that fits — generic or seasonal categories are absolute last resorts
-- "Seasonal" means holiday or season-specific decor ONLY — not a catch-all for uncertain products
-- "Decor" means decorative accessories, art, accent pieces ONLY
-- If a product clearly belongs to Rugs, Bedding & Bath, Mattress, Kitchen, Outdoor, Organization, Baby & Kids, or Home Improvement — always use that specific category, never Decor or Seasonal
-- path: breadcrumb with " > " separators, category name as the leaf node
+[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]
+${strictRules}
+- path: use "Category Name" as the leaf (e.g. "Mathis Brothers > Bedroom")
 - confidence: 0.0–1.0
-- Return exactly ${products.length} items in the same order as the input`;
+- Return exactly ${products.length} items in the same order`;
 
   const { text } = await generateText({
     model: anthropic(model),
@@ -175,23 +216,37 @@ ${strictCategoryRule}
     maxOutputTokens: 2000,
   });
 
+  const fallbackCat = availableCategories?.[0] ?? "General";
+  const allowedSet = availableCategories ? new Set(availableCategories) : null;
+
   try {
     const parsed = JSON.parse(text.trim()) as { index: number; category: string; path: string; confidence: number }[];
-    const fallbackCat = availableCategories?.[0] ?? "General";
-    const allowedSet = availableCategories ? new Set(availableCategories) : null;
     return parsed.map((r) => {
-      const cat = allowedSet && !allowedSet.has(r.category)
-        ? fallbackCat  // will be fixed by validation pass
-        : r.category;
+      const cat = allowedSet && !allowedSet.has(r.category) ? fallbackCat : r.category;
       return {
         productId: products[r.index - 1]?.id ?? "",
         category: cat,
-        path: r.path,
-        confidence: r.confidence,
+        path: r.path ?? cat,
+        confidence: r.confidence ?? 0.5,
       };
     }).filter((r) => r.productId);
   } catch {
-    const fallbackCat = availableCategories?.[0] ?? "General";
+    // JSON parse failed — try extracting JSON from the response
+    const match = text.match(/\[[\s\S]*\]/);
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[0]) as { index: number; category: string; path: string; confidence: number }[];
+        return parsed.map((r) => {
+          const cat = allowedSet && !allowedSet.has(r.category) ? fallbackCat : r.category;
+          return {
+            productId: products[r.index - 1]?.id ?? "",
+            category: cat,
+            path: r.path ?? cat,
+            confidence: r.confidence ?? 0.5,
+          };
+        }).filter((r) => r.productId);
+      } catch { /* fall through */ }
+    }
     return products.map((p) => ({
       productId: p.id,
       category: fallbackCat,

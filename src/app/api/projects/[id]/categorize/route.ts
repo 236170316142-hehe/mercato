@@ -3,7 +3,25 @@ import { NextRequest, NextResponse } from "next/server";
 export const maxDuration = 300;
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
-import { categorizeProducts } from "@/lib/ai/categorize";
+import { categorizeProducts, type ProductInput } from "@/lib/ai/categorize";
+
+// Keys we try (in order) when extracting the vendor's own category from raw spreadsheet data.
+const VENDOR_CATEGORY_KEYS = [
+  "category", "Category", "CATEGORY",
+  "product_category", "item_category", "item_type", "product_type",
+  "department", "Department", "sub_category", "subcategory",
+  "product_class", "product_group", "item_group",
+];
+
+function extractVendorCategory(vendorData: unknown): string | null {
+  if (!vendorData || typeof vendorData !== "object") return null;
+  const vd = vendorData as Record<string, unknown>;
+  for (const key of VENDOR_CATEGORY_KEYS) {
+    const val = vd[key];
+    if (val && typeof val === "string" && val.trim()) return val.trim();
+  }
+  return null;
+}
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { user, response } = await authGuard();
@@ -12,15 +30,24 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const project = await prisma.project.findUnique({
     where: { id },
-    include: { products: { select: { id: true, name: true, brand: true, description: true, marketplaceCategory: true } } },
+    include: {
+      products: {
+        select: {
+          id: true,
+          name: true,
+          brand: true,
+          description: true,
+          marketplaceCategory: true,
+          vendorData: true,
+        },
+      },
+    },
   });
 
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // Fetch templates for this marketplace and use their names as the allowed category list.
-  // Template name is the canonical category — if a category field is set it takes priority,
-  // otherwise the name itself is used (since users name templates after the category they represent).
   const marketplaceTemplates = await prisma.exportTemplate.findMany({
     where: {
       marketplace: project.marketplace,
@@ -35,9 +62,18 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   await prisma.project.update({ where: { id }, data: { status: "categorizing" } });
 
   try {
+    // Build ProductInput with vendor category hint extracted from raw spreadsheet data
+    const productInputs: ProductInput[] = project.products.map((p) => ({
+      id: p.id,
+      name: p.name,
+      brand: p.brand,
+      description: p.description,
+      vendorCategory: extractVendorCategory(p.vendorData),
+    }));
+
     const results = await categorizeProducts(
       project.marketplace,
-      project.products,
+      productInputs,
       availableCategories.length ? availableCategories : undefined,
     );
 
