@@ -15,14 +15,17 @@ export async function GET(req: NextRequest) {
   const marketplace = req.nextUrl.searchParams.get("marketplace");
 
   // "amazon_us" projects should also match templates tagged "amazon" and vice-versa.
-  const marketplaceFamily = (mp: string) =>
-    mp === "amazon_us" || mp === "amazon" ? ["amazon_us", "amazon"] : [mp];
+  // Use lowercase comparison to handle case mismatches (e.g. "Mathis" vs "mathis").
+  const marketplaceFamily = (mp: string) => {
+    const lower = mp.toLowerCase();
+    return lower === "amazon_us" || lower === "amazon" ? ["amazon_us", "amazon"] : [lower];
+  };
 
   // Return user's own templates + global (admin) templates (userId = null).
   // Exclude fileData (BYTEA blob) — only column definitions are needed for listing and export.
   const templates = await prisma.exportTemplate.findMany({
     where: {
-      ...(marketplace ? { marketplace: { in: marketplaceFamily(marketplace) } } : {}),
+      ...(marketplace ? { marketplace: { in: marketplaceFamily(marketplace), mode: "insensitive" } } : {}),
       OR: [{ userId: user!.id }, { userId: null }],
     },
     select: {

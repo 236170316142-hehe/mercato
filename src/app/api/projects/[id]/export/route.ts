@@ -75,9 +75,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const useAutoMatch = autoMatch || !!templateId;
       const useTemplateIds = !autoMatch && !templateId && templateIds.length > 0;
 
-      // "amazon_us" and "amazon" share the same template pool
+      // "amazon_us" and "amazon" share the same template pool; use lowercase for case-insensitive match
       const mp = projectMeta.marketplace;
-      const mpFamily = mp === "amazon_us" || mp === "amazon" ? ["amazon_us", "amazon"] : [mp];
+      const mpLower = mp.toLowerCase();
+      const mpFamily = mpLower === "amazon_us" || mpLower === "amazon" ? ["amazon_us", "amazon"] : [mpLower];
 
       // Always use the lightweight TemplateRow select (no fileData)
       const templateSelect = { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true };
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         prisma.project.findUnique({ where: { id }, include: { products: true } }),
         useAutoMatch
           ? prisma.exportTemplate.findMany({
-              where: { marketplace: { in: mpFamily }, OR: [{ userId: user!.id }, { userId: null }] },
+              where: { marketplace: { in: mpFamily, mode: "insensitive" }, OR: [{ userId: user!.id }, { userId: null }] },
               select: templateSelect,
             }) as Promise<TemplateRow[]>
           : prisma.exportTemplate.findMany({
