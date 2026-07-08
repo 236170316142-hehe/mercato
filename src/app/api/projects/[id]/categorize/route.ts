@@ -47,17 +47,24 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  // Fetch templates for this marketplace and use their names as the allowed category list.
-  const marketplaceTemplates = await prisma.exportTemplate.findMany({
-    where: {
-      marketplace: project.marketplace,
-      OR: [{ userId: user!.id }, { userId: null }],
-    },
-    select: { name: true, category: true },
-  });
-  const availableCategories = [
-    ...new Set(marketplaceTemplates.map((t) => t.category || t.name).filter(Boolean)),
-  ] as string[];
+  // For Mathis only: constrain AI to the uploaded template names so each product lands
+  // in a category that has a matching export template.
+  // For all other marketplaces: let the AI use the standard marketplace taxonomy freely —
+  // templates are chosen by the user at export time, not at categorization time.
+  const isMathis = project.marketplace === "mathis";
+  let availableCategories: string[] = [];
+  if (isMathis) {
+    const marketplaceTemplates = await prisma.exportTemplate.findMany({
+      where: {
+        marketplace: project.marketplace,
+        OR: [{ userId: user!.id }, { userId: null }],
+      },
+      select: { name: true, category: true },
+    });
+    availableCategories = [
+      ...new Set(marketplaceTemplates.map((t) => t.category || t.name).filter(Boolean)),
+    ] as string[];
+  }
 
   await prisma.project.update({ where: { id }, data: { status: "categorizing" } });
 

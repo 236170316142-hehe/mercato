@@ -15,6 +15,49 @@ export type TemplateRow = {
   columns: unknown;
 };
 
+// ── Flat export (non-Mathis marketplaces, no templates required) ─────────────
+// Exports all products as a single Excel file with standard enriched columns.
+// Used for Amazon, Walmart, Best Buy, Temu, Sears — where templates are optional.
+
+const FLAT_COLUMNS: Column[] = [
+  { key: "item_sku",             label: "Item SKU" },
+  { key: "upc",                  label: "UPC" },
+  { key: "asin",                 label: "ASIN" },
+  { key: "name",                 label: "Product Name" },
+  { key: "brand",                label: "Brand" },
+  { key: "price",                label: "Price" },
+  { key: "standard_price",       label: "Standard Price" },
+  { key: "quantity",             label: "Quantity" },
+  { key: "condition",            label: "Condition" },
+  { key: "description",          label: "Description" },
+  { key: "main_image_url",       label: "Main Image URL" },
+  { key: "product_image_2_url",  label: "Image 2 URL" },
+  { key: "product_image_3_url",  label: "Image 3 URL" },
+  { key: "category",             label: "Category" },
+  { key: "category_path",        label: "Category Path" },
+  { key: "country_of_origin",    label: "Country of Origin" },
+  { key: "item_weight",          label: "Item Weight" },
+  { key: "item_length",          label: "Item Length" },
+  { key: "item_width",           label: "Item Width" },
+  { key: "item_height",          label: "Item Height" },
+  { key: "color",                label: "Color" },
+  { key: "size",                 label: "Size" },
+  { key: "material",             label: "Material" },
+  { key: "keywords",             label: "Keywords" },
+];
+
+export async function generateFlatExport(
+  products: Product[],
+  marketplace: string,
+): Promise<Buffer> {
+  const eligible = eligibleProducts(products, marketplace);
+  const zip = new JSZip();
+  const safeName = sanitize(marketplace || "export");
+  const buffer = await createXlsxFromScratch(eligible, FLAT_COLUMNS, "Products");
+  zip.file(`${safeName}_export.xlsx`, buffer);
+  return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
+}
+
 // ── Category-split export (primary mode) ─────────────────────────────────────
 // Each category is auto-matched to the closest template by name similarity.
 // The defaultTemplateId is used as the fallback when no close match is found.
@@ -96,6 +139,30 @@ export function findBestTemplate<T extends { id: string; name: string; category?
   }
 
   return best;
+}
+
+// ── Single-template export (non-Mathis marketplaces with user-selected template) ─
+// Exports ALL products into one file using the chosen template's column definitions.
+// Uses TemplateRow (no fileData blob) so it never calls fillTemplateXlsx or blocks the event loop.
+
+export async function generateSingleTemplateExport(
+  products: Product[],
+  template: TemplateRow,
+  marketplace: string,
+): Promise<Buffer> {
+  const zip = new JSZip();
+  const eligible = eligibleProducts(products, marketplace);
+  const columns = template.columns as Column[];
+  const fileName = sanitize(template.name);
+
+  if (template.fileFormat === "csv") {
+    zip.file(`${fileName}.csv`, generateCsv(eligible, columns));
+  } else {
+    const buffer = await createXlsxFromScratch(eligible, columns, template.name);
+    zip.file(`${fileName}.xlsx`, buffer);
+  }
+
+  return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
 }
 
 // ── Legacy multi-template export (kept for backward compat) ──────────────────

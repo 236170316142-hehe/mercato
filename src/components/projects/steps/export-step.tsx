@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Download, FileSpreadsheet, Loader2, Package, Shuffle } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 type Template = {
   id: string;
@@ -33,6 +34,7 @@ function matchTemplate(category: string, templates: Template[]): Template {
     for (const word of nameWords) if (catWords.includes(word)) score += 1;
     if (normName.includes(normCat)) score += 5;
     if (normCat.includes(normName)) score += 3;
+    if (normName === normCat) score += 10;
     if (score > bestScore) { bestScore = score; best = t; }
   }
   return best;
@@ -49,7 +51,11 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [fetching, setFetching] = useState(true);
+  // For non-Mathis: user picks which template to export with
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const mountedRef = useRef(true);
+
+  const isMathis = marketplace === "mathis";
 
   useEffect(() => {
     mountedRef.current = true;
@@ -59,9 +65,15 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
   useEffect(() => {
     fetch(`/api/templates?marketplace=${marketplace}`)
       .then((r) => r.json())
-      .then((data) => { setTemplates(data.templates ?? []); setFetching(false); })
+      .then((data) => {
+        const tpls: Template[] = data.templates ?? [];
+        setTemplates(tpls);
+        // Auto-select first template for non-Mathis
+        if (!isMathis && tpls.length > 0) setSelectedTemplateId(tpls[0].id);
+        setFetching(false);
+      })
       .catch(() => setFetching(false));
-  }, [marketplace]);
+  }, [marketplace, isMathis]);
 
   const categoryCounts = new Map<string, number>();
   for (const p of products) {
@@ -71,19 +83,35 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
   }
   const categories = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1]);
   const uncategorizedCount = products.filter((p) => !p.marketplaceCategory).length;
+  const exportableCount = products.length - uncategorizedCount;
 
   const hasTemplates = templates.length > 0;
-  const canExport = hasTemplates && categories.length > 0 && !loading && !fetching;
+
+  // Mathis: needs templates + categorized products
+  // Other: needs at least 1 product; if templates exist, one must be selected
+  const canExport = !loading && !fetching && (
+    isMathis
+      ? hasTemplates && categories.length > 0
+      : products.length > 0 && (!hasTemplates || !!selectedTemplateId)
+  );
 
   async function handleExport() {
     setLoading(true);
     setStatusMsg("Starting export…");
     try {
-      // 1. Kick off the background job
+      // Mathis: autoMatch=true (category→template matching on server)
+      // Non-Mathis with template: pass templateIds=[selectedId] so server uses that template
+      // Non-Mathis without template: autoMatch=true falls back to flat export
+      const body = isMathis
+        ? { autoMatch: true }
+        : hasTemplates && selectedTemplateId
+          ? { templateIds: [selectedTemplateId] }
+          : { autoMatch: true };
+
       const startRes = await fetch(`/api/projects/${projectId}/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ autoMatch: true }),
+        body: JSON.stringify(body),
       });
 
       if (!startRes.ok) {
@@ -97,7 +125,6 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
       const { jobId } = (await startRes.json()) as { jobId: string };
       setStatusMsg("Processing files…");
 
-      // 2. Poll until done (max 5 min)
       const deadline = Date.now() + 5 * 60 * 1000;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2500));
@@ -117,7 +144,8 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
           a.download = `mercato-export-${projectId}.zip`;
           a.click();
           URL.revokeObjectURL(url);
-          toast.success(`ZIP downloaded — ${categories.length} file${categories.length !== 1 ? "s" : ""}`);
+          const fileCount = isMathis ? categories.length : 1;
+          toast.success(`ZIP downloaded — ${fileCount} file${fileCount !== 1 ? "s" : ""}`);
           return;
         }
 
@@ -132,7 +160,6 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
           toast.error(data.error ?? "Export failed");
           return;
         }
-        // status === "processing" → keep polling
       }
 
       toast.error("Export timed out — please try again");
@@ -146,6 +173,12 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
     }
   }
 
+  const buttonLabel = loading
+    ? (statusMsg || "Generating ZIP…")
+    : isMathis
+      ? `Download ZIP (${categories.length} file${categories.length !== 1 ? "s" : ""})`
+      : `Download ZIP (${products.length} product${products.length !== 1 ? "s" : ""})`;
+
   return (
     <div className="p-8">
       {/* Header */}
@@ -153,7 +186,9 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
         <div>
           <h2 className="text-lg font-semibold">Export ZIP</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            One Excel file per category — templates matched automatically
+            {isMathis
+              ? "One Excel file per category — templates matched automatically"
+              : "Export all products using your chosen template"}
           </p>
         </div>
         <button
@@ -162,24 +197,43 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
           className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-          {loading ? (statusMsg || "Generating ZIP…") : `Download ZIP (${categories.length} file${categories.length !== 1 ? "s" : ""})`}
+          {buttonLabel}
         </button>
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="rounded-xl border p-4 bg-green-50 border-green-200">
-          <p className="text-2xl font-bold text-green-700">{categories.length}</p>
-          <p className="text-sm text-muted-foreground">Categories → files</p>
-        </div>
-        <div className="rounded-xl border p-4">
-          <p className="text-2xl font-bold">{products.length - uncategorizedCount}</p>
-          <p className="text-sm text-muted-foreground">Products to export</p>
-        </div>
-        <div className="rounded-xl border p-4">
-          <p className="text-2xl font-bold">{templates.length}</p>
-          <p className="text-sm text-muted-foreground">Templates available</p>
-        </div>
+        {isMathis ? (
+          <>
+            <div className="rounded-xl border p-4 bg-green-50 border-green-200">
+              <p className="text-2xl font-bold text-green-700">{categories.length}</p>
+              <p className="text-sm text-muted-foreground">Categories → files</p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="text-2xl font-bold">{exportableCount}</p>
+              <p className="text-sm text-muted-foreground">Products to export</p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="text-2xl font-bold">{templates.length}</p>
+              <p className="text-sm text-muted-foreground">Templates available</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-xl border p-4 bg-green-50 border-green-200">
+              <p className="text-2xl font-bold text-green-700">{products.length}</p>
+              <p className="text-sm text-muted-foreground">Products to export</p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="text-2xl font-bold">{categories.length}</p>
+              <p className="text-sm text-muted-foreground">Categories detected</p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="text-2xl font-bold">{templates.length}</p>
+              <p className="text-sm text-muted-foreground">Templates available</p>
+            </div>
+          </>
+        )}
       </div>
 
       {fetching && (
@@ -190,8 +244,9 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
 
       {!fetching && (
         <div className="space-y-4">
-          {/* No templates */}
-          {!hasTemplates && (
+
+          {/* ── MATHIS ── */}
+          {isMathis && !hasTemplates && (
             <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl">
               <FileSpreadsheet className="w-10 h-10 text-muted-foreground mb-3" />
               <p className="text-sm font-medium mb-1">No templates uploaded yet</p>
@@ -201,8 +256,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             </div>
           )}
 
-          {/* No categories */}
-          {hasTemplates && categories.length === 0 && (
+          {isMathis && hasTemplates && categories.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl">
               <Package className="w-10 h-10 text-muted-foreground mb-3" />
               <p className="text-sm font-medium mb-1">No categorized products</p>
@@ -210,8 +264,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             </div>
           )}
 
-          {/* Category → template file list */}
-          {hasTemplates && categories.length > 0 && (
+          {isMathis && hasTemplates && categories.length > 0 && (
             <div>
               <h3 className="text-sm font-medium mb-2">Files that will be created</h3>
               <div className="border rounded-xl divide-y overflow-hidden">
@@ -231,6 +284,65 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* ── OTHER MARKETPLACES ── */}
+          {!isMathis && products.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl">
+              <Package className="w-10 h-10 text-muted-foreground mb-3" />
+              <p className="text-sm font-medium mb-1">No products to export</p>
+              <p className="text-xs text-muted-foreground">Upload and verify products first.</p>
+            </div>
+          )}
+
+          {!isMathis && products.length > 0 && !hasTemplates && (
+            <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl">
+              <FileSpreadsheet className="w-10 h-10 text-muted-foreground mb-3" />
+              <p className="text-sm font-medium mb-1">No templates uploaded yet</p>
+              <p className="text-xs text-muted-foreground max-w-xs">
+                Go to Templates and upload an Excel template for <span className="font-medium">{marketplace}</span>. Its columns will be used when exporting.
+              </p>
+            </div>
+          )}
+
+          {!isMathis && products.length > 0 && hasTemplates && (
+            <div>
+              <h3 className="text-sm font-medium mb-2">Choose export template</h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                All {products.length} products will be exported into one file using the selected template&apos;s columns.
+              </p>
+              <div className="border rounded-xl divide-y overflow-hidden">
+                {templates.map((t) => (
+                  <label
+                    key={t.id}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:bg-muted/40",
+                      selectedTemplateId === t.id && "bg-blue-50 border-blue-200"
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="template"
+                      value={t.id}
+                      checked={selectedTemplateId === t.id}
+                      onChange={() => setSelectedTemplateId(t.id)}
+                      className="accent-primary"
+                    />
+                    <FileSpreadsheet className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm flex-1 font-medium">{t.name}</span>
+                    {t.category && (
+                      <span className="text-xs bg-muted px-2 py-0.5 rounded text-muted-foreground">{t.category}</span>
+                    )}
+                    <span className={cn(
+                      "text-xs px-1.5 py-0.5 rounded font-medium",
+                      t.fileFormat === "xlsx" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"
+                    )}>
+                      {t.fileFormat.toUpperCase()}
+                    </span>
+                  </label>
+                ))}
               </div>
             </div>
           )}

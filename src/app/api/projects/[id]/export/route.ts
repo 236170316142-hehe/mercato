@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import type { ExportTemplate } from "@prisma/client";
-import { generateCategoryZip, generateExportZip, type TemplateRow } from "@/lib/export/zip";
+import { generateCategoryZip, generateExportZip, generateFlatExport, generateSingleTemplateExport, type TemplateRow } from "@/lib/export/zip";
 import { createJob, resolveJob, rejectJob, getJob } from "@/lib/export/job-store";
 
 export const maxDuration = 300;
@@ -70,27 +70,47 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // The HTTP response returns the jobId above; client polls GET until done.
   void (async () => {
     try {
-      // For autoMatch / single-template paths, skip fileData (large BYTEA) — createXlsxFromScratch
-      // only needs column definitions. For explicit templateIds, load fileData so fillTemplateXlsx works.
+      // Never load fileData (large BYTEA blob) — all export paths use createXlsxFromScratch
+      // which only needs column definitions. fillTemplateXlsx / ExcelJS blocks the event loop.
       const useAutoMatch = autoMatch || !!templateId;
+      const useTemplateIds = !autoMatch && !templateId && templateIds.length > 0;
+
+      // Always use the lightweight TemplateRow select (no fileData)
+      const templateSelect = { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true };
       const [project, allTemplates] = await Promise.all([
         prisma.project.findUnique({ where: { id }, include: { products: true } }),
         useAutoMatch
           ? prisma.exportTemplate.findMany({
               where: { marketplace: projectMeta.marketplace, OR: [{ userId: user!.id }, { userId: null }] },
-              select: { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true },
+              select: templateSelect,
             }) as Promise<TemplateRow[]>
           : prisma.exportTemplate.findMany({
               where: { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
-            }),
+              select: templateSelect,
+            }) as Promise<TemplateRow[]>,
       ]);
 
       if (!project) throw new Error("Project not found");
-      if (!allTemplates.length) throw new Error("No templates found for this marketplace. Upload templates first.");
 
-      const zipBuffer = useAutoMatch
-        ? await generateCategoryZip(project.products, allTemplates as TemplateRow[], projectMeta.marketplace, templateId)
-        : await generateExportZip(project.products, allTemplates as ExportTemplate[], projectMeta.marketplace);
+      // Mathis always uses category-split export and requires templates.
+      // All other marketplaces fall back to a flat single-file export when no templates are present.
+      const isMathis = projectMeta.marketplace === "mathis";
+      if (isMathis && !allTemplates.length) {
+        throw new Error("No templates found for Mathis. Upload templates first.");
+      }
+
+      let zipBuffer: Buffer;
+      if (!allTemplates.length) {
+        // Non-Mathis with no templates → flat export (one file, standard columns)
+        zipBuffer = await generateFlatExport(project.products, projectMeta.marketplace) as Buffer;
+      } else if (useTemplateIds) {
+        // Non-Mathis: user picked a specific template → all products in one file
+        zipBuffer = await generateSingleTemplateExport(project.products, allTemplates[0], projectMeta.marketplace) as Buffer;
+      } else if (useAutoMatch) {
+        zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
+      } else {
+        zipBuffer = await generateExportZip(project.products, allTemplates as unknown as ExportTemplate[], projectMeta.marketplace) as Buffer;
+      }
 
       resolveJob(jobId, zipBuffer as Buffer);
       await prisma.project.update({ where: { id }, data: { status: "done" } });

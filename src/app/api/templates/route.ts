@@ -14,11 +14,16 @@ export async function GET(req: NextRequest) {
 
   const marketplace = req.nextUrl.searchParams.get("marketplace");
 
-  // Return user's own templates + global (admin) templates (userId = null)
+  // Return user's own templates + global (admin) templates (userId = null).
+  // Exclude fileData (BYTEA blob) — only column definitions are needed for listing and export.
   const templates = await prisma.exportTemplate.findMany({
     where: {
       ...(marketplace ? { marketplace } : {}),
       OR: [{ userId: user!.id }, { userId: null }],
+    },
+    select: {
+      id: true, name: true, marketplace: true, category: true,
+      fileFormat: true, columns: true, userId: true, createdAt: true,
     },
     orderBy: { createdAt: "desc" },
   });
