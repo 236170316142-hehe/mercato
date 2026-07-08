@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
-import { generateCategoryZip, generateExportZip } from "@/lib/export/zip";
+import type { ExportTemplate } from "@prisma/client";
+import { generateCategoryZip, generateExportZip, type TemplateRow } from "@/lib/export/zip";
 import { createJob, resolveJob, rejectJob, getJob } from "@/lib/export/job-store";
 
 export const maxDuration = 300;
@@ -69,21 +70,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // The HTTP response returns the jobId above; client polls GET until done.
   void (async () => {
     try {
+      // For autoMatch / single-template paths, skip fileData (large BYTEA) — createXlsxFromScratch
+      // only needs column definitions. For explicit templateIds, load fileData so fillTemplateXlsx works.
+      const useAutoMatch = autoMatch || !!templateId;
       const [project, allTemplates] = await Promise.all([
         prisma.project.findUnique({ where: { id }, include: { products: true } }),
-        prisma.exportTemplate.findMany({
-          where: (autoMatch || templateId)
-            ? { marketplace: projectMeta.marketplace, OR: [{ userId: user!.id }, { userId: null }] }
-            : { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
-        }),
+        useAutoMatch
+          ? prisma.exportTemplate.findMany({
+              where: { marketplace: projectMeta.marketplace, OR: [{ userId: user!.id }, { userId: null }] },
+              select: { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true },
+            }) as Promise<TemplateRow[]>
+          : prisma.exportTemplate.findMany({
+              where: { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
+            }),
       ]);
 
       if (!project) throw new Error("Project not found");
       if (!allTemplates.length) throw new Error("No templates found for this marketplace. Upload templates first.");
 
-      const zipBuffer = (autoMatch || templateId)
-        ? await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId)
-        : await generateExportZip(project.products, allTemplates, projectMeta.marketplace);
+      const zipBuffer = useAutoMatch
+        ? await generateCategoryZip(project.products, allTemplates as TemplateRow[], projectMeta.marketplace, templateId)
+        : await generateExportZip(project.products, allTemplates as ExportTemplate[], projectMeta.marketplace);
 
       resolveJob(jobId, zipBuffer as Buffer);
       await prisma.project.update({ where: { id }, data: { status: "done" } });

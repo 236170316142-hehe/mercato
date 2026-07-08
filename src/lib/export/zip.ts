@@ -4,13 +4,24 @@ import type { Product, ExportTemplate } from "@prisma/client";
 
 type Column = { key: string; label: string; required?: boolean };
 
+// Minimal template shape needed by generateCategoryZip — excludes the large fileData BYTEA blob.
+// The route can use a `select` query to avoid fetching fileData, which is never used in the
+// pure-XML XLSX path.
+export type TemplateRow = {
+  id: string;
+  name: string;
+  category?: string | null;
+  fileFormat: string;
+  columns: unknown;
+};
+
 // ── Category-split export (primary mode) ─────────────────────────────────────
 // Each category is auto-matched to the closest template by name similarity.
 // The defaultTemplateId is used as the fallback when no close match is found.
 
 export async function generateCategoryZip(
   products: Product[],
-  templates: ExportTemplate[],
+  templates: TemplateRow[],
   marketplace = "amazon",
   defaultTemplateId?: string,
 ): Promise<Buffer> {
@@ -52,7 +63,7 @@ export async function generateCategoryZip(
 
 // Pick the best-matching template for a category using word-overlap scoring.
 // Falls back to the provided default when no template scores above zero.
-export function findBestTemplate<T extends { id: string; name: string }>(
+export function findBestTemplate<T extends { id: string; name: string; category?: string | null }>(
   category: string,
   templates: T[],
   fallback: T,
@@ -67,14 +78,19 @@ export function findBestTemplate<T extends { id: string; name: string }>(
   let bestScore = 0;
 
   for (const t of templates) {
+    // Score against both the template name and its category field (whichever is set)
     const normName = norm(t.name);
-    const nameWords = normName.split(" ").filter((w) => w.length > 2);
+    const normCatField = t.category ? norm(t.category) : normName;
+    const target = normCatField || normName;
+    const targetWords = target.split(" ").filter((w) => w.length > 2);
 
     let score = 0;
-    for (const word of catWords) if (nameWords.includes(word)) score += 2;
-    for (const word of nameWords) if (catWords.includes(word)) score += 1;
-    if (normName.includes(normCat)) score += 5;
-    if (normCat.includes(normName)) score += 3;
+    for (const word of catWords) if (targetWords.includes(word)) score += 2;
+    for (const word of targetWords) if (catWords.includes(word)) score += 1;
+    if (target.includes(normCat)) score += 5;
+    if (normCat.includes(target)) score += 3;
+    // Exact match bonus
+    if (target === normCat) score += 10;
 
     if (score > bestScore) { bestScore = score; best = t; }
   }
