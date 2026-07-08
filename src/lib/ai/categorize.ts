@@ -18,42 +18,40 @@ export type CategorizeResult = {
   confidence: number;
 };
 
-// Per-category descriptions for Mathis Brothers home furnishings categories.
-// Matched against the template/category name with the first matching pattern.
-// CRITICAL: Mathis is a HOME FURNISHINGS & FURNITURE store — NOT a clothing or costume store.
-// Every category below is about HOME goods only. Clothing, apparel, costumes, and fashion
-// accessories are NEVER a match for any Mathis category → use "Uncategorized".
+// Per-category descriptions for Mathis Brothers.
+// Mathis Brothers is a large Oklahoma home furnishings retailer that also sells
+// seasonal costumes, holiday decor, and baby/kids items in its seasonal department.
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
-  [/living\s*room/i,
-    "Living room FURNITURE: sofas, sectionals, loveseats, recliners, accent chairs, chaises, ottomans (as furniture), coffee tables, end tables, side tables, entertainment centers, TV stands, console/sofa tables, media cabinets. NOT clothing, NOT rugs (those go in Rugs), NOT lighting (those go in Lighting)."],
-  [/bedroom/i,
-    "Adult bedroom FURNITURE: beds, headboards, footboards, bed frames, platform beds, sleigh beds, storage beds, dressers, chest of drawers, nightstands, armoires, vanities, bedroom mirrors, bedroom sets/suites. NOT kids/youth beds (those go in Baby & Kids), NOT mattresses (those go in Mattress), NOT bedding/sheets (those go in Bedding & Bath)."],
-  [/dining\s*room|dining/i,
-    "Dining room: dining tables, dining chairs, dining benches, bar stools (counter & bar height), china cabinets, buffets, sideboards, hutches, bar carts, bar cabinets, dining/kitchen sets. NOT kitchen appliances or food."],
-  [/outdoor|patio/i,
-    "Outdoor & patio HOME furniture: outdoor sofas, outdoor sectionals, lounge chairs, chaise lounges, patio dining sets, fire pits, outdoor swings, garden benches, pergolas, umbrellas, outdoor storage boxes, Adirondack chairs. Must be for outdoor use."],
-  [/mattress|sleep|foundation/i,
-    "Sleep products: mattresses of all types (innerspring, memory foam, hybrid, latex, pillow-top, gel), box springs/foundations, mattress toppers, mattress protectors, adjustable bed bases, bed pillows, mattress pads. NOT bed frames (those go in Bedroom)."],
-  [/rug/i,
-    "Floor coverings: area rugs, accent rugs, runners, hallway rugs, outdoor rugs, rug pads, all sizes and materials (wool, polypropylene, natural fiber, shag, flatweave). Product must be a rug or floor covering."],
-  [/bedding|bath|linen/i,
-    "Bed & bath TEXTILES: comforter sets, duvet covers, duvet inserts, quilt sets, sheet sets, pillowcases, shams, bed skirts, blankets, throws, coverlets, towel sets, bath rugs, shower curtains, bath accessories. NOT bedroom furniture."],
-  [/baby|kid|youth|child|nursery|toddler/i,
-    "HOME FURNISHINGS for children & nursery: cribs, bassinets, toddler beds, bunk beds, loft beds, youth/kids bedroom sets, kids dressers, kids desks, changing tables, nursery furniture sets, kids bedding sets, baby bedding, nursery decor (wall art, mobiles, lamps for nursery), kids area rugs, playroom furniture, kids storage. NOT clothing, NOT costumes, NOT toys (unless furniture/storage for toys like toy chests)."],
-  [/decor|accent/i,
-    "Home DECORATIVE accessories: wall art, canvas prints, framed art, wall mirrors (decorative), sculptures, figurines, vases, decorative bowls, candles & candleholders, picture frames, decorative trays, faux plants/flowers, clocks, bookends, decorative pillows & throws (as accent decor), table runners. NOT furniture."],
-  [/lighting|lamp/i,
-    "Light fixtures & lamps: chandeliers, pendant lights, flush mount & semi-flush lights, ceiling fans with lights, table lamps, floor lamps, arc lamps, wall sconces, vanity lights, lamp shades, light kits. Product must be a lighting item or lamp."],
-  [/kitchen/i,
-    "Kitchen FURNITURE & storage: kitchen islands, kitchen carts, kitchen bar stools, breakfast bars, kitchen cabinets, pantry storage units, butcher block tables. NOT kitchen appliances, NOT cookware."],
-  [/office/i,
-    "Home office FURNITURE: desks (writing desks, computer desks, executive desks, standing desks), office chairs, task chairs, bookcases, filing cabinets, credenzas, computer armoires, office sets."],
-  [/storage|organiz|shelv/i,
-    "Storage & organization HOME furniture: bookcase shelving units, storage ottomans, media storage cabinets, hall trees, coat racks, entryway benches with storage, closet organizer systems, decorative baskets & bins used as home storage. NOT standalone baskets sold as decor."],
   [/seasonal|holiday/i,
-    "Seasonal HOME DECOR: Christmas trees (artificial), Christmas/holiday ornaments, wreaths, garlands, holiday lights & string lights, Thanksgiving/harvest home decor, Easter/spring home decor, Halloween HOME decorations (pumpkins, skulls, spooky decor for the home — NOT costumes or wearable items), seasonal throw pillows, seasonal table runners, holiday mantel decor, snow globes. IMPORTANT: apparel, costumes, wigs, and anything worn on the body is NOT seasonal home decor — mark those Uncategorized."],
+    "Seasonal & holiday items for TEENS AND ADULTS: Halloween costumes for teens/adults (sizes S, M, L, XL, XXL, 12-14, 14-16, 16-18, M/L, adult, one-size-fits-most), adult costume accessories (wigs, hats, masks, capes, props, adult socks/tights), Christmas decorations, holiday lights, ornaments, wreaths, garlands, Thanksgiving decor, Easter decor, seasonal throw pillows, holiday mantel decor. KEY SIZE RULE: sizes L/XL/XXL/adult/12+ → Seasonal. NOT for infants or small children — those go in Baby & Kids."],
+  [/baby|kid|youth|child|nursery|toddler/i,
+    "Items for INFANTS, BABIES, TODDLERS, and YOUNG CHILDREN: baby/toddler/kids Halloween costumes and dress-up (sizes NB, 0-3M, 3-6M, 6-12M, 12-18M, 18-24M, T1, T2, T3, T4, 2T, 3T, 4T, S/4-6, M/7-8, M/8-10), kids clothing, baby accessories (bibs, booties, socks for babies), kids toys, stuffed animals, dolls, baby gear, cribs, toddler beds, bunk beds, youth bedroom sets, nursery furniture, kids bedding, baby monitors, changing tables, kids decor. KEY RULE: any product with a baby/toddler/kids size designation → Baby & Kids."],
+  [/living\s*room/i,
+    "Living room FURNITURE: sofas, sectionals, loveseats, recliners, accent chairs, ottomans, coffee tables, end tables, entertainment centers, TV stands, console tables."],
+  [/bedroom/i,
+    "Adult bedroom FURNITURE: beds, headboards, bed frames, dressers, nightstands, armoires, bedroom sets. NOT mattresses (→ Mattress), NOT kids beds (→ Baby & Kids)."],
+  [/dining/i,
+    "Dining room: dining tables, dining chairs, bar stools, china cabinets, buffets, sideboards, dining sets."],
+  [/outdoor|patio/i,
+    "Outdoor & patio furniture: outdoor sofas, lounge chairs, patio dining sets, fire pits, umbrellas, garden benches, outdoor storage."],
+  [/mattress|sleep|foundation/i,
+    "Sleep products: mattresses (all types), box springs, mattress toppers/protectors, adjustable bases, bed pillows, mattress pads."],
+  [/rug/i,
+    "Floor coverings: area rugs, runners, accent rugs, outdoor rugs, rug pads — all sizes and styles."],
+  [/bedding|bath|linen/i,
+    "Bed & bath textiles: comforter sets, duvet covers, sheet sets, pillowcases, blankets, throws, towels, bath accessories."],
+  [/decor|accent/i,
+    "Decorative home accessories: wall art, mirrors, sculptures, vases, candles, picture frames, throw pillows (home decor), clocks, faux plants."],
+  [/lighting|lamp/i,
+    "Light fixtures & lamps: chandeliers, pendant lights, ceiling fans, table lamps, floor lamps, wall sconces, lamp shades."],
+  [/kitchen/i,
+    "Kitchen furniture & storage: kitchen islands, bar stools, kitchen carts, kitchen cabinets, pantry storage."],
+  [/office/i,
+    "Home office furniture: desks, office chairs, bookcases, filing cabinets."],
+  [/storage|organiz|shelv/i,
+    "Storage & organization: shelving units, storage ottomans, bookcases, hall trees, coat racks, closet organizers."],
   [/accent|entry|entryway/i,
-    "Accent & entryway HOME furniture: accent chairs (decorative chairs), accent/side tables, console tables (entryway tables), hall trees, entryway benches, coat racks, umbrella stands, entryway sets."],
+    "Entryway furniture: accent chairs, console tables, hall trees, entryway benches, coat racks."],
 ];
 
 function buildCategoryGuide(categories: string[]): string {
@@ -204,22 +202,22 @@ ${guide}`;
   }
 
   const storeContext = isMathis
-    ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based home furnishings retailer. Mathis Brothers sells ONLY: furniture, mattresses, rugs, bedding, home decor, and lighting. They do NOT sell clothing, apparel, costumes, wearable items, food, or electronics."
+    ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer selling furniture, mattresses, rugs, home decor, lighting, AND seasonal items including Halloween costumes and holiday decor."
     : "You are a product categorization expert for a major retail marketplace.";
-
-  const mathisUncategorizedExamples = isMathis
-    ? "\n   Examples of products that must be Uncategorized at Mathis: Halloween costumes, wigs, hats (worn), clothing of any kind, shoes, food, electronics, appliances, toys (not furniture/storage), perfume, medicine, sporting goods."
-    : "";
 
   const strictRules = availableCategories?.length ? `
 STRICT RULES — violations are not acceptable:
-1. category = EXACTLY one of the names above (copy character-for-character) OR "Uncategorized" if the product does not fit
+1. category = EXACTLY one of the names above (copy character-for-character) OR "Uncategorized" if the product genuinely does not fit any category
 2. NEVER output "General", "Other", "Miscellaneous", "Furniture", "Unknown", or any name NOT in the list (except "Uncategorized")
-3. Use "Uncategorized" when the product is clearly NOT a home furnishings/decor item — clothing, costumes, wigs, wearables, food, electronics, toys (non-furniture), fragrances.${mathisUncategorizedExamples}
-4. For products that ARE home goods: always assign the most specific matching category from the list. Spread products across ALL relevant categories — do NOT funnel everything into 1-2 buckets.
-5. [vendor category] hints in the product list are strong clues — use them along with the category guide above
-6. Read the category guide descriptions carefully — each category lists EXACTLY what belongs there
-7. If a product could fit two categories, pick the one whose guide description is a closer match` : "";
+3. Use "Uncategorized" ONLY for products that clearly don't fit any category (e.g. electronics, food, medicine, automotive parts, perfume/fragrance). If any reasonable fit exists, assign it.
+4. SIZE-BASED ROUTING for seasonal/kids items — most important rule:
+   - Baby/infant size (NB, 0-3M, 3-6M, 6-12M, 12-18M, 18-24M) → Baby & Kids
+   - Toddler size (T1, T2, T3, T4, 2T, 3T, 4T) → Baby & Kids
+   - Young children's size (S/4-6, M/7-8, M/8-10, size ≤10) → Baby & Kids
+   - Teen/adult size (L, XL, XXL, 12-14, 14-16, 16-18, M/L, Adult, One Size) → Seasonal
+5. [vendor category] hints in the product list are strong clues — use them with the category guide
+6. Spread products across ALL relevant categories — do NOT force everything into 1-2 buckets
+7. If unsure between two categories, pick the one whose guide description best matches the product` : "";
 
   const prompt = `${storeContext} Categorize each product into ${categorySection}.
 
