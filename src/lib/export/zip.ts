@@ -248,11 +248,14 @@ async function createXlsxFromScratch(
   columns: Column[],
   sheetName: string,
 ): Promise<Buffer> {
-  // Build all rows: header first, then one row per product
-  const allRows: string[][] = [
-    columns.map((c) => c.label),
-    ...products.map((p) => columns.map((c) => String(getProductField(p, c.key) ?? ""))),
-  ];
+  // Build all rows: header first, then one row per product.
+  // Yield every 100 rows so the event loop stays free to serve GET poll requests
+  // while generating large files (185+ products).
+  const allRows: string[][] = [columns.map((c) => c.label)];
+  for (let i = 0; i < products.length; i++) {
+    if (i > 0 && i % 100 === 0) await new Promise<void>((r) => setImmediate(r));
+    allRows.push(columns.map((c) => String(getProductField(products[i], c.key) ?? "")));
+  }
 
   // Shared-string table (XLSX stores text by index to deduplicate)
   const ssArr: string[] = [];
@@ -348,19 +351,39 @@ function generateCsv(products: Product[], columns: Column[]): string {
 
 // ── Field resolver ────────────────────────────────────────────────────────────
 
+// Cache the normalized-key → value map for vendorData objects.
+// Without this, getProductField rebuilds the map on every cell (once per product × column),
+// which for 370 products × 45 columns = 16,650 linear scans over vendorData keys.
+// With the cache, the map is built ONCE per product and all subsequent lookups are O(1).
+const _vdNormCache = new WeakMap<object, Map<string, unknown>>();
+
+function getVdNorm(vd: Record<string, unknown>): Map<string, unknown> {
+  const cached = _vdNormCache.get(vd);
+  if (cached) return cached;
+  const norm = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(vd)) {
+    if (v !== "" && v != null) norm.set(normalizeKey(k), v);
+  }
+  _vdNormCache.set(vd, norm);
+  return norm;
+}
+
 function getProductField(p: Product, key: string): unknown {
   const nk = normalizeKey(key);
   const vd = p.vendorData as Record<string, unknown> | null;
   const ld = p.liveData as Record<string, unknown> | null;
 
-  // Look up from vendorData — exact match first, then normalised key
+  // O(1) vendorData lookup using the per-product normalized key map
+  const vdNorm: Map<string, unknown> | null = vd ? getVdNorm(vd) : null;
+
   const fromVendor = (...aliases: string[]): unknown => {
-    if (!vd) return undefined;
+    if (!vd || !vdNorm) return undefined;
     for (const alias of aliases) {
-      const na = normalizeKey(alias);
+      // Exact original-key match (covers keys that are already lowercase / no spaces)
       if (alias in vd) { const v = vd[alias]; if (v !== "" && v != null) return v; }
-      const hit = Object.keys(vd).find((k) => normalizeKey(k) === na);
-      if (hit !== undefined) { const v = vd[hit]; if (v !== "" && v != null) return v; }
+      // O(1) normalized match via cached map
+      const v = vdNorm.get(normalizeKey(alias));
+      if (v !== undefined) return v;
     }
     return undefined;
   };
