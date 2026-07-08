@@ -73,10 +73,11 @@ export async function generateCategoryZip(
 
   const eligible = eligibleProducts(products, marketplace);
 
-  // Group by category; uncategorized products go into "_Uncategorized"
+  // Group by category; skip products with no category or AI-flagged "Uncategorized"
   const groups = new Map<string, Product[]>();
   for (const p of eligible) {
-    const cat = p.marketplaceCategory ?? "_Uncategorized";
+    const cat = p.marketplaceCategory;
+    if (!cat || cat === "Uncategorized") continue;
     if (!groups.has(cat)) groups.set(cat, []);
     groups.get(cat)!.push(p);
   }

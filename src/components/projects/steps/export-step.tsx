@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Download, FileSpreadsheet, Loader2, Package, Shuffle } from "lucide-react";
+import { AlertTriangle, Download, FileSpreadsheet, Loader2, Package, Shuffle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -77,12 +77,13 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
 
   const categoryCounts = new Map<string, number>();
   for (const p of products) {
-    if (p.marketplaceCategory) {
+    if (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") {
       categoryCounts.set(p.marketplaceCategory, (categoryCounts.get(p.marketplaceCategory) ?? 0) + 1);
     }
   }
   const categories = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1]);
-  const uncategorizedCount = products.filter((p) => !p.marketplaceCategory).length;
+  // "Uncategorized" (AI flagged) + null (never categorized) — both are excluded from export
+  const uncategorizedCount = products.filter((p) => !p.marketplaceCategory || p.marketplaceCategory === "Uncategorized").length;
   const exportableCount = products.length - uncategorizedCount;
 
   const hasTemplates = templates.length > 0;
@@ -235,6 +236,23 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
           </>
         )}
       </div>
+
+      {/* Uncategorized warning banner (Mathis only) */}
+      {isMathis && !fetching && uncategorizedCount > 0 && (
+        <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-orange-800">
+                {uncategorizedCount} product{uncategorizedCount !== 1 ? "s" : ""} will be excluded from the export
+              </p>
+              <p className="text-xs text-orange-700 mt-1">
+                These products were marked "Uncategorized" — they don't match any of the 12 Mathis templates (e.g. fragrances, electronics, food items). Only {exportableCount} product{exportableCount !== 1 ? "s" : ""} will be included in the ZIP.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {fetching && (
         <div className="flex items-center justify-center py-16">

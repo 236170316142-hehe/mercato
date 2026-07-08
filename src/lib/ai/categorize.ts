@@ -79,10 +79,10 @@ export async function categorizeProducts(
   }
 
   // ── Validation pass ────────────────────────────────────────────────────────
-  // Retry any products whose category is not in the allowed list.
-  // Final fallback: word-overlap between product name and category name.
+  // "Uncategorized" is always valid — skip it from retry.
+  // Retry products whose category is genuinely off-list (not Uncategorized).
   if (availableCategories?.length) {
-    const allowed = new Set(availableCategories);
+    const allowed = new Set([...availableCategories, "Uncategorized"]);
     const offListIds = new Set(allResults.filter((r) => !allowed.has(r.category)).map((r) => r.productId));
 
     if (offListIds.size > 0) {
@@ -96,12 +96,13 @@ export async function categorizeProducts(
           const batchResults = await categorizeBatch(batch, marketplace, model, availableCategories, true);
           for (const r of batchResults) retryMap.set(r.productId, r);
         } catch {
+          // On error, mark as Uncategorized rather than forcing wrong category
           for (const p of batch) {
             retryMap.set(p.id, {
               productId: p.id,
-              category: pickClosest(p.name, availableCategories),
-              path: pickClosest(p.name, availableCategories),
-              confidence: 0.2,
+              category: "Uncategorized",
+              path: "Uncategorized",
+              confidence: 0.1,
             });
           }
         }
@@ -112,11 +113,11 @@ export async function categorizeProducts(
         if (!r?.productId || !offListIds.has(r.productId)) continue;
         const retry = retryMap.get(r.productId);
         if (!retry) continue;
+        // If still off-list after retry, mark Uncategorized (never silently force wrong category)
         if (!allowed.has(retry.category)) {
-          const p = products.find((p) => p.id === r.productId);
-          retry.category = pickClosest(p?.name ?? "", availableCategories);
-          retry.path = retry.category;
-          retry.confidence = 0.2;
+          retry.category = "Uncategorized";
+          retry.path = "Uncategorized";
+          retry.confidence = 0.1;
         }
         allResults[i] = retry;
       }
@@ -191,16 +192,17 @@ ${guide}`;
 
   const strictRules = availableCategories?.length ? `
 STRICT RULES — violations are not acceptable:
-1. category = one of the names above, copied exactly character-for-character (no abbreviations, no variations)
-2. NEVER output "General", "Other", "Miscellaneous", "Unknown", or any name NOT in the category list
-3. AGE/SIZE ROUTING (most important rule for costumes, clothing, toys):
+1. category = EXACTLY one of the names above (copy character-for-character) OR "Uncategorized" if the product genuinely does not fit any listed category
+2. NEVER output "General", "Other", "Miscellaneous", "Furniture", "Unknown", or any name NOT in the list (except "Uncategorized")
+3. Use "Uncategorized" ONLY when the product clearly does not belong in ANY of the listed categories (e.g. perfume/fragrance in a furniture store, electronics, food items). If there is any reasonable fit, use that category.
+4. AGE/SIZE ROUTING (most important rule for costumes, clothing, toys):
    - Product has infant/baby size (NB, 0-3M, 3-6M, 6-12M, 12-18M, 18-24M) → Baby & Kids
    - Product has toddler size (T1, T2, T3, T4, 2T, 3T, 4T, "Toddler") → Baby & Kids
    - Product has small children's size (S/4-6, M/7-8, M/8-10, size 6 or smaller) → Baby & Kids
    - Product says "Adults", "Adult", teen sizes (L, XL, 12-14, 14-16, 16-18, M/L) → Seasonal (if costume/holiday item)
-4. [vendor category] hints in the product list are clues — use them along with the category guide above
-5. Spread products across the full range of categories based on what the product actually IS
-6. If unsure between two categories, pick the one whose category guide description best matches` : "";
+5. [vendor category] hints in the product list are strong clues — use them along with the category guide above
+6. Spread products across the full range of categories based on what the product actually IS
+7. If unsure between two categories, pick the one whose category guide description best matches` : "";
 
   const prompt = `${storeContext} Categorize each product into ${categorySection}.
 
@@ -221,34 +223,38 @@ ${strictRules}
   });
 
   const fallbackCat = availableCategories?.[0] ?? "General";
-  const allowedSet = availableCategories ? new Set(availableCategories) : null;
+  // "Uncategorized" is always a valid output — it means the product doesn't fit any template
+  const allowedSet = availableCategories ? new Set([...availableCategories, "Uncategorized"]) : null;
+
+  const mapResult = (r: { index: number; category: string; path: string; confidence: number }) => {
+    let cat = r.category?.trim() ?? "";
+    if (allowedSet && !allowedSet.has(cat)) {
+      // AI returned something off-list — don't silently force to first template,
+      // try word-overlap first; if score is 0 (no overlap at all), mark Uncategorized
+      const closest = availableCategories ? pickClosest(cat, availableCategories) : fallbackCat;
+      const normCat = cat.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const normClosest = closest.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const hasOverlap = normClosest.split(" ").some(w => w.length > 2 && normCat.includes(w)) ||
+                         normCat.split(" ").some(w => w.length > 2 && normClosest.includes(w));
+      cat = hasOverlap ? closest : "Uncategorized";
+    }
+    return {
+      productId: products[r.index - 1]?.id ?? "",
+      category: cat,
+      path: r.path?.trim() || cat,
+      confidence: r.confidence ?? 0.5,
+    };
+  };
 
   try {
     const parsed = JSON.parse(text.trim()) as { index: number; category: string; path: string; confidence: number }[];
-    return parsed.map((r) => {
-      const cat = allowedSet && !allowedSet.has(r.category) ? fallbackCat : r.category;
-      return {
-        productId: products[r.index - 1]?.id ?? "",
-        category: cat,
-        path: r.path ?? cat,
-        confidence: r.confidence ?? 0.5,
-      };
-    }).filter((r) => r.productId);
+    return parsed.map(mapResult).filter((r) => r.productId);
   } catch {
-    // JSON parse failed — try extracting JSON from the response
     const match = text.match(/\[[\s\S]*\]/);
     if (match) {
       try {
         const parsed = JSON.parse(match[0]) as { index: number; category: string; path: string; confidence: number }[];
-        return parsed.map((r) => {
-          const cat = allowedSet && !allowedSet.has(r.category) ? fallbackCat : r.category;
-          return {
-            productId: products[r.index - 1]?.id ?? "",
-            category: cat,
-            path: r.path ?? cat,
-            confidence: r.confidence ?? 0.5,
-          };
-        }).filter((r) => r.productId);
+        return parsed.map(mapResult).filter((r) => r.productId);
       } catch { /* fall through */ }
     }
     return products.map((p) => ({

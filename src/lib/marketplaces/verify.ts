@@ -141,12 +141,17 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     for (const p of withAsin) {
       const lp = liveMap.get(p.asin!);
       if (!lp) { asinResults.set(p.id, notFound(p.id)); continue; }
-      const nameSim = titleSim(p.name, lp.title as string);
-      if (nameSim < 0.25) {
-        asinResults.set(p.id, notFound(p.id));
-      } else {
-        asinResults.set(p.id, compareToLive(p, lp.title as string, lp.brand as string ?? null, null, lp as Record<string, unknown>));
+      // ASIN is the most definitive product identity — always trust it.
+      // Don't reject based on title similarity: vendor files often use abbreviations.
+      const result = compareToLive(p, lp.title as string, lp.brand as string ?? null, null, lp as Record<string, unknown>);
+      // Downgrade mismatch → warning for ASIN-confirmed products (title abbreviation ≠ wrong product)
+      if (result.status === "mismatch") {
+        result.status = "warning";
+        result.fields = result.fields.map((f) =>
+          f.severity === "mismatch" ? { ...f, severity: "warning" as const } : f
+        );
       }
+      asinResults.set(p.id, result);
     }
   }
   void asinInvalid; // they flow into withUpcOnly / withNameOnly above
@@ -167,13 +172,16 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const liveNorm = normalizeMany(rawProducts, 1) as any[];
 
-    // Map every barcode Keepa returns → list of normalized live products
+    // Map every barcode Keepa returns → list of normalized live products.
+    // Coerce codes to string: some Keepa responses return numeric EANs.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const codeToLiveList = new Map<string, (typeof liveNorm[number])[]>();
     rawProducts.forEach((raw, idx) => {
       const norm = liveNorm[idx];
       if (!norm) return;
-      const codes = [...(raw.eanList ?? []), ...(raw.upcList ?? [])].filter((c): c is string => typeof c === "string");
+      const codes = [...(raw.eanList ?? []), ...(raw.upcList ?? [])]
+        .map((c) => String(c).trim())
+        .filter((c) => c.length >= 8);
       for (const code of codes) {
         if (!codeToLiveList.has(code)) codeToLiveList.set(code, []);
         codeToLiveList.get(code)!.push(norm);
@@ -188,31 +196,45 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
         for (const c of (codeToLiveList.get(v) ?? [])) candidates.push(c);
       }
 
-      if (!candidates.length) {
+      // Fallback: if the code map missed (Keepa stored the code in a non-standard field)
+      // AND we only queried a single product's codes, accept all returned products as
+      // candidates. For batched multi-product lookups, don't fallback — mixing candidates
+      // from different UPCs would cause wrong matches.
+      const singleProductBatch = withUpcOnly.length === 1;
+      const allReturned = singleProductBatch ? liveNorm.filter(Boolean) : [];
+      const finalCandidates = candidates.length ? candidates : allReturned.length ? allReturned : null;
+
+      if (!finalCandidates) {
         upcNotFound.push(p);
         continue;
       }
 
       // Pick the ASIN whose title is most similar to the vendor's product name.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let best: any = candidates[0];
+      let best: any = finalCandidates[0];
       let bestSim = titleSim(p.name, best.title as string);
-      for (const candidate of candidates.slice(1)) {
+      for (const candidate of finalCandidates.slice(1)) {
         const sim = titleSim(p.name, candidate.title as string);
         if (sim > bestSim) { best = candidate; bestSim = sim; }
       }
 
-      // A barcode IS the product identity — trust UPC match even with low title similarity.
-      // Only fall through if title is completely unrelated (< 0.1) which likely means a
-      // catalog error (wrong product merged onto the same barcode by a third-party seller).
-      if (bestSim < 0.1) {
-        upcNotFound.push(p);
-      } else {
-        const resolved = resolvedUpc(p);
-        const result = compareToLive(p, best.title as string, (best.brand as string) ?? null, null, best as Record<string, unknown>);
-        if (resolved && !p.upc) result.resolvedUpc = resolved;
-        upcResults.set(p.id, result);
+      // A UPC barcode IS the product identity — do NOT reject based on title similarity.
+      // Vendor files often use heavy abbreviations ("PWR STRP 360PRO") that share zero words
+      // with the full Amazon title ("360 Electrical Pro Heavy Duty Hexacore"). The UPC match
+      // is definitive — trust it unconditionally and let compareToLive report the title diff
+      // as a warning rather than silently returning not_found.
+      const resolved = resolvedUpc(p);
+      const result = compareToLive(p, best.title as string, (best.brand as string) ?? null, null, best as Record<string, unknown>);
+      if (resolved && !p.upc) result.resolvedUpc = resolved;
+      // UPC-confirmed product: downgrade any mismatch → warning so vendor abbreviation
+      // differences don't block the export. The UPC is the authoritative identity check.
+      if (result.status === "mismatch") {
+        result.status = "warning";
+        result.fields = result.fields.map((f) =>
+          f.severity === "mismatch" ? { ...f, severity: "warning" as const } : f
+        );
       }
+      upcResults.set(p.id, result);
     }
   }
 
