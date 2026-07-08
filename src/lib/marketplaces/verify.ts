@@ -191,29 +191,36 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     for (const p of withUpcOnly) {
       // Collect candidates across all variants (UPC-12 + EAN-13)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const candidates: (typeof liveNorm[number])[] = [];
+      let candidates: (typeof liveNorm[number])[] = [];
       for (const v of upcVariants(resolvedUpc(p))) {
         for (const c of (codeToLiveList.get(v) ?? [])) candidates.push(c);
       }
 
-      // Fallback: if the code map missed (Keepa stored the code in a non-standard field)
-      // AND we only queried a single product's codes, accept all returned products as
-      // candidates. For batched multi-product lookups, don't fallback — mixing candidates
-      // from different UPCs would cause wrong matches.
-      const singleProductBatch = withUpcOnly.length === 1;
-      const allReturned = singleProductBatch ? liveNorm.filter(Boolean) : [];
-      const finalCandidates = candidates.length ? candidates : allReturned.length ? allReturned : null;
+      // Code map miss — Keepa may have returned the product but not populated
+      // eanList/upcList (common for some catalog entries), or the batch lookup
+      // silently failed for this code. Do a targeted single-product rescue lookup.
+      if (!candidates.length) {
+        const rescueCodes = upcVariants(resolvedUpc(p));
+        if (rescueCodes.length) {
+          try {
+            const rescueRaw = await getProductsByCode(1, rescueCodes, { stats: 1 });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const rescueNorm = normalizeMany(rescueRaw, 1) as any[];
+            candidates = rescueNorm.filter(Boolean);
+          } catch { /* fall through to upcNotFound */ }
+        }
+      }
 
-      if (!finalCandidates) {
+      if (!candidates.length) {
         upcNotFound.push(p);
         continue;
       }
 
       // Pick the ASIN whose title is most similar to the vendor's product name.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let best: any = finalCandidates[0];
+      let best: any = candidates[0];
       let bestSim = titleSim(p.name, best.title as string);
-      for (const candidate of finalCandidates.slice(1)) {
+      for (const candidate of candidates.slice(1)) {
         const sim = titleSim(p.name, candidate.title as string);
         if (sim > bestSim) { best = candidate; bestSim = sim; }
       }
