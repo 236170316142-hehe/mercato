@@ -14,11 +14,15 @@ export async function GET(req: NextRequest) {
 
   const marketplace = req.nextUrl.searchParams.get("marketplace");
 
+  // "amazon_us" projects should also match templates tagged "amazon" and vice-versa.
+  const marketplaceFamily = (mp: string) =>
+    mp === "amazon_us" || mp === "amazon" ? ["amazon_us", "amazon"] : [mp];
+
   // Return user's own templates + global (admin) templates (userId = null).
   // Exclude fileData (BYTEA blob) — only column definitions are needed for listing and export.
   const templates = await prisma.exportTemplate.findMany({
     where: {
-      ...(marketplace ? { marketplace } : {}),
+      ...(marketplace ? { marketplace: { in: marketplaceFamily(marketplace) } } : {}),
       OR: [{ userId: user!.id }, { userId: null }],
     },
     select: {
