@@ -65,6 +65,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
             // Keepa prices are in cents (e.g. 1999 = $19.99)
             const verifiedPrice = typeof ld?.price === "number" && ld.price > 0
               ? ld.price / 100 : null;
+            // Save UPC resolved from vendorData scan when p.upc was missing
+            const resolvedUpc = r.resolvedUpc ?? null;
             return prisma.product.update({
               where: { id: r.productId },
               data: {
@@ -74,6 +76,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
                 verifiedAt: new Date(),
                 ...(verifiedAsin ? { asin: verifiedAsin } : {}),
                 ...(verifiedPrice ? { price: verifiedPrice } : {}),
+                ...(resolvedUpc ? { upc: resolvedUpc } : {}),
               },
             });
           })

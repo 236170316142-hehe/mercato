@@ -5,6 +5,7 @@ export type VerifyResult = {
   status: "ok" | "warning" | "mismatch" | "not_found" | "skipped" | "discontinued";
   fields: FieldResult[];
   liveData: Record<string, unknown>;
+  resolvedUpc?: string; // normalized UPC extracted from vendorData when p.upc was null
 };
 
 // Check raw vendorData for a status column indicating discontinued.
@@ -97,11 +98,36 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     return [n];
   };
 
+  // Extract a barcode from vendorData when p.upc is null or invalid.
+  // Vendor files often have UPC/EAN/barcode in columns with non-standard headers
+  // that the importer didn't map to the upc field.
+  const extractVendorUpc = (p: Product): string | null => {
+    const vd = p.vendorData as Record<string, unknown> | null;
+    if (!vd) return null;
+    // Priority 1: known barcode column names
+    const barcodeKeys = /\b(upc|ean|gtin|barcode|isbn|item[\s_-]*code|product[\s_-]*code)\b/i;
+    for (const [k, v] of Object.entries(vd)) {
+      if (!barcodeKeys.test(k)) continue;
+      const norm = normalizeUpc(String(v ?? ""));
+      if (norm) return norm;
+    }
+    // Priority 2: any column whose value looks like a barcode (8-14 digits after normalization)
+    for (const v of Object.values(vd)) {
+      const norm = normalizeUpc(String(v ?? ""));
+      if (norm && norm.length >= 12) return norm;
+    }
+    return null;
+  };
+
+  // Resolve the best UPC for each product: stored p.upc → normalize → fallback vendorData scan
+  const resolvedUpc = (p: Product): string | null =>
+    normalizeUpc(p.upc) ?? extractVendorUpc(p);
+
   const withAsin     = activeProducts.filter((p) => p.asin && ASIN_RE.test(p.asin));
   const asinInvalid  = activeProducts.filter((p) => p.asin && !ASIN_RE.test(p.asin));
-  // A product "has UPC" if p.upc normalizes to a valid barcode
-  const withUpcOnly  = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && !!normalizeUpc(p.upc));
-  const withNameOnly = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && !normalizeUpc(p.upc));
+  // A product "has UPC" if p.upc normalizes OR vendorData contains a barcode
+  const withUpcOnly  = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && !!resolvedUpc(p));
+  const withNameOnly = activeProducts.filter((p) => (!p.asin || !ASIN_RE.test(p.asin ?? "")) && !resolvedUpc(p));
 
   // Fetch by ASIN
   const asinResults = new Map<string, VerifyResult>();
@@ -133,7 +159,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
   if (withUpcOnly.length) {
     const codeToProduct = new Map<string, Product>();
     for (const p of withUpcOnly) {
-      for (const v of upcVariants(p.upc)) codeToProduct.set(v, p);
+      for (const v of upcVariants(resolvedUpc(p))) codeToProduct.set(v, p);
     }
     const allCodes = [...new Set(codeToProduct.keys())];
 
@@ -158,7 +184,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       // Collect candidates across all variants (UPC-12 + EAN-13)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const candidates: (typeof liveNorm[number])[] = [];
-      for (const v of upcVariants(p.upc)) {
+      for (const v of upcVariants(resolvedUpc(p))) {
         for (const c of (codeToLiveList.get(v) ?? [])) candidates.push(c);
       }
 
@@ -182,13 +208,10 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       if (bestSim < 0.1) {
         upcNotFound.push(p);
       } else {
-        upcResults.set(p.id, compareToLive(
-          p,
-          best.title as string,
-          (best.brand as string) ?? null,
-          null,
-          best as Record<string, unknown>,
-        ));
+        const resolved = resolvedUpc(p);
+        const result = compareToLive(p, best.title as string, (best.brand as string) ?? null, null, best as Record<string, unknown>);
+        if (resolved && !p.upc) result.resolvedUpc = resolved;
+        upcResults.set(p.id, result);
       }
     }
   }

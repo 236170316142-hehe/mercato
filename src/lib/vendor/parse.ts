@@ -21,6 +21,26 @@ const HEADER_SCAN_ROWS = 25;
 const ASIN_RE = /^B0[A-Z0-9]{8}$/i;
 const BARCODE_RE = /^\d{8,14}$/;
 
+// Normalize a raw cell value to a clean barcode string.
+// Handles scientific notation from Excel (8.19E+11 → 819000000000),
+// strips non-digit chars, pads short UPCs to 12 digits.
+function normalizeBarcode(raw: string): string {
+  let s = raw.trim();
+  if (/^\d[\d.]*[eE][+\-]?\d+$/.test(s)) {
+    const n = Number(s);
+    if (!isNaN(n) && n > 0) s = Math.round(n).toString();
+  }
+  s = s.replace(/[^0-9]/g, "");
+  if (!s || s.length < 8) return "";
+  if (s.length < 12) s = s.padStart(12, "0");
+  if (s.length > 14) s = s.slice(-14);
+  return s;
+}
+
+function isBarcode(v: string): boolean {
+  return BARCODE_RE.test(v) || BARCODE_RE.test(normalizeBarcode(v));
+}
+
 function columnShare(rows: string[][], col: number, test: (v: string) => boolean): number {
   let seen = 0;
   let hit = 0;
@@ -140,7 +160,7 @@ function detectColumns(headers: string[], sample: string[][]): ColMap {
   }
   if (codeCol == null) {
     for (let i = 0; i < headers.length; i++) {
-      if (!taken.has(i) && columnShare(sample, i, (v) => BARCODE_RE.test(v)) >= 0.6) {
+      if (!taken.has(i) && columnShare(sample, i, isBarcode) >= 0.6) {
         codeCol = i; taken.add(i); break;
       }
     }
@@ -253,7 +273,7 @@ function gridToRows(grid: string[][]): VendorRow[] {
       ...raw,
       name,
       sku: get(cols.vendorSkuCol) || undefined,
-      upc: get(cols.codeCol) || undefined,
+      upc: normalizeBarcode(get(cols.codeCol)) || get(cols.codeCol) || undefined,
       asin: get(cols.asinCol) || undefined,
       brand: get(cols.brandCol) || undefined,
       description: get(cols.descriptionCol) || get(cols.productCol) || undefined,
