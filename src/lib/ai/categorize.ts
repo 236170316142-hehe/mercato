@@ -8,7 +8,7 @@ export type ProductInput = {
   name: string;
   brand: string | null;
   description: string | null;
-  vendorCategory?: string | null; // original vendor/spreadsheet category — used as a classification hint
+  vendorCategory?: string | null;
 };
 
 export type CategorizeResult = {
@@ -18,18 +18,44 @@ export type CategorizeResult = {
   confidence: number;
 };
 
-// Per-category descriptions for Mathis Brothers.
-// Mathis Brothers is a large Oklahoma home furnishings retailer that also sells
-// seasonal costumes, holiday decor, and baby/kids items in its seasonal department.
+// ── Web search enrichment ─────────────────────────────────────────────────────
+// Uses SerpAPI (if key is set) to look up a product name and return a short
+// context snippet. Called for low-confidence or Uncategorized products so the
+// AI gets real-world context about what the product actually is.
+
+async function searchProductContext(name: string): Promise<string | null> {
+  const key = process.env.SERPAPI_KEY;
+  if (!key) return null;
+  try {
+    const url = `https://serpapi.com/search.json?q=${encodeURIComponent(name)}&engine=google&api_key=${key}&num=3`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return null;
+    const data = await res.json() as { organic_results?: { snippet?: string; title?: string }[] };
+    const snippets = (data.organic_results ?? [])
+      .slice(0, 3)
+      .map((r) => [r.title, r.snippet].filter(Boolean).join(": "))
+      .filter(Boolean)
+      .join(" | ");
+    return snippets || null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Category hints ────────────────────────────────────────────────────────────
+// Descriptions used to build the category guide in the AI prompt.
+// These are informational only — the AI makes its own decision based on
+// understanding what the product actually IS.
+
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
   [/seasonal|holiday/i,
-    "Seasonal & holiday items for TEENS AND ADULTS: Halloween costumes for teens/adults (sizes S, M, L, XL, XXL, 12-14, 14-16, 16-18, M/L, adult, one-size-fits-most), adult costume accessories (wigs, hats, masks, capes, props, adult socks/tights), Christmas decorations, holiday lights, ornaments, wreaths, garlands, Thanksgiving decor, Easter decor, seasonal throw pillows, holiday mantel decor. KEY SIZE RULE: sizes L/XL/XXL/adult/12+ → Seasonal. NOT for infants or small children — those go in Baby & Kids."],
+    "Halloween/holiday items for teens & adults: adult/teen costumes (ANY character or theme), adult costume accessories (wigs, hats, masks, props), holiday home decorations, Christmas trees, ornaments, wreaths, holiday lights. For wearable costumes: use size in the name as a guide (adult/teen/XL/L/12-14/14-16/16-18 → here; toddler/infant/baby/2T/4T/0-3M → Baby & Kids)."],
   [/baby|kid|youth|child|nursery|toddler/i,
-    "Items for INFANTS, BABIES, TODDLERS, and YOUNG CHILDREN: baby/toddler/kids Halloween costumes and dress-up (sizes NB, 0-3M, 3-6M, 6-12M, 12-18M, 18-24M, T1, T2, T3, T4, 2T, 3T, 4T, S/4-6, M/7-8, M/8-10), kids clothing, baby accessories (bibs, booties, socks for babies), kids toys, stuffed animals, dolls, baby gear, cribs, toddler beds, bunk beds, youth bedroom sets, nursery furniture, kids bedding, baby monitors, changing tables, kids decor. KEY RULE: any product with a baby/toddler/kids size designation → Baby & Kids."],
+    "Everything for infants, babies, toddlers, and young children: costumes and dress-up for babies/toddlers/young kids (NB/0-3M/2T/T4/S/4-6/M/7-8 sizes), children's clothing & accessories, stuffed animals, kids toys, baby gear, nursery & kids bedroom furniture (cribs, toddler beds, bunk beds, youth sets), kids bedding, nursery decor."],
   [/living\s*room/i,
-    "Living room FURNITURE: sofas, sectionals, loveseats, recliners, accent chairs, ottomans, coffee tables, end tables, entertainment centers, TV stands, console tables."],
+    "Living room furniture: sofas, sectionals, loveseats, recliners, accent chairs, ottomans, coffee tables, end tables, entertainment centers, TV stands, console tables."],
   [/bedroom/i,
-    "Adult bedroom FURNITURE: beds, headboards, bed frames, dressers, nightstands, armoires, bedroom sets. NOT mattresses (→ Mattress), NOT kids beds (→ Baby & Kids)."],
+    "Adult bedroom furniture: beds, headboards, bed frames, dressers, nightstands, armoires, bedroom sets/suites."],
   [/dining/i,
     "Dining room: dining tables, dining chairs, bar stools, china cabinets, buffets, sideboards, dining sets."],
   [/outdoor|patio/i,
@@ -37,11 +63,11 @@ const CATEGORY_HINTS: Array<[RegExp, string]> = [
   [/mattress|sleep|foundation/i,
     "Sleep products: mattresses (all types), box springs, mattress toppers/protectors, adjustable bases, bed pillows, mattress pads."],
   [/rug/i,
-    "Floor coverings: area rugs, runners, accent rugs, outdoor rugs, rug pads — all sizes and styles."],
+    "Floor coverings: area rugs, runners, accent rugs, outdoor rugs, rug pads."],
   [/bedding|bath|linen/i,
     "Bed & bath textiles: comforter sets, duvet covers, sheet sets, pillowcases, blankets, throws, towels, bath accessories."],
   [/decor|accent/i,
-    "Decorative home accessories: wall art, mirrors, sculptures, vases, candles, picture frames, throw pillows (home decor), clocks, faux plants."],
+    "Decorative home accessories: wall art, mirrors, sculptures, vases, candles, picture frames, decorative pillows, clocks, faux plants."],
   [/lighting|lamp/i,
     "Light fixtures & lamps: chandeliers, pendant lights, ceiling fans, table lamps, floor lamps, wall sconces, lamp shades."],
   [/kitchen/i,
@@ -58,23 +84,28 @@ function buildCategoryGuide(categories: string[]): string {
   const lines: string[] = [];
   for (const cat of categories) {
     const hint = CATEGORY_HINTS.find(([pattern]) => pattern.test(cat));
-    lines.push(hint ? `  • "${cat}" → ${hint[1]}` : `  • "${cat}"`);
+    lines.push(hint ? `  • "${cat}" — ${hint[1]}` : `  • "${cat}"`);
   }
   return lines.join("\n");
 }
+
+// ── Main entry point ──────────────────────────────────────────────────────────
 
 export async function categorizeProducts(
   marketplace: string,
   products: ProductInput[],
   availableCategories?: string[],
 ): Promise<CategorizeResult[]> {
-  // Always use Sonnet when constrained to a specific template list — accuracy matters more than speed.
+  const isMathis = marketplace.toLowerCase() === "mathis";
+
+  // Smaller batches for Mathis (constrained categories) so the AI can reason
+  // more carefully about each product. Other marketplaces use larger batches.
+  const BATCH = isMathis && availableCategories?.length ? 8 : 20;
+  const PARALLEL = isMathis ? 2 : 3;
+
   const model = availableCategories?.length
     ? (process.env.CATEGORIZE_ANTHROPIC_MODEL ?? "claude-sonnet-5")
     : (process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001");
-
-  const BATCH = 20;
-  const PARALLEL = 3; // reduced to avoid rate limits with Sonnet
 
   const batches: ProductInput[][] = [];
   for (let i = 0; i < products.length; i += BATCH) batches.push(products.slice(i, i + BATCH));
@@ -83,58 +114,70 @@ export async function categorizeProducts(
 
   for (let i = 0; i < batches.length; i += PARALLEL) {
     const group = batches.slice(i, i + PARALLEL);
-    const settled = await Promise.allSettled(group.map((b) => categorizeBatch(b, marketplace, model, availableCategories)));
+    const settled = await Promise.allSettled(
+      group.map((b) => categorizeBatch(b, marketplace, model, availableCategories))
+    );
     settled.forEach((s, gi) => {
-      const fallbackCat = availableCategories?.[0] ?? "General";
-      const batchResults = s.status === "fulfilled" ? s.value : group[gi].map((p) => ({
-        productId: p.id, category: fallbackCat, path: fallbackCat, confidence: 0.1,
-      }));
-      allResults.push(...batchResults);
+      const fallback = availableCategories?.[0] ?? "General";
+      allResults.push(...(s.status === "fulfilled"
+        ? s.value
+        : group[gi].map((p) => ({ productId: p.id, category: fallback, path: fallback, confidence: 0.1 }))));
     });
   }
 
   // ── Validation pass ────────────────────────────────────────────────────────
-  // "Uncategorized" is always valid — skip it from retry.
-  // Retry products whose category is genuinely off-list (not Uncategorized).
   if (availableCategories?.length) {
     const allowed = new Set([...availableCategories, "Uncategorized"]);
-    const offListIds = new Set(allResults.filter((r) => !allowed.has(r.category)).map((r) => r.productId));
 
+    // Retry products that landed off-list (AI hallucinated a category name)
+    const offListIds = new Set(allResults.filter((r) => !allowed.has(r.category)).map((r) => r.productId));
     if (offListIds.size > 0) {
       const retryInputs = products.filter((p) => offListIds.has(p.id));
-      const retryBatches: ProductInput[][] = [];
-      for (let i = 0; i < retryInputs.length; i += BATCH) retryBatches.push(retryInputs.slice(i, i + BATCH));
-
-      const retryMap = new Map<string, CategorizeResult>();
-      for (const batch of retryBatches) {
+      for (let i = 0; i < retryInputs.length; i += BATCH) {
+        const batch = retryInputs.slice(i, i + BATCH);
         try {
-          const batchResults = await categorizeBatch(batch, marketplace, model, availableCategories, true);
-          for (const r of batchResults) retryMap.set(r.productId, r);
+          const retryResults = await categorizeBatch(batch, marketplace, model, availableCategories, true);
+          for (const r of retryResults) {
+            if (!allowed.has(r.category)) { r.category = "Uncategorized"; r.path = "Uncategorized"; r.confidence = 0.1; }
+            const idx = allResults.findIndex((a) => a.productId === r.productId);
+            if (idx !== -1) allResults[idx] = r;
+          }
         } catch {
-          // On error, mark as Uncategorized rather than forcing wrong category
           for (const p of batch) {
-            retryMap.set(p.id, {
-              productId: p.id,
-              category: "Uncategorized",
-              path: "Uncategorized",
-              confidence: 0.1,
-            });
+            const idx = allResults.findIndex((a) => a.productId === p.id);
+            if (idx !== -1) { allResults[idx].category = "Uncategorized"; allResults[idx].path = "Uncategorized"; }
           }
         }
       }
+    }
 
-      for (let i = 0; i < allResults.length; i++) {
-        const r = allResults[i];
-        if (!r?.productId || !offListIds.has(r.productId)) continue;
-        const retry = retryMap.get(r.productId);
-        if (!retry) continue;
-        // If still off-list after retry, mark Uncategorized (never silently force wrong category)
-        if (!allowed.has(retry.category)) {
-          retry.category = "Uncategorized";
-          retry.path = "Uncategorized";
-          retry.confidence = 0.1;
-        }
-        allResults[i] = retry;
+    // ── Web search rescue for Uncategorized products ───────────────────────
+    // If SerpAPI is configured, search for each Uncategorized product to get
+    // real-world context, then try to re-categorize with that context.
+    const uncategorizedIds = new Set(allResults.filter((r) => r.category === "Uncategorized").map((r) => r.productId));
+    if (uncategorizedIds.size > 0 && process.env.SERPAPI_KEY) {
+      const rescueProducts = products.filter((p) => uncategorizedIds.has(p.id));
+
+      // Search in parallel (max 5 at once to respect rate limits)
+      const SEARCH_PARALLEL = 5;
+      const enriched: Array<ProductInput & { searchContext?: string }> = [];
+      for (let i = 0; i < rescueProducts.length; i += SEARCH_PARALLEL) {
+        const slice = rescueProducts.slice(i, i + SEARCH_PARALLEL);
+        const contexts = await Promise.all(slice.map((p) => searchProductContext(p.name)));
+        slice.forEach((p, j) => enriched.push({ ...p, searchContext: contexts[j] ?? undefined }));
+      }
+
+      // Re-categorize with search context in small batches
+      for (let i = 0; i < enriched.length; i += 5) {
+        const batch = enriched.slice(i, i + 5);
+        try {
+          const rescueResults = await categorizeBatchWithContext(batch, marketplace, model, availableCategories);
+          for (const r of rescueResults) {
+            if (!allowed.has(r.category)) { r.category = "Uncategorized"; r.path = "Uncategorized"; }
+            const idx = allResults.findIndex((a) => a.productId === r.productId);
+            if (idx !== -1) allResults[idx] = r;
+          }
+        } catch { /* keep Uncategorized */ }
       }
     }
   }
@@ -142,22 +185,9 @@ export async function categorizeProducts(
   return allResults;
 }
 
-function pickClosest(productName: string, allowed: string[]): string {
-  if (!allowed.length) return "General";
-  const norm = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter((w) => w.length > 2);
-  const nameWords = new Set(norm(productName));
-  let best = allowed[0];
-  let bestScore = -1;
-  for (const cat of allowed) {
-    const catWords = norm(cat);
-    let score = 0;
-    for (const w of catWords) if (nameWords.has(w)) score += 2;
-    for (const w of nameWords) if (new Set(catWords).has(w)) score += 1;
-    if (score > bestScore) { bestScore = score; best = cat; }
-  }
-  return best;
-}
+// ── Batch categorization (reasoning-first) ────────────────────────────────────
+// Uses a chain-of-thought approach: asks the AI to first identify what each
+// product IS before assigning a category. More accurate than direct assignment.
 
 async function categorizeBatch(
   products: ProductInput[],
@@ -166,70 +196,80 @@ async function categorizeBatch(
   availableCategories?: string[],
   strictMode = false,
 ): Promise<CategorizeResult[]> {
-  const isMathis = marketplace === "mathis";
+  return categorizeBatchWithContext(
+    products.map((p) => ({ ...p, searchContext: undefined })),
+    marketplace,
+    model,
+    availableCategories,
+    strictMode,
+  );
+}
 
-  // Build per-product lines including vendor category hint
+async function categorizeBatchWithContext(
+  products: Array<ProductInput & { searchContext?: string }>,
+  marketplace: string,
+  model: string,
+  availableCategories?: string[],
+  strictMode = false,
+): Promise<CategorizeResult[]> {
+  const isMathis = marketplace.toLowerCase() === "mathis";
+
   const list = products.map((p, idx) => {
     let line = `${idx + 1}. "${p.name}"`;
     if (p.brand) line += ` by ${p.brand}`;
-    if (p.description) line += ` — ${p.description.slice(0, 120)}`;
+    if (p.description) line += ` — ${p.description.slice(0, 150)}`;
     if (p.vendorCategory) line += ` [vendor category: ${p.vendorCategory}]`;
+    if (p.searchContext) line += `\n   [web search context: ${p.searchContext.slice(0, 300)}]`;
     return line;
   }).join("\n");
 
-  // Build the category section of the prompt
   let categorySection: string;
   if (availableCategories?.length) {
     const guide = buildCategoryGuide(availableCategories);
     categorySection = strictMode
-      ? `EXACTLY one of these categories (copy character-for-character — no variations allowed):
-${availableCategories.map((c) => `- ${c}`).join("\n")}`
-      : `exactly one of these categories:
-${availableCategories.map((c) => `- ${c}`).join("\n")}
-
-Category guide — what belongs in each:
-${guide}`;
+      ? `EXACTLY one of these categories (copy the name character-for-character):\n${availableCategories.map((c) => `- ${c}`).join("\n")}`
+      : `exactly one of these categories:\n${availableCategories.map((c) => `- ${c}`).join("\n")}\n\nCategory guide:\n${guide}`;
   } else {
     const taxonomies: Record<string, string> = {
       amazon: "Amazon product categories (Electronics > Cameras, Home & Kitchen > Cookware, Clothing > Men's Shoes, etc.)",
       bestbuy: "Best Buy categories (TV & Home Theater, Computers & Tablets, Cell Phones, Appliances, Gaming, etc.)",
       walmart: "Walmart categories (Electronics, Home, Clothing, Baby, Sports & Outdoors, Food, etc.)",
       temu: "Temu categories (Women's Clothing, Home & Garden, Beauty & Health, Electronics, Sports, etc.)",
-      mathis: "Mathis Brothers home furnishings categories (Living Room, Bedroom, Dining Room, Outdoor, Mattress, Rugs, Bedding & Bath, Baby & Kids, Decor, Lighting, Kitchen, Home Office, Storage, Seasonal, etc.)",
+      mathis: "Mathis Brothers categories (Living Room, Bedroom, Dining Room, Outdoor, Mattress, Rugs, Bedding & Bath, Baby & Kids, Decor, Lighting, Kitchen, Home Office, Storage, Seasonal)",
       sears: "Sears categories (Appliances, Tools, Clothing, Shoes, Electronics, Lawn & Garden, etc.)",
     };
     categorySection = taxonomies[marketplace] ?? `${marketplace} product categories`;
   }
 
   const storeContext = isMathis
-    ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer selling furniture, mattresses, rugs, home decor, lighting, AND seasonal items including Halloween costumes and holiday decor."
+    ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer that sells furniture, mattresses, rugs, bedding, home decor, lighting, AND seasonal/holiday items including Halloween costumes for all ages."
     : "You are a product categorization expert for a major retail marketplace.";
 
-  const strictRules = availableCategories?.length ? `
-STRICT RULES — violations are not acceptable:
-1. category = EXACTLY one of the names above (copy character-for-character) OR "Uncategorized" if the product genuinely does not fit any category
-2. NEVER output "General", "Other", "Miscellaneous", "Furniture", "Unknown", or any name NOT in the list (except "Uncategorized")
-3. Use "Uncategorized" ONLY for products that clearly don't fit any category (e.g. electronics, food, medicine, automotive parts, perfume/fragrance). If any reasonable fit exists, assign it.
-4. SIZE-BASED ROUTING for seasonal/kids items — most important rule:
-   - Baby/infant size (NB, 0-3M, 3-6M, 6-12M, 12-18M, 18-24M) → Baby & Kids
-   - Toddler size (T1, T2, T3, T4, 2T, 3T, 4T) → Baby & Kids
-   - Young children's size (S/4-6, M/7-8, M/8-10, size ≤10) → Baby & Kids
-   - Teen/adult size (L, XL, XXL, 12-14, 14-16, 16-18, M/L, Adult, One Size) → Seasonal
-5. [vendor category] hints in the product list are strong clues — use them with the category guide
-6. Spread products across ALL relevant categories — do NOT force everything into 1-2 buckets
-7. If unsure between two categories, pick the one whose guide description best matches the product` : "";
+  const reasoningInstruction = `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
 
-  const prompt = `${storeContext} Categorize each product into ${categorySection}.
+  const rules = availableCategories?.length ? `
+RULES:
+1. Output EXACTLY one category name from the list above (copy it character-for-character) OR "Uncategorized" if truly no fit exists
+2. Never invent category names. Never output "General", "Other", "Furniture", "Unknown", etc.
+3. "Uncategorized" is only for products that genuinely don't belong in ANY listed category
+4. Use all available information: product name, brand, description, vendor category, web context
+5. If the product name includes a size, use it as a strong signal for age/audience` : "";
+
+  const prompt = `${storeContext}
+
+${reasoningInstruction}
+
+Categorize each product into ${categorySection}.
 
 Products:
 ${list}
 
-Respond with a JSON array only (no markdown, no explanation):
+Respond ONLY with a JSON array — no markdown, no explanation:
 [{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]
-${strictRules}
-- path: use "Category Name" as the leaf (e.g. "Mathis Brothers > Bedroom")
-- confidence: 0.0–1.0
-- Return exactly ${products.length} items in the same order`;
+${rules}
+- path: full path e.g. "Mathis Brothers > Seasonal"
+- confidence: 0.0–1.0 (how certain you are)
+- Return exactly ${products.length} items in the same order as the product list`;
 
   const { text } = await generateText({
     model: anthropic(model),
@@ -238,20 +278,23 @@ ${strictRules}
   });
 
   const fallbackCat = availableCategories?.[0] ?? "General";
-  // "Uncategorized" is always a valid output — it means the product doesn't fit any template
   const allowedSet = availableCategories ? new Set([...availableCategories, "Uncategorized"]) : null;
 
   const mapResult = (r: { index: number; category: string; path: string; confidence: number }) => {
     let cat = r.category?.trim() ?? "";
     if (allowedSet && !allowedSet.has(cat)) {
-      // AI returned something off-list — don't silently force to first template,
-      // try word-overlap first; if score is 0 (no overlap at all), mark Uncategorized
-      const closest = availableCategories ? pickClosest(cat, availableCategories) : fallbackCat;
-      const normCat = cat.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      const normClosest = closest.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      const hasOverlap = normClosest.split(" ").some(w => w.length > 2 && normCat.includes(w)) ||
-                         normCat.split(" ").some(w => w.length > 2 && normClosest.includes(w));
-      cat = hasOverlap ? closest : "Uncategorized";
+      // AI returned something slightly off — try word-overlap mapping before giving up
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const normCat = norm(cat);
+      let best: string | null = null;
+      let bestScore = 0;
+      for (const allowed of availableCategories ?? []) {
+        const normAllowed = norm(allowed);
+        const score = normAllowed.split(" ").filter(w => w.length > 2 && normCat.includes(w)).length
+                    + normCat.split(" ").filter(w => w.length > 2 && normAllowed.includes(w)).length;
+        if (score > bestScore) { bestScore = score; best = allowed; }
+      }
+      cat = bestScore >= 2 ? best! : "Uncategorized";
     }
     return {
       productId: products[r.index - 1]?.id ?? "",
@@ -272,11 +315,6 @@ ${strictRules}
         return parsed.map(mapResult).filter((r) => r.productId);
       } catch { /* fall through */ }
     }
-    return products.map((p) => ({
-      productId: p.id,
-      category: fallbackCat,
-      path: fallbackCat,
-      confidence: 0.1,
-    }));
+    return products.map((p) => ({ productId: p.id, category: fallbackCat, path: fallbackCat, confidence: 0.1 }));
   }
 }
