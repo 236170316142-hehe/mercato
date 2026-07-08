@@ -122,6 +122,32 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(template);
 }
 
+export async function PATCH(req: NextRequest) {
+  const { user, response } = await authGuard();
+  if (response) return response;
+
+  const id = req.nextUrl.searchParams.get("id");
+  if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+
+  const template = await prisma.exportTemplate.findUnique({ where: { id } });
+  if (!template) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (template.userId !== user!.id && user!.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const body = await req.json();
+  const updated = await prisma.exportTemplate.update({
+    where: { id },
+    data: {
+      ...(body.name      ? { name: String(body.name).trim() }           : {}),
+      ...(body.marketplace !== undefined ? { marketplace: String(body.marketplace) } : {}),
+      ...(body.category  !== undefined ? { category: body.category ? String(body.category).trim() : null } : {}),
+    },
+  });
+
+  return NextResponse.json(updated);
+}
+
 export async function DELETE(req: NextRequest) {
   const { user, response } = await authGuard();
   if (response) return response;

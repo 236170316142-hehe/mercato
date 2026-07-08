@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import { FileText, Plus, Trash2, X, ChevronDown, ChevronUp, Upload, FileSpreadsheet } from "lucide-react";
+import { FileText, Plus, Trash2, X, ChevronDown, ChevronUp, Upload, FileSpreadsheet, Pencil, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Template = {
@@ -37,6 +37,43 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
   const [expanded, setExpanded] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Inline edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", marketplace: "", category: "" });
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  function startEdit(tpl: Template) {
+    setEditingId(tpl.id);
+    setEditForm({ name: tpl.name, marketplace: tpl.marketplace, category: tpl.category ?? "" });
+    setEditError("");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditError("");
+  }
+
+  async function saveEdit(id: string) {
+    setEditLoading(true);
+    setEditError("");
+    try {
+      const res = await fetch(`/api/templates?id=${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editForm.name, marketplace: editForm.marketplace, category: editForm.category || null }),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Failed"); }
+      const updated = await res.json() as Template;
+      setTemplates((prev) => prev.map((t) => t.id === id ? { ...t, ...updated } : t));
+      setEditingId(null);
+    } catch (e) {
+      setEditError((e as Error).message);
+    } finally {
+      setEditLoading(false);
+    }
+  }
 
   // File upload mode state
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -337,31 +374,80 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
               {items.map((tpl) => {
                 const cols = parseColumns(tpl.columns);
                 const isOpen = expanded === tpl.id;
+                const isEditing = editingId === tpl.id;
                 return (
                   <div key={tpl.id}>
-                    <div className="flex items-center gap-3 px-4 py-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm">{tpl.name}</div>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          {tpl.category && (
-                            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{tpl.category}</span>
-                          )}
-                          <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium",
-                            tpl.fileFormat === "xlsx" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"
-                          )}>{tpl.fileFormat.toUpperCase()}</span>
-                          <span className="text-xs text-muted-foreground">{cols.length} columns</span>
+                    {isEditing ? (
+                      <div className="px-4 py-3 space-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <input
+                            value={editForm.name}
+                            onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                            placeholder="Template name"
+                            className="h-8 rounded-lg border bg-background px-3 text-sm"
+                          />
+                          <select
+                            value={editForm.marketplace}
+                            onChange={(e) => setEditForm((f) => ({ ...f, marketplace: e.target.value }))}
+                            className="h-8 rounded-lg border bg-background px-3 text-sm capitalize"
+                          >
+                            {MARKETPLACES.map((mp) => <option key={mp} value={mp}>{mp}</option>)}
+                          </select>
+                          <input
+                            value={editForm.category}
+                            onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))}
+                            placeholder="Category (optional)"
+                            className="h-8 rounded-lg border bg-background px-3 text-sm"
+                          />
+                        </div>
+                        {editError && <p className="text-xs text-destructive">{editError}</p>}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => saveEdit(tpl.id)}
+                            disabled={editLoading}
+                            className="inline-flex items-center gap-1 h-7 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50"
+                          >
+                            <Check className="w-3 h-3" />
+                            {editLoading ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            className="h-7 px-3 rounded-lg border text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            Cancel
+                          </button>
                         </div>
                       </div>
-                      <button onClick={() => setExpanded(isOpen ? null : tpl.id)}
-                        className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition">
-                        {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                      </button>
-                      <button onClick={() => handleDelete(tpl.id)}
-                        className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                    {isOpen && (
+                    ) : (
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm">{tpl.name}</div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {tpl.category && (
+                              <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{tpl.category}</span>
+                            )}
+                            <span className={cn("text-xs px-1.5 py-0.5 rounded font-medium",
+                              tpl.fileFormat === "xlsx" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"
+                            )}>{tpl.fileFormat.toUpperCase()}</span>
+                            <span className="text-xs text-muted-foreground">{cols.length} columns</span>
+                          </div>
+                        </div>
+                        <button onClick={() => setExpanded(isOpen ? null : tpl.id)}
+                          className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition">
+                          {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </button>
+                        <button onClick={() => startEdit(tpl)}
+                          className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition"
+                          title="Edit name, marketplace or category">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleDelete(tpl.id)}
+                          className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                    {isOpen && !isEditing && (
                       <div className="px-4 pb-3 flex flex-wrap gap-1.5">
                         {cols.map((c) => (
                           <span key={c.key} className="text-xs bg-muted px-2 py-0.5 rounded-full text-muted-foreground">{c.label}</span>
