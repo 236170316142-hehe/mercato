@@ -216,14 +216,9 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
         continue;
       }
 
-      // Pick the ASIN whose title is most similar to the vendor's product name.
+      // Pick the best ASIN using multi-signal scoring (not just title).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let best: any = candidates[0];
-      let bestSim = titleSim(p.name, best.title as string);
-      for (const candidate of candidates.slice(1)) {
-        const sim = titleSim(p.name, candidate.title as string);
-        if (sim > bestSim) { best = candidate; bestSim = sim; }
-      }
+      const best: any = pickBestCandidate(p, candidates);
 
       // A UPC barcode IS the product identity — do NOT reject based on title similarity.
       // Vendor files often use heavy abbreviations ("PWR STRP 360PRO") that share zero words
@@ -724,6 +719,94 @@ function parseDims(s: string): [number, number, number] | null {
   const nums = [...s.matchAll(/(\d+(?:\.\d+)?)/g)].map(m => parseFloat(m[1])).filter(n => n > 0);
   if (nums.length < 3) return null;
   return [nums[0], nums[1], nums[2]];
+}
+
+// ── Multi-signal ASIN candidate picker ───────────────────────────────────────
+// When Keepa returns multiple ASINs for a single UPC, score each candidate
+// across 5 signals and return the highest-scoring one.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function pickBestCandidate(p: Product, candidates: any[]): any {
+  if (candidates.length === 1) return candidates[0];
+
+  // Extract vendor price for price-range comparison
+  const vdRaw = (p.vendorData as Record<string, unknown> | null) ?? {};
+  const vendorPrice = (() => {
+    if (p.price != null) return Number(p.price);
+    for (const key of ["price", "retail_price", "unit_price", "cost", "msrp", "list_price", "wholesale"]) {
+      const v = vdRaw[key];
+      if (v != null && !isNaN(Number(v))) return Number(v);
+    }
+    return null;
+  })();
+
+  // Extract vendor category for category-match signal
+  const vendorCategory = (() => {
+    for (const key of ["category", "Category", "product_category", "item_category", "department", "product_type"]) {
+      const v = vdRaw[key];
+      if (v && typeof v === "string") return v.toLowerCase();
+    }
+    return null;
+  })();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const score = (c: any): number => {
+    let s = 0;
+
+    // 1. Title similarity — weight 35
+    const ts = titleSim(p.name, c.title as string ?? "");
+    s += ts * 35;
+
+    // 2. Brand match — weight 25
+    // Exact brand match scores full; partial (one contains other) scores half
+    const vendorBrand = (p.brand ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const liveBrand = (c.brand as string ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (vendorBrand && liveBrand) {
+      if (vendorBrand === liveBrand) s += 25;
+      else if (vendorBrand.includes(liveBrand) || liveBrand.includes(vendorBrand)) s += 12;
+    }
+
+    // 3. Price proximity — weight 20
+    // Score based on how close the live price is to the vendor price.
+    // A price within 20% = full score; >100% off = 0.
+    if (vendorPrice != null && vendorPrice > 0 && c.price != null) {
+      const livePrice = (c.price as number) / 100; // Keepa stores cents
+      if (livePrice > 0) {
+        const ratio = Math.min(vendorPrice, livePrice) / Math.max(vendorPrice, livePrice);
+        s += ratio * 20; // 1.0 if identical, 0.5 if one is 2x the other
+      }
+    }
+
+    // 4. Category match — weight 15
+    // Compare vendor category hint against Amazon category tree or title
+    if (vendorCategory) {
+      const catWords = vendorCategory.split(/[\s,>/]+/).filter((w) => w.length > 3);
+      const liveContext = [
+        c.title as string ?? "",
+        c.categoryTree as string ?? "",
+        c.rootCategory as string ?? "",
+      ].join(" ").toLowerCase();
+      const catHits = catWords.filter((w) => liveContext.includes(w)).length;
+      if (catWords.length > 0) s += (catHits / catWords.length) * 15;
+    }
+
+    // 5. Availability / sales rank — weight 5
+    // Prefer products that are actively selling (lower sales rank = more active)
+    // A salesRank of -1 or missing = inactive/discontinued
+    const rank = c.salesRank as number ?? -1;
+    if (rank > 0 && rank < 1_000_000) s += 5;       // very active
+    else if (rank > 0 && rank < 5_000_000) s += 2;  // somewhat active
+    // rank < 0 (discontinued/inactive) = no bonus
+
+    return s;
+  };
+
+  let best = candidates[0];
+  let bestScore = score(candidates[0]);
+  for (const c of candidates.slice(1)) {
+    const cs = score(c);
+    if (cs > bestScore) { bestScore = cs; best = c; }
+  }
+  return best;
 }
 
 // Common retail abbreviation synonyms — both directions are registered
