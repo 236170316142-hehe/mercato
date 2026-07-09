@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import type { ExportTemplate } from "@prisma/client";
-import { generateCategoryZip, generateExportZip, generateFlatExport, generateSingleTemplateExport, type TemplateRow } from "@/lib/export/zip";
+import { generateCategoryZip, generateExportZip, generateFlatCategoryZip, generateFlatExport, generateSingleTemplateExport, type TemplateRow } from "@/lib/export/zip";
 import { createJob, resolveJob, rejectJob, getJob } from "@/lib/export/job-store";
 
 export const maxDuration = 300;
@@ -104,8 +104,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         throw new Error(`No templates found for ${projectMeta.marketplace}. Upload templates first.`);
       }
 
+      const isTemu = mpLower === "temu";
+
       let zipBuffer: Buffer;
-      if (!allTemplates.length) {
+      if (isTemu) {
+        // Temu: always split by AI-assigned category — one Excel file per category
+        zipBuffer = await generateFlatCategoryZip(project.products, projectMeta.marketplace) as Buffer;
+      } else if (!allTemplates.length) {
         // Non-Mathis with no templates → flat export (one file, standard columns)
         zipBuffer = await generateFlatExport(project.products, projectMeta.marketplace) as Buffer;
       } else if (useTemplateIds) {

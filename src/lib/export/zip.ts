@@ -58,6 +58,42 @@ export async function generateFlatExport(
   return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
 }
 
+// ── Category-split export without templates (Temu) ───────────────────────────
+// Groups products by their AI-assigned marketplaceCategory and creates one
+// Excel file per category using standard flat columns. No templates needed.
+
+export async function generateFlatCategoryZip(
+  products: Product[],
+  marketplace: string,
+): Promise<Buffer> {
+  const zip = new JSZip();
+  const eligible = eligibleProducts(products, marketplace);
+
+  const groups = new Map<string, Product[]>();
+  for (const p of eligible) {
+    const cat = p.marketplaceCategory;
+    if (!cat || cat === "Uncategorized") continue;
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push(p);
+  }
+
+  // Fall back to single flat file if nothing was categorized
+  if (groups.size === 0) {
+    const buffer = await createXlsxFromScratch(eligible, FLAT_COLUMNS, "Products");
+    zip.file(`${sanitize(marketplace)}_export.xlsx`, buffer);
+    return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
+  }
+
+  for (const [category, categoryProducts] of groups) {
+    await new Promise<void>((r) => setImmediate(r));
+    const fileName = sanitize(category);
+    const buffer = await createXlsxFromScratch(categoryProducts, FLAT_COLUMNS, category);
+    zip.file(`${fileName}.xlsx`, buffer);
+  }
+
+  return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
+}
+
 // ── Category-split export (primary mode) ─────────────────────────────────────
 // Each category is auto-matched to the closest template by name similarity.
 // The defaultTemplateId is used as the fallback when no close match is found.
