@@ -47,13 +47,15 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  // For Mathis only: constrain AI to the uploaded template names so each product lands
+  // For Mathis and Temu: constrain AI to the uploaded template names so each product lands
   // in a category that has a matching export template.
   // For all other marketplaces: let the AI use the standard marketplace taxonomy freely —
   // templates are chosen by the user at export time, not at categorization time.
-  const isMathis = project.marketplace.toLowerCase() === "mathis";
+  const mpLower = project.marketplace.toLowerCase();
+  const isMathis = mpLower === "mathis";
+  const isTemu = mpLower === "temu";
   let availableCategories: string[] = [];
-  if (isMathis) {
+  if (isMathis || isTemu) {
     const marketplaceTemplates = await prisma.exportTemplate.findMany({
       where: {
         marketplace: { equals: project.marketplace, mode: "insensitive" },

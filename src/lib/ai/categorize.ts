@@ -96,12 +96,15 @@ export async function categorizeProducts(
   products: ProductInput[],
   availableCategories?: string[],
 ): Promise<CategorizeResult[]> {
-  const isMathis = marketplace.toLowerCase() === "mathis";
+  const mpLower = marketplace.toLowerCase();
+  const isMathis = mpLower === "mathis";
+  const isTemu = mpLower === "temu";
+  const isConstrained = (isMathis || isTemu) && !!availableCategories?.length;
 
-  // Smaller batches for Mathis (constrained categories) so the AI can reason
+  // Smaller batches for Mathis/Temu (constrained categories) so the AI can reason
   // more carefully about each product. Other marketplaces use larger batches.
-  const BATCH = isMathis && availableCategories?.length ? 8 : 20;
-  const PARALLEL = isMathis ? 2 : 3;
+  const BATCH = isConstrained ? 8 : 20;
+  const PARALLEL = isConstrained ? 2 : 3;
 
   const model = availableCategories?.length
     ? (process.env.CATEGORIZE_ANTHROPIC_MODEL ?? "claude-sonnet-5")
@@ -212,7 +215,9 @@ async function categorizeBatchWithContext(
   availableCategories?: string[],
   strictMode = false,
 ): Promise<CategorizeResult[]> {
-  const isMathis = marketplace.toLowerCase() === "mathis";
+  const mpLower = marketplace.toLowerCase();
+  const isMathis = mpLower === "mathis";
+  const isTemu = mpLower === "temu";
 
   const list = products.map((p, idx) => {
     let line = `${idx + 1}. "${p.name}"`;
@@ -243,6 +248,8 @@ async function categorizeBatchWithContext(
 
   const storeContext = isMathis
     ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer that sells furniture, mattresses, rugs, bedding, home decor, lighting, AND seasonal/holiday items including Halloween costumes for all ages."
+    : isTemu
+    ? "You are a product categorization expert for Temu, a global e-commerce marketplace. Temu organizes products by Category > Subcategory > Product Type. Match each product to the most specific product type available in the provided list."
     : "You are a product categorization expert for a major retail marketplace.";
 
   const reasoningInstruction = `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;

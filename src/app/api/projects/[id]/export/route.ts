@@ -97,11 +97,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       if (!project) throw new Error("Project not found");
 
-      // Mathis always uses category-split export and requires templates.
+      // Mathis and Temu always use category-split export and require templates.
       // All other marketplaces fall back to a flat single-file export when no templates are present.
-      const isMathis = projectMeta.marketplace === "mathis";
-      if (isMathis && !allTemplates.length) {
-        throw new Error("No templates found for Mathis. Upload templates first.");
+      const mpLower = projectMeta.marketplace.toLowerCase();
+      const usesTemplates = mpLower === "mathis" || mpLower === "temu";
+      if (usesTemplates && !allTemplates.length) {
+        throw new Error(`No templates found for ${projectMeta.marketplace}. Upload templates first.`);
       }
 
       let zipBuffer: Buffer;
