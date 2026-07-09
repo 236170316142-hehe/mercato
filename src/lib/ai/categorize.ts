@@ -234,16 +234,51 @@ async function categorizeBatchWithContext(
     categorySection = strictMode
       ? `EXACTLY one of these categories (copy the name character-for-character):\n${availableCategories.map((c) => `- ${c}`).join("\n")}`
       : `exactly one of these categories:\n${availableCategories.map((c) => `- ${c}`).join("\n")}\n\nCategory guide:\n${guide}`;
+  } else if (isTemu) {
+    categorySection = `the most specific matching Temu category path (Category > Subcategory > Product Type) from Temu's real taxonomy:
+
+Women's Clothing: Tops > T-Shirts | Tops > Blouses & Shirts | Tops > Hoodies & Sweatshirts | Tops > Bodysuits | Dresses > Casual Dresses | Dresses > Formal & Evening Dresses | Dresses > Mini Dresses | Dresses > Maxi Dresses | Bottoms > Pants & Trousers | Bottoms > Jeans | Bottoms > Shorts | Bottoms > Skirts | Bottoms > Leggings | Outerwear > Jackets & Coats | Outerwear > Blazers | Swimwear > Bikinis | Swimwear > One-Piece Swimsuits | Lingerie & Sleepwear > Bras | Lingerie & Sleepwear > Underwear | Lingerie & Sleepwear > Pajamas & Nightwear | Activewear > Sports Bras | Activewear > Yoga Pants | Activewear > Athletic Sets | Sets & Co-ords > Matching Sets | Costumes & Cosplay > Halloween Costumes | Costumes & Cosplay > Cosplay Costumes
+
+Men's Clothing: Tops > T-Shirts | Tops > Shirts & Polos | Tops > Hoodies & Sweatshirts | Tops > Sweaters | Bottoms > Pants & Trousers | Bottoms > Jeans | Bottoms > Shorts | Outerwear > Jackets & Coats | Outerwear > Vests | Swimwear > Swim Trunks | Activewear > Athletic Tops | Activewear > Athletic Bottoms | Underwear & Lounge > Underwear | Underwear & Lounge > Sleepwear | Costumes & Cosplay > Halloween Costumes
+
+Kids' Fashion: Girls' Clothing > Dresses | Girls' Clothing > Tops | Girls' Clothing > Pants & Leggings | Boys' Clothing > Tops | Boys' Clothing > Pants & Shorts | Baby & Toddler > Onesies & Rompers | Baby & Toddler > Sets | Baby & Toddler > Sleepwear | Kids' Costumes > Halloween Costumes | Kids' Costumes > Dress-Up
+
+Shoes: Women's Shoes > Heels | Women's Shoes > Flats | Women's Shoes > Sneakers | Women's Shoes > Sandals | Women's Shoes > Boots | Women's Shoes > Slippers | Men's Shoes > Sneakers | Men's Shoes > Loafers & Dress Shoes | Men's Shoes > Boots | Men's Shoes > Sandals | Kids' Shoes > Girls' Shoes | Kids' Shoes > Boys' Shoes
+
+Bags & Luggage: Handbags > Shoulder Bags | Handbags > Tote Bags | Handbags > Clutches | Crossbody Bags | Backpacks | Wallets & Cardholders | Luggage & Travel Bags > Suitcases | Luggage & Travel Bags > Duffel Bags | Fanny Packs & Belt Bags
+
+Jewelry & Accessories: Necklaces | Earrings > Stud Earrings | Earrings > Hoop Earrings | Earrings > Drop & Dangle Earrings | Bracelets & Bangles | Rings | Anklets | Watches > Women's Watches | Watches > Men's Watches | Sunglasses & Eyewear | Hats & Caps > Baseball Caps | Hats & Caps > Beanies | Scarves & Wraps | Belts | Hair Accessories > Clips & Pins | Hair Accessories > Headbands | Hair Accessories > Scrunchies | Gloves & Mittens | Socks & Hosiery
+
+Beauty & Health: Skincare > Serums & Essences | Skincare > Moisturizers & Creams | Skincare > Cleansers & Toners | Skincare > Face Masks | Skincare > Sunscreen | Makeup > Foundation & Concealer | Makeup > Lipstick & Lip Gloss | Makeup > Eyeshadow | Makeup > Mascara & Eyeliner | Makeup > Blush & Bronzer | Makeup > Makeup Brushes & Tools | Hair Care > Shampoo & Conditioner | Hair Care > Hair Masks & Treatments | Hair Care > Styling Tools | Hair Care > Hair Extensions & Wigs | Nail Care > Nail Polish | Nail Care > Nail Art Supplies | Nail Care > Nail Tools | Fragrances & Perfumes | Personal Care > Body Wash & Soap | Personal Care > Deodorant | Personal Care > Razors & Shavers | Health & Wellness > Vitamins & Supplements | Health & Wellness > Massagers & Relaxation | Oral Care > Toothbrushes | Oral Care > Teeth Whitening
+
+Home & Kitchen: Bedding > Comforters & Duvets | Bedding > Sheet Sets | Bedding > Pillows & Pillowcases | Bedding > Mattress Covers | Bath > Towels | Bath > Bath Mats | Bath > Shower Curtains | Bath > Bathroom Accessories | Kitchen & Dining > Cookware | Kitchen & Dining > Bakeware | Kitchen & Dining > Kitchen Utensils & Gadgets | Kitchen & Dining > Dinnerware & Plates | Kitchen & Dining > Glasses & Drinkware | Kitchen & Dining > Food Storage & Containers | Home Decor > Wall Art & Posters | Home Decor > Candles & Holders | Home Decor > Vases & Decorative Objects | Home Decor > Throw Pillows & Blankets | Home Decor > Rugs & Mats | Home Decor > Mirrors | Storage & Organization > Closet Organizers | Storage & Organization > Drawer Organizers | Storage & Organization > Storage Boxes & Bins | Storage & Organization > Shelving Units | Furniture > Chairs | Furniture > Tables | Furniture > Desks | Furniture > Shelves & Bookcases | Garden & Outdoor > Planters & Pots | Garden & Outdoor > Garden Tools | Garden & Outdoor > Outdoor Decor | Lighting > LED Strip Lights | Lighting > String Lights | Lighting > Desk Lamps | Lighting > Night Lights | Cleaning > Mops & Brooms | Cleaning > Cleaning Brushes & Scrubbers | Cleaning > Laundry Accessories
+
+Electronics: Phone Accessories > Phone Cases & Covers | Phone Accessories > Screen Protectors | Phone Accessories > Chargers & Cables | Phone Accessories > Phone Holders & Stands | Computers & Tablets > Laptop Accessories | Computers & Tablets > Tablet Cases | Computers & Tablets > Keyboards & Mice | Audio > Earbuds & In-Ear Headphones | Audio > Headphones | Audio > Bluetooth Speakers | Cameras & Photography > Camera Accessories | Cameras & Photography > Ring Lights | Cameras & Photography > Tripods & Stabilizers | Smart Home > Smart Bulbs | Smart Home > Smart Plugs | Smart Home > Security Cameras | Wearables > Smartwatches | Wearables > Fitness Trackers | Gaming > Gaming Controllers | Gaming > Gaming Headsets | Gaming > Gaming Accessories | TV Accessories > TV Mounts | TV Accessories > Streaming Devices | Power & Batteries > Power Banks | Power & Batteries > Surge Protectors & Extension Cords
+
+Sports & Outdoors: Exercise & Fitness > Dumbbells & Weights | Exercise & Fitness > Resistance Bands | Exercise & Fitness > Yoga Mats | Exercise & Fitness > Jump Ropes | Exercise & Fitness > Ab Rollers | Outdoor Recreation > Camping Gear | Outdoor Recreation > Hiking Accessories | Outdoor Recreation > Cycling Accessories | Team Sports > Basketball Accessories | Team Sports > Soccer Accessories | Water Sports > Swimming Accessories | Water Sports > Beach Accessories | Sports Apparel > Athletic Tops | Sports Apparel > Athletic Bottoms | Sports Accessories > Water Bottles | Sports Accessories > Sports Bags
+
+Toys & Games: Action Figures & Collectibles | Dolls & Stuffed Animals > Plush Toys | Dolls & Stuffed Animals > Dolls | Building Toys > Building Blocks | Building Toys > Model Kits | Board Games & Card Games | Puzzles | Educational Toys > STEM Toys | Educational Toys > Learning Toys | Ride-On Toys > Scooters | Ride-On Toys > Electric Ride-Ons | Arts & Crafts > Craft Kits | Arts & Crafts > Drawing & Painting | Outdoor Play > Balls | Outdoor Play > Bubbles & Blowers | Remote Control Toys
+
+Pet Supplies: Dog Supplies > Dog Collars & Leashes | Dog Supplies > Dog Beds & Furniture | Dog Supplies > Dog Toys | Dog Supplies > Dog Grooming | Dog Supplies > Dog Clothing & Accessories | Cat Supplies > Cat Toys | Cat Supplies > Cat Beds | Cat Supplies > Litter & Accessories | Cat Supplies > Cat Grooming | Small Animal Supplies | Bird Supplies | Fish & Aquatics | Pet Apparel
+
+Automotive: Car Electronics > Dash Cams | Car Electronics > Car Chargers | Car Electronics > GPS & Navigation | Car Accessories > Seat Covers | Car Accessories > Car Floor Mats | Car Accessories > Air Fresheners | Car Care > Car Cleaning Kits | Tools & Equipment
+
+Tools & Home Improvement: Power Tools | Hand Tools | Hardware & Fasteners | Electrical > Extension Cords | Electrical > Smart Plugs | Plumbing | Painting Supplies | Safety & Security
+
+Office & School Supplies: Stationery > Pens & Pencils | Stationery > Notebooks & Journals | Art Supplies > Markers & Highlighters | Art Supplies > Paints & Canvases | Organization > Binders & Folders | Backpacks & Bags
+
+Party & Seasonal: Party Decorations > Balloons & Banners | Party Decorations > Table Decorations | Halloween > Halloween Costumes | Halloween > Halloween Decorations | Halloween > Halloween Props & Accessories | Christmas > Christmas Ornaments | Christmas > Christmas Lights | Christmas > Christmas Decorations | Valentine's Day | Easter | Birthday Supplies
+
+Output the category as: "Category > Subcategory > Product Type" (e.g. "Women's Clothing > Tops > T-Shirts")`;
   } else {
     const taxonomies: Record<string, string> = {
       amazon: "Amazon product categories (Electronics > Cameras, Home & Kitchen > Cookware, Clothing > Men's Shoes, etc.)",
       bestbuy: "Best Buy categories (TV & Home Theater, Computers & Tablets, Cell Phones, Appliances, Gaming, etc.)",
       walmart: "Walmart categories (Electronics, Home, Clothing, Baby, Sports & Outdoors, Food, etc.)",
-      temu: "Temu categories (Women's Clothing, Home & Garden, Beauty & Health, Electronics, Sports, etc.)",
       mathis: "Mathis Brothers categories (Living Room, Bedroom, Dining Room, Outdoor, Mattress, Rugs, Bedding & Bath, Baby & Kids, Decor, Lighting, Kitchen, Home Office, Storage, Seasonal)",
       sears: "Sears categories (Appliances, Tools, Clothing, Shoes, Electronics, Lawn & Garden, etc.)",
     };
-    categorySection = taxonomies[marketplace] ?? `${marketplace} product categories`;
+    categorySection = taxonomies[mpLower] ?? `${marketplace} product categories`;
   }
 
   const storeContext = isMathis
