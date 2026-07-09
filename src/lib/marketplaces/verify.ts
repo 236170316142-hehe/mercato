@@ -789,13 +789,27 @@ function pickBestCandidate(p: Product, candidates: any[]): any {
       if (catWords.length > 0) s += (catHits / catWords.length) * 15;
     }
 
-    // 5. Availability / sales rank — weight 5
-    // Prefer products that are actively selling (lower sales rank = more active)
-    // A salesRank of -1 or missing = inactive/discontinued
+    // 5. Pack / quantity match — weight 20
+    // If the vendor title mentions a pack size ("Pack of 6", "6-Count", "6pk", "Set of 3")
+    // strongly prefer ASINs whose Amazon title also mentions the same quantity.
+    // Penalty if Amazon title has a DIFFERENT pack size.
+    const extractQty = (s: string): number | null => {
+      const m = s.match(/(?:pack|set|count|ct|pk|piece|pc|bundle)\s*of\s*(\d+)|(\d+)\s*[-\s]?(?:pack|count|ct|pk|piece|pc|bundle)/i)
+             ?? s.match(/\((\d+)\s*(?:pack|count|ct|pk|piece|pc)\)/i);
+      return m ? parseInt(m[1] ?? m[2], 10) : null;
+    };
+    const vendorQty = extractQty(p.name);
+    const liveQty   = extractQty(c.title as string ?? "");
+    if (vendorQty !== null) {
+      if (liveQty === vendorQty) s += 20;        // exact pack match — big bonus
+      else if (liveQty !== null) s -= 15;         // different pack size — penalty
+      // liveQty null = no mention of pack size — no bonus/penalty
+    }
+
+    // 6. Availability / sales rank — weight 5
     const rank = c.salesRank as number ?? -1;
-    if (rank > 0 && rank < 1_000_000) s += 5;       // very active
-    else if (rank > 0 && rank < 5_000_000) s += 2;  // somewhat active
-    // rank < 0 (discontinued/inactive) = no bonus
+    if (rank > 0 && rank < 1_000_000) s += 5;
+    else if (rank > 0 && rank < 5_000_000) s += 2;
 
     return s;
   };
