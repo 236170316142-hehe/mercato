@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
 
     const template = await prisma.exportTemplate.create({
       data: {
-        userId: user!.id,
+        userId: (user as { role?: string }).role === "admin" ? null : user!.id,
         name,
         marketplace,
         category: resolvedCategory,
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
 
   const template = await prisma.exportTemplate.create({
     data: {
-      userId: user!.id,
+      userId: (user as { role?: string }).role === "admin" ? null : user!.id,
       name,
       marketplace,
       category: category ?? null,
