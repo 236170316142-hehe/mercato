@@ -99,7 +99,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // Mathis and Temu always use category-split export and require templates.
       // All other marketplaces fall back to a flat single-file export when no templates are present.
-      const usesTemplates = mpLower === "mathis" || mpLower === "temu";
+      const usesTemplates = mpLower === "mathis";
       if (usesTemplates && !allTemplates.length) {
         throw new Error(`No templates found for ${projectMeta.marketplace}. Upload templates first.`);
       }

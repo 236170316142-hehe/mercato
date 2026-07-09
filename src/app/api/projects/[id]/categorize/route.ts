@@ -53,9 +53,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   // templates are chosen by the user at export time, not at categorization time.
   const mpLower = project.marketplace.toLowerCase();
   const isMathis = mpLower === "mathis";
-  const isTemu = mpLower === "temu";
   let availableCategories: string[] = [];
-  if (isMathis || isTemu) {
+  if (isMathis) {
     const marketplaceTemplates = await prisma.exportTemplate.findMany({
       where: {
         marketplace: { equals: project.marketplace, mode: "insensitive" },

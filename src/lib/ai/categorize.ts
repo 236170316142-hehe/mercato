@@ -98,11 +98,10 @@ export async function categorizeProducts(
 ): Promise<CategorizeResult[]> {
   const mpLower = marketplace.toLowerCase();
   const isMathis = mpLower === "mathis";
-  const isTemu = mpLower === "temu";
-  const isConstrained = (isMathis || isTemu) && !!availableCategories?.length;
+  const isConstrained = isMathis && !!availableCategories?.length;
 
-  // Smaller batches for Mathis/Temu (constrained categories) so the AI can reason
-  // more carefully about each product. Other marketplaces use larger batches.
+  // Smaller batches for Mathis (constrained to template categories) so the AI
+  // can reason carefully about each product. Other marketplaces use larger batches.
   const BATCH = isConstrained ? 8 : 20;
   const PARALLEL = isConstrained ? 2 : 3;
 
