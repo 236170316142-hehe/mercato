@@ -575,7 +575,6 @@ function compareToLive(
   // Images — check vendor has image and marketplace listing has images
   const liveImages = Array.isArray(liveData.images) ? liveData.images as string[] : [];
   const hasLiveImages = liveImages.length > 0;
-  // Vendor image: stored imageUrl field OR any image-like URL in vendorData
   const vdRaw = (p.vendorData as Record<string, unknown> | null) ?? {};
   const vendorImgUrl = p.imageUrl || (() => {
     for (const [k, v] of Object.entries(vdRaw)) {
@@ -587,8 +586,8 @@ function compareToLive(
   const imgMatch = !hasVendorImage || hasLiveImages;
   fields.push({
     field: "images", label: "Images",
-    stored: vendorImgUrl ? "Vendor image provided" : "N/A",
-    live: hasLiveImages ? `${liveImages.length} image${liveImages.length === 1 ? "" : "s"} on marketplace` : "No images on marketplace listing",
+    stored: vendorImgUrl ?? "N/A",
+    live: liveImages[0] ?? (hasLiveImages ? liveImages[0] : "N/A"),
     match: imgMatch,
     severity: !hasVendorImage ? "ok" : hasLiveImages ? "ok" : "warning",
   });
@@ -727,12 +726,49 @@ function parseDims(s: string): [number, number, number] | null {
   return [nums[0], nums[1], nums[2]];
 }
 
+// Common retail abbreviation synonyms — both directions are registered
+const SYNONYMS: Record<string, string> = {
+  tv: "television", television: "tv",
+  pc: "computer", computer: "pc",
+  ac: "airconditioner", airconditioner: "ac",
+  wifi: "wireless", wireless: "wifi",
+  bt: "bluetooth", bluetooth: "bt",
+  usb: "universal", pkg: "package",
+  qty: "quantity", pcs: "pieces", pieces: "pcs",
+  sz: "size", xl: "extralarge", lg: "large", sm: "small", md: "medium",
+  blk: "black", wht: "white", gry: "gray", grey: "gray",
+  pwr: "power", strp: "strip", ext: "extension",
+  hdmi: "highdefinition", led: "light", lcd: "display",
+  fridge: "refrigerator", refrigerator: "fridge",
+  sofa: "couch", couch: "sofa",
+  stool: "chair", barstool: "stool",
+};
+
+function normalizeTitle(s: string): Set<string> {
+  const STOP = new Set(["the", "and", "for", "with", "from", "this", "that", "are", "was", "has"]);
+  const tokens = s.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !STOP.has(w));
+  const result = new Set<string>();
+  for (const t of tokens) {
+    result.add(t);
+    if (SYNONYMS[t]) result.add(SYNONYMS[t]);
+  }
+  return result;
+}
+
 function titleSim(a: string, b: string): number {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2);
-  const wa = new Set(norm(a));
-  const wb = new Set(norm(b));
+  const wa = normalizeTitle(a);
+  const wb = normalizeTitle(b);
   if (!wa.size) return !wb.size ? 1 : 0;
+  // Jaccard similarity: |intersection| / |union| — symmetric, works both ways
   let common = 0;
   for (const w of wa) if (wb.has(w)) common++;
-  return common / wa.size;
+  const union = wa.size + wb.size - common;
+  const jaccard = union > 0 ? common / union : 0;
+  // Also compute recall (how much of 'a' is in 'b') as secondary signal
+  const recall = common / wa.size;
+  // Weighted blend: 60% Jaccard + 40% recall
+  return jaccard * 0.6 + recall * 0.4;
 }

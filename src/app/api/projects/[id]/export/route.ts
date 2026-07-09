@@ -118,8 +118,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // Non-Mathis with no templates → flat export (one file, standard columns)
         zipBuffer = await generateFlatExport(project.products, projectMeta.marketplace) as Buffer;
       } else if (useTemplateIds) {
-        // Non-Mathis: user picked a specific template → all products in one file
-        zipBuffer = await generateSingleTemplateExport(project.products, allTemplates[0], projectMeta.marketplace) as Buffer;
+        // Non-Mathis: user picked a specific template → all products in one file.
+        // For Walmart: load fileData to preserve original template formatting & dropdowns.
+        let templateFileData: Buffer | null = null;
+        if (mpLower === "walmart" && allTemplates[0]) {
+          const withData = await prisma.exportTemplate.findUnique({
+            where: { id: allTemplates[0].id },
+            select: { fileData: true },
+          });
+          templateFileData = withData?.fileData ? Buffer.from(withData.fileData as unknown as ArrayBuffer) : null;
+        }
+        zipBuffer = await generateSingleTemplateExport(project.products, allTemplates[0], projectMeta.marketplace, templateFileData) as Buffer;
       } else if (useAutoMatch) {
         zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
       } else {

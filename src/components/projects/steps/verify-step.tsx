@@ -274,19 +274,37 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                       </div>
                     )}
                     {/* Field comparison rows */}
-                    {fields.map((f) => (
-                      <div key={f.field} className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
-                        <span className={cn("font-medium", FIELD_SEVERITY[f.severity])}>{f.label}</span>
-                        <div>
-                          <p className="text-muted-foreground mb-0.5">Catalog</p>
-                          <p className="font-medium line-clamp-2">{f.stored}</p>
+                    {fields.map((f) => {
+                      const isImg = f.field === "images";
+                      const isUrl = (v: string) => v && v.startsWith("http");
+                      return (
+                        <div key={f.field} className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
+                          <span className={cn("font-medium", FIELD_SEVERITY[f.severity])}>{f.label}</span>
+                          <div>
+                            <p className="text-muted-foreground mb-0.5">Catalog</p>
+                            {isImg && isUrl(f.stored) ? (
+                              <div className="flex flex-col gap-1">
+                                <img src={f.stored} alt="Catalog" className="w-16 h-16 object-cover rounded border" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                                <a href={f.stored} target="_blank" rel="noreferrer" className="text-blue-600 underline truncate max-w-[160px]">View image</a>
+                              </div>
+                            ) : (
+                              <p className="font-medium line-clamp-2">{f.stored}</p>
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground mb-0.5">{marketplaceLabel}</p>
+                            {isImg && isUrl(f.live) ? (
+                              <div className="flex flex-col gap-1">
+                                <img src={f.live} alt={marketplaceLabel} className="w-16 h-16 object-cover rounded border" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                                <a href={f.live} target="_blank" rel="noreferrer" className="text-blue-600 underline truncate max-w-[160px]">View image</a>
+                              </div>
+                            ) : (
+                              <p className="font-medium line-clamp-2">{f.live}</p>
+                            )}
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-muted-foreground mb-0.5">{marketplaceLabel}</p>
-                          <p className="font-medium line-clamp-2">{f.live}</p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {fields.length === 0 && (
                       <div className="px-4 py-2.5 text-xs text-muted-foreground">No comparison data available for this product.</div>
                     )}

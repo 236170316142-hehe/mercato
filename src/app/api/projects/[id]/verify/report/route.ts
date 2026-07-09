@@ -37,20 +37,24 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const header = [
     "SKU", "UPC", "ASIN", "Product Name", "Overall Status",
-    ...FIELD_ORDER.flatMap(f => [`${capitalize(f)} (Catalog)`, `${capitalize(f)} (${mpLabel})`, `${capitalize(f)} Result`]),
+    "Catalog Image URL", `${mpLabel} Image URL`,
+    ...FIELD_ORDER.filter(f => f !== "images").flatMap(f => [`${capitalize(f)} (Catalog)`, `${capitalize(f)} (${mpLabel})`, `${capitalize(f)} Result`]),
   ].map(h => `"${h}"`).join(",");
 
   const rows = project.products.map((p) => {
     const fields = (p.verifyFields ?? []) as FieldResult[];
     const byField = Object.fromEntries(fields.map(f => [f.field, f]));
 
+    const imgField = byField["images"];
     const cells = [
       p.vendorSku ?? "",
       normalizeUpc(p.upc) ?? p.upc ?? "",
       p.asin ?? "",
       p.name,
       p.verifyStatus ?? "pending",
-      ...FIELD_ORDER.flatMap(f => {
+      imgField?.stored ?? "",
+      imgField?.live ?? "",
+      ...FIELD_ORDER.filter(f => f !== "images").flatMap(f => {
         const fr = byField[f];
         return fr ? [fr.stored, fr.live, fr.severity] : ["N/A", "N/A", "N/A"];
       }),

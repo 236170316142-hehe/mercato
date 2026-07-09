@@ -21,6 +21,7 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
   onNext: () => void;
 }) {
   const isMathis = marketplace === "mathis";
+  const isWalmart = marketplace === "walmart";
   const hasResults = products.some((p) => p.marketplaceCategory);
   const total = products.length;
 
@@ -40,6 +41,15 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {isWalmart && (
+            <button
+              onClick={onNext}
+              disabled={loading}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+            >
+              Skip →
+            </button>
+          )}
           {hasResults && (
             <button
               onClick={onRunCategorize}

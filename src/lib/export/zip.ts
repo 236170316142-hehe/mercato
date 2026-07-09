@@ -186,6 +186,7 @@ export async function generateSingleTemplateExport(
   products: Product[],
   template: TemplateRow,
   marketplace: string,
+  fileData?: Buffer | null,
 ): Promise<Buffer> {
   const zip = new JSZip();
   const eligible = eligibleProducts(products, marketplace);
@@ -194,6 +195,10 @@ export async function generateSingleTemplateExport(
 
   if (template.fileFormat === "csv") {
     zip.file(`${fileName}.csv`, generateCsv(eligible, columns));
+  } else if (fileData) {
+    // Preserve original template formatting, dropdowns, validations
+    const buffer = await fillTemplateXlsx(eligible, columns, fileData);
+    zip.file(`${fileName}.xlsx`, buffer);
   } else {
     const buffer = await createXlsxFromScratch(eligible, columns, template.name);
     zip.file(`${fileName}.xlsx`, buffer);
