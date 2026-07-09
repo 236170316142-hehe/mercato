@@ -107,8 +107,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const isTemu = mpLower === "temu";
 
       let zipBuffer: Buffer;
-      if (isTemu) {
-        // Temu: always split by AI-assigned category — one Excel file per category
+      if (isTemu && allTemplates.length) {
+        // Temu with uploaded templates: match each category to the closest template
+        // and export in that template's column format — one file per matched category
+        zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
+      } else if (isTemu) {
+        // Temu without templates: split by AI-assigned category using flat columns
         zipBuffer = await generateFlatCategoryZip(project.products, projectMeta.marketplace) as Buffer;
       } else if (!allTemplates.length) {
         // Non-Mathis with no templates → flat export (one file, standard columns)
