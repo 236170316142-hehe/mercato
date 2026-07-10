@@ -720,16 +720,59 @@ function getProductField(p: Product, key: string): unknown {
     style: fromVendor("style", "design_style", "furniture_style") ?? "",
     number_of_pieces: fromVendor("pieces", "number_of_pieces", "set_pieces", "quantity_per_set") ?? "",
     pieces: fromVendor("pieces", "number_of_pieces") ?? "",
+
+    // "# of Pieces" → normalizes to "of_pieces" after stripping "#"
+    of_pieces: fromVendor("pieces", "number_of_pieces", "set_pieces", "quantity_per_set") ?? "",
+
+    // "Item #" and "Item Number" → normalizes to "item" / "item_number" → map to SKU
+    item: skuId,
+    item_number: skuId,
+
+    // Retail-specific price labels
+    net_price: fromVendor("net_price", "cost", "cost_price", "wholesale_price", "vendor_price") ?? "",
+    list_price: fromVendor("list_price", "msrp", "retail_price", "rrp") ?? price,
+    map: fromVendor("map", "map_price", "minimum_advertised_price", "min_price") ?? "",
+
+    // Image aliases used in furniture/lifestyle templates
+    lifestyle_image: fromVendor("lifestyle_image", "lifestyle_image_url", "room_scene", "room_image") || fromLive("image") || "",
+    room_scene: fromVendor("room_scene", "room_scene_url", "lifestyle_image", "room_image") || fromLive("image") || "",
+    hero_image: p.imageUrl || fromVendor("hero_image", "hero_image_url", "main_image", "silo_image", "image_url") || fromLive("image") || "",
+    additional_image_1: fromVendor("additional_image_1", "alternate_image_1", "image_url2", "image2", "other_image1") ?? "",
+    additional_image_2: fromVendor("additional_image_2", "alternate_image_2", "image_url3", "image3", "other_image2") ?? "",
+    additional_image_3: fromVendor("additional_image_3", "alternate_image_3", "image_url4", "image4", "other_image3") ?? "",
+
+    // Fabric / upholstery specific
+    seat_material: fromVendor("seat_material", "seat_fabric", "upholstery_material", "fabric", "material") ?? "",
+    frame_material: fromVendor("frame_material", "frame", "frame_type") ?? "",
+    leg_material: fromVendor("leg_material", "legs", "leg_type") ?? "",
+    fill_material: fromVendor("fill_material", "fill", "cushion_fill") ?? "",
+
+    // Shipping / packaging
+    package_length: fromVendor("package_length", "carton_length", "box_length") ?? "",
+    package_width: fromVendor("package_width", "carton_width", "box_width") ?? "",
+    package_height: fromVendor("package_height", "carton_height", "box_height") ?? "",
+
+    // Misc Mathis fields
+    finish_color: fromVendor("finish_color", "finish", "color", "colour") ?? "",
+    seat_height: fromVendor("seat_height", "seat_h") ?? "",
+    arm_height: fromVendor("arm_height", "arm_h") ?? "",
+    seat_depth: fromVendor("seat_depth", "seat_d") ?? "",
+    seat_width: fromVendor("seat_width", "seat_w") ?? "",
+    min_height: fromVendor("min_height", "minimum_height", "collapsed_height") ?? "",
+    max_height: fromVendor("max_height", "maximum_height", "extended_height") ?? "",
+    number_of_drawers: fromVendor("number_of_drawers", "drawers", "num_drawers", "drawer_count") ?? "",
+    number_of_shelves: fromVendor("number_of_shelves", "shelves", "num_shelves", "shelf_count") ?? "",
+    number_of_doors: fromVendor("number_of_doors", "doors", "num_doors", "door_count") ?? "",
   };
 
   if (nk in coreMap) return coreMap[nk];
 
-  if (vd) {
+  if (vd && vdNorm) {
     // Exact key match
     if (key in vd) { const v = vd[key]; if (v !== "" && v != null) return v; }
-    // Normalized key match
-    const normHit = Object.keys(vd).find((k) => normalizeKey(k) === nk);
-    if (normHit) { const v = vd[normHit]; if (v !== "" && v != null) return v; }
+    // O(1) normalized key match via cache
+    const normV = vdNorm.get(nk);
+    if (normV !== undefined) return normV;
 
     // Numbered image/photo field: collect ALL image-URL-like keys from vendorData sorted,
     // then return the nth one. e.g. "product_image_3_url" → n=3 → 3rd image key.
@@ -774,7 +817,12 @@ function getProductField(p: Product, key: string): unknown {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function normalizeKey(s: string): string {
-  return s.toLowerCase().replace(/[\s_\-]+/g, "_").trim();
+  return s.toLowerCase()
+    .replace(/\s*\([^)]*\)\s*/g, " ")   // strip parenthetical annotations: (in), (Y/N), (lbs), etc.
+    .replace(/#/g, "")                   // strip "#" — "Style #" → "style ", "Item #" → "item "
+    .replace(/[\s_\-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .trim();
 }
 
 function sanitize(name: string): string {
