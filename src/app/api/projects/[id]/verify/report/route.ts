@@ -41,15 +41,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     ...FIELD_ORDER.filter(f => f !== "images").flatMap(f => [`${capitalize(f)} (Catalog)`, `${capitalize(f)} (${mpLabel})`, `${capitalize(f)} Result`]),
   ].map(h => `"${h}"`).join(",");
 
+  // Numeric-ID fields (UPC, ASIN, SKU) must be forced to text in Excel, otherwise
+  // 12-digit UPCs render as scientific notation (7.56E+11). The =""VALUE"" formula
+  // trick tells Excel to evaluate the cell as a text string, not a number.
+  const numId = (v: string | null | undefined) =>
+    v ? `"=""${String(v).replace(/"/g, '""')}"""` : `""`;
+
   const rows = project.products.map((p) => {
     const fields = (p.verifyFields ?? []) as FieldResult[];
     const byField = Object.fromEntries(fields.map(f => [f.field, f]));
 
     const imgField = byField["images"];
-    const cells = [
-      p.vendorSku ?? "",
-      normalizeUpc(p.upc) ?? p.upc ?? "",
-      p.asin ?? "",
+    const textCells = [
       p.name,
       p.verifyStatus ?? "pending",
       imgField?.stored ?? "",
@@ -58,9 +61,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         const fr = byField[f];
         return fr ? [fr.stored, fr.live, fr.severity] : ["N/A", "N/A", "N/A"];
       }),
-    ];
+    ].map(c => `"${String(c ?? "").replace(/"/g, '""')}"`);
 
-    return cells.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",");
+    return [
+      numId(p.vendorSku),
+      numId(normalizeUpc(p.upc) ?? p.upc),
+      numId(p.asin),
+      ...textCells,
+    ].join(",");
   });
 
   const csv = "﻿" + [header, ...rows].join("\n");
