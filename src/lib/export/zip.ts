@@ -239,12 +239,11 @@ export async function generateExportZip(
   return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
 }
 
-function eligibleProducts(products: Product[], marketplace: string): Product[] {
+function eligibleProducts(products: Product[], _marketplace: string): Product[] {
   const anyVerified = products.some((p) => p.verifyStatus != null);
   if (!anyVerified) return products;
-  return marketplace === "amazon_us"
-    ? products.filter((p) => p.verifyStatus === "ok")
-    : products.filter((p) => ["ok", "warning", "not_found"].includes(p.verifyStatus ?? ""));
+  // Only exclude hard API errors — ok, warning, not_found, and un-verified (null) all export.
+  return products.filter((p) => p.verifyStatus !== "error");
 }
 
 // ── Fill existing template file with product rows ─────────────────────────────
