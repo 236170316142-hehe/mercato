@@ -382,11 +382,14 @@ async function createXlsxFromScratch(
     return s;
   };
 
-  // Sheet XML — numbers written inline, strings reference shared-string index
+  // Sheet XML — numbers written inline, strings reference shared-string index.
+  // Exception: numeric strings with 10+ digits (UPCs, EANs, GTINs, numeric ASINs)
+  // must be forced to shared-string cells so Excel doesn't render them as 6.36E+11.
   const rowXml = allRows.map((row, ri) => {
     const cells = row.map((val, ci) => {
       const ref = `${colLetter(ci + 1)}${ri + 1}`;
-      const isNum = val !== "" && !Number.isNaN(Number(val));
+      const isLargeId = /^\d{10,}$/.test(val);
+      const isNum = val !== "" && !isLargeId && !Number.isNaN(Number(val));
       return isNum
         ? `<c r="${ref}"><v>${x(val)}</v></c>`
         : `<c r="${ref}" t="s"><v>${ssIdx(val)}</v></c>`;
