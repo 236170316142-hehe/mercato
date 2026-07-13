@@ -62,9 +62,22 @@ const MARKETPLACE_LABELS: Record<string, string> = {
   temu: "Temu", mathis: "Mathis", sears: "Sears",
 };
 
-const MARKETPLACE_EMOJI: Record<string, string> = {
-  amazon_us: "🟠", amazon: "🟧", bestbuy: "🔵", walmart: "🔷", temu: "🟣", mathis: "🟤", sears: "⚫",
+const MARKETPLACE_DOMAIN: Record<string, string> = {
+  amazon_us: "amazon.com", amazon: "amazon.com", bestbuy: "bestbuy.com", walmart: "walmart.com",
+  temu: "temu.com", mathis: "mathisbrothers.com", sears: "sears.com",
 };
+
+function MarketplaceLogo({ marketplace, className }: { marketplace: string; className?: string }) {
+  const domain = MARKETPLACE_DOMAIN[marketplace];
+  if (!domain) return null;
+  return (
+    <img
+      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
+      alt=""
+      className={cn("shrink-0 rounded-sm", className)}
+    />
+  );
+}
 
 export function ProjectDetail({ project: initial, products: initialProducts }: {
   project: Project;
@@ -183,8 +196,9 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="font-bold text-lg truncate">{project.name}</h1>
-            <span className="text-muted-foreground text-sm shrink-0">
-              {MARKETPLACE_EMOJI[project.marketplace]} {MARKETPLACE_LABELS[project.marketplace]}
+            <span className="flex items-center gap-1.5 text-muted-foreground text-sm shrink-0">
+              <MarketplaceLogo marketplace={project.marketplace} className="w-4 h-4" />
+              {MARKETPLACE_LABELS[project.marketplace]}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">{products.length} products</p>
