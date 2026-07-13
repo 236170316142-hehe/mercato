@@ -49,17 +49,17 @@ async function searchProductContext(name: string): Promise<string | null> {
 
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
   [/seasonal|holiday/i,
-    "Halloween/holiday items for teens & adults: adult/teen costumes (ANY character or theme), adult costume accessories (wigs, hats, masks, props), holiday home decorations, Christmas trees, ornaments, wreaths, holiday lights. For wearable costumes: use size in the name as a guide (adult/teen/XL/L/12-14/14-16/16-18 → here; toddler/infant/baby/2T/4T/0-3M → Baby & Kids)."],
+    "Halloween/holiday WEARABLE items for teens & adults ONLY: adult/teen costumes (ANY character — pirate, witch, ninja, princess, cultural, fantasy, etc.), adult costume accessories (wigs, hats, masks, props, capes). Size signals for ADULT → Seasonal: Adult, Teen, XL, L, M, S when paired with adult context, Plus Size, 12-14, 14-16, 16-18, One Size. Also: holiday home decor, Christmas trees, ornaments, wreaths, lights. NOT for child/toddler/infant costumes → those go to Baby & Kids."],
   [/baby|kid|youth|child|nursery|toddler/i,
-    "Everything for infants, babies, toddlers, and young children: costumes and dress-up for babies/toddlers/young kids (NB/0-3M/2T/T4/S/4-6/M/7-8 sizes), children's clothing & accessories, stuffed animals, kids toys, baby gear, nursery & kids bedroom furniture (cribs, toddler beds, bunk beds, youth sets), kids bedding, nursery decor."],
+    "CRITICAL — This category covers ALL costumes and wearable items for children and babies, regardless of whether 'Costume' appears in the name. A product like 'Chinese Girl - T4' or 'Dragon - 12-18M' IS a costume for a child. Size codes that always mean Baby & Kids: T1, T2, T3, T4, T5, T6, T7 (toddler sizes), 0-3M, 3-6M, 6-12M, 12-18M, 18-24M, 2T, 3T, 4T (infant/toddler), S (4-6), M (7-8), L (8-10) when listed as a child age range like '(4-6)' or '(7-9)'. If a product has a character name (animal, nationality, occupation, fantasy character) followed by one of these size codes, it is ALWAYS a child costume → Baby & Kids. Also: children's clothing, stuffed animals, kids toys, baby gear, nursery & kids bedroom furniture, kids bedding."],
   [/living\s*room/i,
-    "Living room furniture: sofas, sectionals, loveseats, recliners, accent chairs, ottomans, coffee tables, end tables, entertainment centers, TV stands, console tables."],
+    "Living room furniture ONLY: sofas, sectionals, loveseats, recliners, accent chairs, ottomans, coffee tables, end tables, entertainment centers, TV stands, console tables. NOT costumes, NOT accessories."],
   [/bedroom/i,
     "Adult bedroom furniture: beds, headboards, bed frames, dressers, nightstands, armoires, bedroom sets/suites."],
   [/dining/i,
     "Dining room: dining tables, dining chairs, bar stools, china cabinets, buffets, sideboards, dining sets."],
   [/outdoor|patio/i,
-    "Outdoor & patio furniture: outdoor sofas, lounge chairs, patio dining sets, fire pits, umbrellas, garden benches, outdoor storage."],
+    "Outdoor & patio FURNITURE only: outdoor sofas, lounge chairs, patio dining sets, fire pits, umbrellas, garden benches, outdoor storage. IMPORTANT — this is NOT for costumes, figurines, decorative statues, or any wearable item. A 'Chinese Girl', 'Dragon', 'Princess', or any character name is a COSTUME, not an outdoor product — assign it to Seasonal or Baby & Kids based on the size."],
   [/mattress|sleep|foundation/i,
     "Sleep products: mattresses (all types), box springs, mattress toppers/protectors, adjustable bases, bed pillows, mattress pads."],
   [/rug/i,
@@ -288,13 +288,24 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Women's C
 
   const reasoningInstruction = `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
 
+  const mathisSizeRule = isMathis ? `
+SIZE CODE → CATEGORY RULE (Mathis, mandatory):
+- T1/T2/T3/T4/T5/T6/T7 in the name = toddler costume → Baby & Kids
+- 0-3M / 3-6M / 6-12M / 12-18M / 18-24M / 2T / 3T / 4T = infant/toddler → Baby & Kids
+- (4-6) / (4-7) / (6-8) / (7-9) / (7-10) / (8-10) / (10-12) as child age range = child costume → Baby & Kids
+- "Infant", "Toddler", "Baby", "Kids", "Child", "Boys", "Girls" in the name → Baby & Kids (unless clearly a furniture item)
+- Adult / Teen / Plus / XL / (12-14) / (14-16) / (16-18) → Seasonal
+- Any character name (nationality, animal, occupation, fantasy) + child size code → Baby & Kids costume
+- Any character name + adult size or no size → Seasonal costume
+- "Outdoor" category is for PATIO FURNITURE only — NEVER assign a costume or wearable item to Outdoor` : "";
+
   const rules = availableCategories?.length ? `
 RULES:
 1. Output EXACTLY one category name from the list above (copy it character-for-character) OR "Uncategorized" if truly no fit exists
 2. Never invent category names. Never output "General", "Other", "Furniture", "Unknown", etc.
 3. "Uncategorized" is only for products that genuinely don't belong in ANY listed category
 4. Use all available information: product name, brand, description, vendor category, web context
-5. If the product name includes a size, use it as a strong signal for age/audience` : "";
+5. If the product name includes a size, use it as a strong signal for age/audience${mathisSizeRule}` : "";
 
   const prompt = `${storeContext}
 
