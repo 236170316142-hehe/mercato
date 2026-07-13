@@ -9,6 +9,7 @@ export type ProductInput = {
   brand: string | null;
   description: string | null;
   vendorCategory?: string | null;
+  vendorContext?: string | null;  // additional vendor fields: age_group, gender, season, etc.
 };
 
 export type CategorizeResult = {
@@ -223,6 +224,7 @@ async function categorizeBatchWithContext(
     if (p.brand) line += ` by ${p.brand}`;
     if (p.description) line += ` — ${p.description.slice(0, 150)}`;
     if (p.vendorCategory) line += ` [vendor category: ${p.vendorCategory}]`;
+    if (p.vendorContext) line += ` [vendor info: ${p.vendorContext}]`;
     if (p.searchContext) line += `\n   [web search context: ${p.searchContext.slice(0, 300)}]`;
     return line;
   }).join("\n");
