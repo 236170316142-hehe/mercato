@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 const PAGE_SIZE = 12;
 
@@ -418,6 +419,7 @@ function FilterDate({
 
 export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [projects, setProjects] = useState(initial);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -494,7 +496,12 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   async function handleDelete(e: React.MouseEvent, id: string, name: string) {
     e.preventDefault();
     e.stopPropagation();
-    if (!window.confirm(`Delete "${name}" and all its products? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: `Delete "${name}"?`,
+      description: "This will permanently delete the project and all its products. This cannot be undone.",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     setDeleting(id);
     try {
       const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });

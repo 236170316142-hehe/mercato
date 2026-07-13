@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { ProductsTable } from "./products-table";
 import { VerifyStep } from "./steps/verify-step";
 import { CategorizeStep } from "./steps/categorize-step";
@@ -84,6 +85,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
   products: Product[];
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const skipVerify = SKIP_VERIFY.has(initial.marketplace);
   const [project, setProject] = useState(initial);
   const [products, setProducts] = useState(initialProducts);
@@ -171,7 +173,12 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
   }
 
   async function handleDelete() {
-    if (!window.confirm(`Delete "${project.name}" and all its products? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: `Delete "${project.name}"?`,
+      description: "This will permanently delete the project and all its products. This cannot be undone.",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     const res = await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
     if (!res.ok) { toast.error("Failed to delete project"); return; }
     toast.success(`"${project.name}" deleted`);

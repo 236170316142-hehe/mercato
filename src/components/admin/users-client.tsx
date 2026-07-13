@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { Users, Plus, Trash2, UserCheck, UserX, X, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type User = { id: string; name: string | null; email: string | null; role: string; createdAt: Date | string };
 
 export function AdminUsersClient({ users: initial }: { users: User[] }) {
+  const confirm = useConfirm();
   const [users, setUsers] = useState(initial);
   const [showAdd, setShowAdd] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -38,7 +40,12 @@ export function AdminUsersClient({ users: initial }: { users: User[] }) {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this user? This cannot be undone.")) return;
+    const ok = await confirm({
+      title: "Delete this user?",
+      description: "This cannot be undone.",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     try {
       const res = await fetch(`/api/users?id=${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete");
