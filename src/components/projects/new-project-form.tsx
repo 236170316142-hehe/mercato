@@ -8,13 +8,23 @@ import { cn } from "@/lib/utils";
 
 // Top-level tiles; Amazon expands to a US/International sub-toggle
 const MARKETPLACE_TILES = [
-  { id: "amazon", label: "Amazon", emoji: "🟠" },
-  { id: "walmart", label: "Walmart", emoji: "🔷" },
-  { id: "bestbuy", label: "Best Buy", emoji: "🔵" },
-  { id: "temu", label: "Temu", emoji: "🟣" },
-  { id: "mathis", label: "Mathis", emoji: "🟤" },
-  { id: "sears", label: "Sears", emoji: "⚫" },
+  { id: "amazon", label: "Amazon", domain: "amazon.com" },
+  { id: "walmart", label: "Walmart", domain: "walmart.com" },
+  { id: "bestbuy", label: "Best Buy", domain: "bestbuy.com" },
+  { id: "temu", label: "Temu", domain: "temu.com" },
+  { id: "mathis", label: "Mathis", domain: "mathisbrothers.com" },
+  { id: "sears", label: "Sears", domain: "sears.com" },
 ] as const;
+
+function MarketplaceLogo({ domain, className }: { domain: string; className?: string }) {
+  return (
+    <img
+      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
+      alt=""
+      className={cn("shrink-0 rounded-sm", className)}
+    />
+  );
+}
 
 const AMAZON_VARIANTS = [
   { id: "amazon_us", label: "US" },
@@ -164,7 +174,7 @@ export function NewProjectForm() {
                     : "border-border hover:border-primary/40 hover:bg-accent"
                 )}
               >
-                <span className="text-lg">{m.emoji}</span>
+                <MarketplaceLogo domain={m.domain} className="w-5 h-5" />
                 <p className="font-medium">{m.label}</p>
               </button>
             );

@@ -428,20 +428,14 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   const [page, setPage] = useState(1);
 
   const marketplaceOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const p of projects) {
-      if (!map.has(p.marketplace)) {
-        map.set(p.marketplace, MARKETPLACE_LABELS[p.marketplace] ?? p.marketplaceLabel);
-      }
-    }
-    return Array.from(map.entries())
+    return Object.entries(MARKETPLACE_LABELS)
       .map(([value, label]) => ({
         value,
         label,
         logoDomain: MARKETPLACE_DOMAIN[value],
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [projects]);
+  }, []);
 
   const hasActiveFilters = !!(search || statusFilter || marketplaceFilter || dateFrom || dateTo);
 
