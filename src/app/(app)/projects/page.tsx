@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 const MARKETPLACE_LABELS: Record<string, string> = {
   amazon: "Amazon",
+  amazon_us: "Amazon US",
   bestbuy: "Best Buy",
   walmart: "Walmart",
   temu: "Temu",
