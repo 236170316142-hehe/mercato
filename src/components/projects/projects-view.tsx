@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Plus, FolderOpen, Package, Clock, CheckCircle2, Loader2, Trash2,
   Search, ChevronLeft, ChevronRight, X, ChevronDown, Check, Square, CheckSquare,
+  CalendarDays,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -189,6 +190,191 @@ function FilterSelect({
   );
 }
 
+// ── Date range helpers ────────────────────────────────────────────────────────
+
+type DatePreset = { label: string; days: number | null };
+
+const DATE_PRESETS: DatePreset[] = [
+  { label: "Today",          days: 0 },
+  { label: "Last 7 days",    days: 7 },
+  { label: "Last 30 days",   days: 30 },
+  { label: "Last 3 months",  days: 90 },
+  { label: "This year",      days: 365 },
+  { label: "Custom range",   days: null },
+];
+
+function toDateStr(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function presetRange(days: number): { from: string; to: string } {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - days);
+  return { from: toDateStr(from), to: toDateStr(to) };
+}
+
+function formatDateLabel(from: string, to: string): string {
+  const fmt = (s: string) => new Date(s + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
+}
+
+function DateRangeFilter({
+  from,
+  to,
+  onChange,
+  className,
+}: {
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [showCustom, setShowCustom] = useState(false);
+  const [customFrom, setCustomFrom] = useState(from);
+  const [customTo, setCustomTo] = useState(to);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useDismissible(open, () => { setOpen(false); setShowCustom(false); }, rootRef);
+
+  const hasValue = !!(from && to);
+
+  const activePreset = !showCustom && hasValue
+    ? DATE_PRESETS.find((p) => {
+        if (p.days == null) return false;
+        const r = presetRange(p.days);
+        return r.from === from && r.to === to;
+      }) ?? null
+    : null;
+
+  function applyPreset(p: DatePreset) {
+    if (p.days == null) {
+      setShowCustom(true);
+      setCustomFrom(from || toDateStr(new Date()));
+      setCustomTo(to || toDateStr(new Date()));
+      return;
+    }
+    setShowCustom(false);
+    const r = presetRange(p.days);
+    onChange(r.from, r.to);
+    setOpen(false);
+  }
+
+  function applyCustom() {
+    if (customFrom && customTo) {
+      const f = customFrom <= customTo ? customFrom : customTo;
+      const t = customFrom <= customTo ? customTo : customFrom;
+      onChange(f, t);
+      setOpen(false);
+      setShowCustom(false);
+    }
+  }
+
+  function clear(e: React.MouseEvent) {
+    e.stopPropagation();
+    onChange("", "");
+    setShowCustom(false);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={rootRef} className={cn("relative min-w-0", className)}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          fieldClass,
+          "inline-flex items-center gap-2 text-left",
+          open && "ring-2 ring-primary/20 border-primary/40",
+          !hasValue && "text-muted-foreground"
+        )}
+      >
+        <CalendarDays className="w-4 h-4 shrink-0 text-muted-foreground" />
+        <span className="flex-1 truncate">
+          {hasValue
+            ? activePreset
+              ? activePreset.label
+              : formatDateLabel(from, to)
+            : "Any date"}
+        </span>
+        {hasValue
+          ? <span
+              role="button"
+              onClick={clear}
+              className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition"
+            >
+              <X className="w-3 h-3" />
+            </span>
+          : <ChevronDown className={cn("w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+        }
+      </button>
+
+      {open && (
+        <div className="absolute z-30 mt-1.5 w-64 rounded-xl border border-border bg-card shadow-lg overflow-hidden">
+          {/* Preset list */}
+          <div className="py-1">
+            {DATE_PRESETS.map((p) => {
+              const isActive = p.days == null ? showCustom : p === activePreset;
+              return (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => applyPreset(p)}
+                  className={cn(
+                    "flex w-full items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-muted",
+                    isActive && "bg-muted font-medium"
+                  )}
+                >
+                  <span className="w-4 shrink-0 flex justify-center">
+                    {isActive && <Check className="w-3.5 h-3.5 text-primary" />}
+                  </span>
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Custom date inputs */}
+          {showCustom && (
+            <div className="border-t border-border px-3 py-3 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">From</label>
+                  <input
+                    type="date"
+                    value={customFrom}
+                    max={customTo || undefined}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className={cn(fieldClass, "w-full text-xs px-2")}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">To</label>
+                  <input
+                    type="date"
+                    value={customTo}
+                    min={customFrom || undefined}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className={cn(fieldClass, "w-full text-xs px-2")}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={applyCustom}
+                disabled={!customFrom || !customTo}
+                className="w-full h-8 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition disabled:opacity-40"
+              >
+                Apply range
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   const router = useRouter();
   const confirm = useConfirm();
@@ -199,6 +385,8 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [marketplaceFilter, setMarketplaceFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
 
   const marketplaceOptions = useMemo(() => {
@@ -211,10 +399,12 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, []);
 
-  const hasActiveFilters = !!(search || statusFilter || marketplaceFilter);
+  const hasActiveFilters = !!(search || statusFilter || marketplaceFilter || dateFrom);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const fromTs = dateFrom ? new Date(dateFrom + "T00:00:00").getTime() : null;
+    const toTs   = dateTo   ? new Date(dateTo   + "T23:59:59").getTime() : null;
     return projects.filter((p) => {
       if (q) {
         const matchesSearch =
@@ -225,9 +415,14 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
       }
       if (statusFilter && p.status !== statusFilter) return false;
       if (marketplaceFilter && p.marketplace !== marketplaceFilter) return false;
+      if (fromTs !== null || toTs !== null) {
+        const created = new Date(p.createdAt).getTime();
+        if (fromTs !== null && created < fromTs) return false;
+        if (toTs   !== null && created > toTs)   return false;
+      }
       return true;
     });
-  }, [projects, search, statusFilter, marketplaceFilter]);
+  }, [projects, search, statusFilter, marketplaceFilter, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -255,6 +450,8 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
     setSearch("");
     setStatusFilter("");
     setMarketplaceFilter("");
+    setDateFrom("");
+    setDateTo("");
     setPage(1);
   }
 
@@ -418,6 +615,13 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
             options={marketplaceOptions}
             placeholder="All marketplaces"
             className="w-46"
+          />
+
+          <DateRangeFilter
+            from={dateFrom}
+            to={dateTo}
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t); resetPage(); }}
+            className="w-44"
           />
 
           <button
