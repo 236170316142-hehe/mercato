@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Plus, FolderOpen, Package, Clock, CheckCircle2, Loader2, Trash2,
-  Search, ChevronLeft, ChevronRight, X, ChevronDown, Check, CalendarDays, Square, CheckSquare,
+  Search, ChevronLeft, ChevronRight, X, ChevronDown, Check, Square, CheckSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -427,8 +427,6 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [marketplaceFilter, setMarketplaceFilter] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
 
   const marketplaceOptions = useMemo(() => {
@@ -441,7 +439,7 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, []);
 
-  const hasActiveFilters = !!(search || statusFilter || marketplaceFilter || dateFrom || dateTo);
+  const hasActiveFilters = !!(search || statusFilter || marketplaceFilter);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -455,14 +453,9 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
       }
       if (statusFilter && p.status !== statusFilter) return false;
       if (marketplaceFilter && p.marketplace !== marketplaceFilter) return false;
-      if (dateFrom || dateTo) {
-        const day = toDayKey(p.updatedAt);
-        if (dateFrom && day < dateFrom) return false;
-        if (dateTo && day > dateTo) return false;
-      }
       return true;
     });
-  }, [projects, search, statusFilter, marketplaceFilter, dateFrom, dateTo]);
+  }, [projects, search, statusFilter, marketplaceFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -490,8 +483,6 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
     setSearch("");
     setStatusFilter("");
     setMarketplaceFilter("");
-    setDateFrom("");
-    setDateTo("");
     setPage(1);
   }
 
@@ -657,22 +648,6 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
             className="w-46"
           />
 
-          <FilterDate
-            value={dateFrom}
-            max={dateTo || undefined}
-            onChange={(v) => { setDateFrom(v); resetPage(); }}
-            ariaLabel="From date"
-            className="w-40"
-          />
-
-          <FilterDate
-            value={dateTo}
-            min={dateFrom || undefined}
-            onChange={(v) => { setDateTo(v); resetPage(); }}
-            ariaLabel="To date"
-            className="w-40"
-          />
-
           <button
             type="button"
             onClick={clearFilters}
@@ -733,21 +708,6 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
 
             return (
               <div key={p.id} className={cn("relative group", isSelected && "ring-2 ring-primary rounded-2xl")}>
-                {/* Checkbox — top-left, visible on hover or when selected */}
-                <button
-                  type="button"
-                  onClick={(e) => toggleSelect(e, p.id)}
-                  title={isSelected ? "Deselect" : "Select"}
-                  className={cn(
-                    "absolute top-3 left-3 z-10 w-5 h-5 rounded flex items-center justify-center transition-all",
-                    isSelected
-                      ? "opacity-100 bg-primary text-primary-foreground"
-                      : "opacity-0 group-hover:opacity-100 bg-background border border-border hover:border-primary"
-                  )}
-                >
-                  {isSelected && <Check className="w-3 h-3" />}
-                </button>
-
                 <Link
                   href={`/projects/${p.id}`}
                   className={cn(
@@ -755,8 +715,23 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
                     isSelected && "border-primary/30"
                   )}
                 >
-                  <div className="flex items-start justify-between gap-3 pl-5">
-                    <div className="min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    {/* Checkbox */}
+                    <button
+                      type="button"
+                      onClick={(e) => toggleSelect(e, p.id)}
+                      title={isSelected ? "Deselect" : "Select"}
+                      className={cn(
+                        "mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-all",
+                        isSelected
+                          ? "bg-primary border-primary text-primary-foreground"
+                          : "border-border bg-background hover:border-primary"
+                      )}
+                    >
+                      {isSelected && <Check className="w-2.5 h-2.5" />}
+                    </button>
+
+                    <div className="min-w-0 flex-1">
                       <p className="font-semibold text-sm truncate group-hover:text-primary transition">
                         {p.name}
                       </p>
@@ -765,10 +740,25 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
                         {MARKETPLACE_LABELS[p.marketplace] ?? p.marketplaceLabel}
                       </p>
                     </div>
-                    <span className={cn("inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full shrink-0 transition-transform duration-200 group-hover:-translate-x-8", status.color)}>
-                      <StatusIcon className={cn("w-3 h-3", ["verifying","categorizing","exporting"].includes(p.status) && "animate-spin")} />
-                      {status.label}
-                    </span>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={cn("inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full", status.color)}>
+                        <StatusIcon className={cn("w-3 h-3", ["verifying","categorizing","exporting"].includes(p.status) && "animate-spin")} />
+                        {status.label}
+                      </span>
+                      {/* Delete button — always visible */}
+                      <button
+                        onClick={(e) => handleDelete(e, p.id, p.name)}
+                        disabled={isDeleting}
+                        title="Delete project"
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-red-50 hover:text-red-600 transition-all disabled:opacity-50"
+                      >
+                        {isDeleting
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <Trash2 className="w-3.5 h-3.5" />
+                        }
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -789,19 +779,6 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
                     />
                   </div>
                 </Link>
-
-                {/* Delete button — top-right, visible on hover */}
-                <button
-                  onClick={(e) => handleDelete(e, p.id, p.name)}
-                  disabled={isDeleting}
-                  title="Delete project"
-                  className="absolute top-3 right-3 w-7 h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-background border hover:bg-red-50 hover:border-red-300 hover:text-red-600 transition-all disabled:opacity-50 z-10"
-                >
-                  {isDeleting
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <Trash2 className="w-3.5 h-3.5" />
-                  }
-                </button>
               </div>
             );
           })}
