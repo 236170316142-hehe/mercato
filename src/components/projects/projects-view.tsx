@@ -486,10 +486,10 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
                   onClick={(e) => toggleSelect(e, p.id)}
                   title={isSelected ? "Deselect" : "Select"}
                   className={cn(
-                    "absolute top-3.5 left-3.5 z-10 w-4.5 h-4.5 rounded-md border-2 flex items-center justify-center transition-all duration-150",
+                    "absolute top-3.5 left-3.5 z-10 w-[18px] h-[18px] rounded border-2 flex items-center justify-center transition-all duration-150 shadow-sm",
                     isSelected
-                      ? "opacity-100 bg-primary border-primary text-white shadow-sm"
-                      : "opacity-0 group-hover:opacity-100 bg-card border-border hover:border-primary"
+                      ? "opacity-100 bg-primary border-primary text-white"
+                      : "opacity-0 group-hover:opacity-100 bg-white border-gray-400 hover:border-primary"
                   )}
                 >
                   {isSelected && <Check className="w-2.5 h-2.5" strokeWidth={3} />}
@@ -502,8 +502,8 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
                   title="Delete project"
                   className={cn(
                     "absolute top-3 right-3 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-150",
-                    "bg-card border border-transparent text-muted-foreground",
-                    "hover:border-red-200 hover:bg-red-50 hover:text-red-600",
+                    "bg-white border border-gray-200 shadow-sm text-gray-500",
+                    "hover:border-red-300 hover:bg-red-50 hover:text-red-600 hover:shadow-none",
                     "opacity-0 group-hover:opacity-100 disabled:opacity-30"
                   )}
                 >
