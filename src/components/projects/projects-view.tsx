@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Plus, FolderOpen, Package, Clock, CheckCircle2, Loader2, Trash2,
-  Search, ChevronLeft, ChevronRight, X, ChevronDown, Check, CalendarDays,
+  Search, ChevronLeft, ChevronRight, X, ChevronDown, Check, CalendarDays, Square, CheckSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -422,6 +422,8 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   const confirm = useConfirm();
   const [projects, setProjects] = useState(initial);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [marketplaceFilter, setMarketplaceFilter] = useState("");
@@ -493,6 +495,24 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
     setPage(1);
   }
 
+  function toggleSelect(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selected.size === paginated.length && paginated.every((p) => selected.has(p.id))) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(paginated.map((p) => p.id)));
+    }
+  }
+
   async function handleDelete(e: React.MouseEvent, id: string, name: string) {
     e.preventDefault();
     e.stopPropagation();
@@ -507,6 +527,7 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
       const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
       if (!res.ok) { toast.error("Failed to delete project"); return; }
       setProjects((prev) => prev.filter((p) => p.id !== id));
+      setSelected((prev) => { const next = new Set(prev); next.delete(id); return next; });
       toast.success(`"${name}" deleted`);
       router.refresh();
     } catch {
@@ -515,6 +536,36 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
       setDeleting(null);
     }
   }
+
+  async function handleBulkDelete() {
+    const ids = [...selected];
+    const count = ids.length;
+    const ok = await confirm({
+      title: `Delete ${count} project${count === 1 ? "" : "s"}?`,
+      description: `This will permanently delete ${count === 1 ? "this project" : `all ${count} selected projects`} and their products. This cannot be undone.`,
+      confirmLabel: `Delete ${count}`,
+    });
+    if (!ok) return;
+    setBulkDeleting(true);
+    try {
+      const res = await fetch("/api/projects", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) { toast.error("Failed to delete projects"); return; }
+      setProjects((prev) => prev.filter((p) => !ids.includes(p.id)));
+      setSelected(new Set());
+      toast.success(`${count} project${count === 1 ? "" : "s"} deleted`);
+      router.refresh();
+    } catch {
+      toast.error("Failed to delete projects");
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  const allPageSelected = paginated.length > 0 && paginated.every((p) => selected.has(p.id));
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -535,6 +586,46 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
           New project
         </Link>
       </div>
+
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div className="mb-4 flex items-center gap-3 px-4 py-2.5 rounded-xl border border-border bg-muted/60 backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={toggleSelectAll}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-primary transition"
+          >
+            {allPageSelected
+              ? <CheckSquare className="w-4 h-4 text-primary" />
+              : <Square className="w-4 h-4" />}
+            {allPageSelected ? "Deselect all" : "Select all on page"}
+          </button>
+          <span className="text-sm text-muted-foreground">
+            {selected.size} selected
+          </span>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border text-sm text-muted-foreground hover:bg-background transition"
+          >
+            <X className="w-3.5 h-3.5" />
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={handleBulkDelete}
+            disabled={bulkDeleting}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition disabled:opacity-50"
+          >
+            {bulkDeleting
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Trash2 className="w-3.5 h-3.5" />}
+            Delete {selected.size}
+          </button>
+        </div>
+      )}
+
 
       {/* Search + filters — single row */}
       {projects.length > 0 && (
@@ -638,14 +729,33 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
             const status = STATUS_CONFIG[p.status] ?? { label: p.status, color: "bg-muted text-muted-foreground", icon: Clock };
             const StatusIcon = status.icon;
             const isDeleting = deleting === p.id;
+            const isSelected = selected.has(p.id);
 
             return (
-              <div key={p.id} className="relative group">
+              <div key={p.id} className={cn("relative group", isSelected && "ring-2 ring-primary rounded-2xl")}>
+                {/* Checkbox — top-left, visible on hover or when selected */}
+                <button
+                  type="button"
+                  onClick={(e) => toggleSelect(e, p.id)}
+                  title={isSelected ? "Deselect" : "Select"}
+                  className={cn(
+                    "absolute top-3 left-3 z-10 w-5 h-5 rounded flex items-center justify-center transition-all",
+                    isSelected
+                      ? "opacity-100 bg-primary text-primary-foreground"
+                      : "opacity-0 group-hover:opacity-100 bg-background border border-border hover:border-primary"
+                  )}
+                >
+                  {isSelected && <Check className="w-3 h-3" />}
+                </button>
+
                 <Link
                   href={`/projects/${p.id}`}
-                  className="flex flex-col gap-4 p-5 rounded-2xl border bg-card hover:shadow-md transition-all hover:border-primary/30"
+                  className={cn(
+                    "flex flex-col gap-4 p-5 rounded-2xl border bg-card hover:shadow-md transition-all hover:border-primary/30",
+                    isSelected && "border-primary/30"
+                  )}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-3 pl-5">
                     <div className="min-w-0">
                       <p className="font-semibold text-sm truncate group-hover:text-primary transition">
                         {p.name}
@@ -680,7 +790,7 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
                   </div>
                 </Link>
 
-                {/* Delete button — floats over card, outside the Link */}
+                {/* Delete button — top-right, visible on hover */}
                 <button
                   onClick={(e) => handleDelete(e, p.id, p.name)}
                   disabled={isDeleting}

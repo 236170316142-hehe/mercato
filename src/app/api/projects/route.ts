@@ -50,6 +50,22 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ id: project.id, count: rows.length });
 }
 
+export async function DELETE(req: NextRequest) {
+  const { user, response } = await authGuard();
+  if (response) return response;
+
+  const body = await req.json().catch(() => ({}));
+  const ids: string[] = Array.isArray(body.ids) ? body.ids : [];
+  if (!ids.length) return NextResponse.json({ error: "ids required" }, { status: 400 });
+
+  // Only delete projects owned by the current user
+  await prisma.project.deleteMany({
+    where: { id: { in: ids }, userId: user!.id },
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
 export async function GET() {
   const { user, response } = await authGuard();
   if (response) return response;
