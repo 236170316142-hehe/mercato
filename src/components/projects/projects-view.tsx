@@ -479,32 +479,51 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
             const isSelected = selected.has(p.id);
 
             return (
-              <div key={p.id} className={cn("relative group", isSelected && "ring-2 ring-primary rounded-2xl")}>
+              <div key={p.id} className="relative group">
+                {/* Hover-reveal checkbox — top-left corner */}
+                <button
+                  type="button"
+                  onClick={(e) => toggleSelect(e, p.id)}
+                  title={isSelected ? "Deselect" : "Select"}
+                  className={cn(
+                    "absolute top-3.5 left-3.5 z-10 w-4.5 h-4.5 rounded-md border-2 flex items-center justify-center transition-all duration-150",
+                    isSelected
+                      ? "opacity-100 bg-primary border-primary text-white shadow-sm"
+                      : "opacity-0 group-hover:opacity-100 bg-card border-border hover:border-primary"
+                  )}
+                >
+                  {isSelected && <Check className="w-2.5 h-2.5" strokeWidth={3} />}
+                </button>
+
+                {/* Hover-reveal delete — top-right corner */}
+                <button
+                  onClick={(e) => handleDelete(e, p.id, p.name)}
+                  disabled={isDeleting}
+                  title="Delete project"
+                  className={cn(
+                    "absolute top-3 right-3 z-10 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-150",
+                    "bg-card border border-transparent text-muted-foreground",
+                    "hover:border-red-200 hover:bg-red-50 hover:text-red-600",
+                    "opacity-0 group-hover:opacity-100 disabled:opacity-30"
+                  )}
+                >
+                  {isDeleting
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <Trash2 className="w-3.5 h-3.5" />
+                  }
+                </button>
+
                 <Link
                   href={`/projects/${p.id}`}
                   className={cn(
-                    "flex flex-col gap-4 p-5 rounded-2xl border bg-card hover:shadow-md transition-all hover:border-primary/30",
-                    isSelected && "border-primary/30"
+                    "flex flex-col gap-4 p-5 rounded-2xl border bg-card transition-all duration-150",
+                    "hover:shadow-md hover:border-primary/30",
+                    isSelected && "border-primary/40 bg-primary/[0.02] shadow-sm"
                   )}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    {/* Checkbox */}
-                    <button
-                      type="button"
-                      onClick={(e) => toggleSelect(e, p.id)}
-                      title={isSelected ? "Deselect" : "Select"}
-                      className={cn(
-                        "mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-all",
-                        isSelected
-                          ? "bg-primary border-primary text-primary-foreground"
-                          : "border-border bg-background hover:border-primary"
-                      )}
-                    >
-                      {isSelected && <Check className="w-2.5 h-2.5" />}
-                    </button>
-
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-sm truncate group-hover:text-primary transition">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 pl-5">
+                      <p className="font-semibold text-sm truncate group-hover:text-primary transition-colors">
                         {p.name}
                       </p>
                       <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
@@ -512,25 +531,10 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
                         {MARKETPLACE_LABELS[p.marketplace] ?? p.marketplaceLabel}
                       </p>
                     </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={cn("inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full", status.color)}>
-                        <StatusIcon className={cn("w-3 h-3", ["verifying","categorizing","exporting"].includes(p.status) && "animate-spin")} />
-                        {status.label}
-                      </span>
-                      {/* Delete button — always visible */}
-                      <button
-                        onClick={(e) => handleDelete(e, p.id, p.name)}
-                        disabled={isDeleting}
-                        title="Delete project"
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-red-50 hover:text-red-600 transition-all disabled:opacity-50"
-                      >
-                        {isDeleting
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <Trash2 className="w-3.5 h-3.5" />
-                        }
-                      </button>
-                    </div>
+                    <span className={cn("inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full shrink-0 mr-7", status.color)}>
+                      <StatusIcon className={cn("w-3 h-3", ["verifying","categorizing","exporting"].includes(p.status) && "animate-spin")} />
+                      {status.label}
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
