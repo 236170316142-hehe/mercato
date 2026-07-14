@@ -31,18 +31,22 @@ type FieldResult = {
   live: string;
   match: boolean;
   severity: "ok" | "warning" | "mismatch";
+  note?: string; // extra context shown in the UI (e.g. AI image-comparison reasoning)
 };
 
 export async function verifyProducts(
   marketplace: string,
   products: Product[],
 ): Promise<VerifyResult[]> {
+  let results: VerifyResult[];
   switch (marketplace) {
     case "amazon_us":
     case "amazon":
-      return verifyAmazon(products);
+      results = await verifyAmazon(products);
+      break;
     case "walmart":
-      return verifyWalmart(products);
+      results = await verifyWalmart(products);
+      break;
     default:
       // Only Amazon and Walmart are verified; all others pass through as ok.
       return products.map((p) => ({
@@ -52,6 +56,63 @@ export async function verifyProducts(
         liveData: {},
       }));
   }
+
+  // Post-pass: AI visual comparison of catalog vs marketplace images.
+  await applyImageComparison(results, products);
+  return results;
+}
+
+// ── AI image comparison post-pass ─────────────────────────────────────────────
+// For every result where both a catalog image and a marketplace image exist,
+// ask a vision model whether they show the same product, then upgrade the
+// "images" field from the default "warning" to "ok" (visual match) or
+// "mismatch" (visibly different product). "unsure" keeps the manual-review
+// warning. Degrades gracefully: without an API key nothing changes.
+
+async function applyImageComparison(results: VerifyResult[], products: Product[]): Promise<void> {
+  if (!process.env.ANTHROPIC_API_KEY) return;
+
+  const isUrl = (v: string | undefined): v is string => !!v && v.startsWith("http");
+  const nameById = new Map(products.map((p) => [p.id, p.name]));
+
+  const targets: { result: VerifyResult; field: FieldResult }[] = [];
+  for (const r of results) {
+    const field = r.fields.find((f) => f.field === "images");
+    if (!field || !isUrl(field.stored) || !isUrl(field.live)) continue;
+    targets.push({ result: r, field });
+  }
+  if (!targets.length) return;
+
+  const { compareProductImagesBatch } = await import("@/lib/ai/compare-images");
+  const verdicts = await compareProductImagesBatch(
+    targets.map((t) => ({
+      vendorImageUrl: t.field.stored,
+      liveImageUrl: t.field.live,
+      productName: nameById.get(t.result.productId) ?? "",
+    })),
+  );
+
+  targets.forEach((t, i) => {
+    const v = verdicts[i];
+    if (v.verdict === "match") {
+      t.field.severity = "ok";
+      t.field.match = true;
+    } else if (v.verdict === "mismatch") {
+      t.field.severity = "mismatch";
+      t.field.match = false;
+    }
+    // "unsure" → keep the existing "warning" (manual review)
+    t.field.note = v.verdict === "match"
+      ? `AI visual check: images match — ${v.reason}`
+      : v.verdict === "mismatch"
+        ? `AI visual check: images differ — ${v.reason}`
+        : `Needs manual review — ${v.reason}`;
+
+    // Recompute the overall status from the updated field severities.
+    const hasMismatch = t.result.fields.some((f) => f.severity === "mismatch");
+    const hasWarning = t.result.fields.some((f) => f.severity === "warning");
+    t.result.status = hasMismatch ? "mismatch" : hasWarning ? "warning" : "ok";
+  });
 }
 
 // ── Amazon (Keepa) ────────────────────────────────────────────────────────────
@@ -305,6 +366,10 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const apiCache = new Map<string, any[]>();
 
+          // Vendor model/part number — exact match against a candidate's model/MPN
+          // is a definitive identity signal that overrides title similarity.
+          const vendorModel = extractModelNumber(group[0].vendorData);
+
           const searchAndPick = async (searchTerm: string, minSim = 0.4) => {
             const cacheKey = searchTerm.toLowerCase().trim();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -319,6 +384,16 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
               apiCache.set(cacheKey, normed);
             }
             if (!normed.length) return null;
+            // Exact model/MPN match wins outright, regardless of title similarity
+            if (vendorModel) {
+              const vm = modelNorm(vendorModel);
+              for (const n of normed) {
+                const candModels = [n.model, n.partNumber]
+                  .filter((m: unknown): m is string => typeof m === "string" && !!m.trim())
+                  .map(modelNorm);
+                if (candModels.includes(vm)) return { best: n, bestSim: 1 };
+              }
+            }
             let best = normed[0];
             let bestSim = titleSim(productName, best.title);
             for (const n of normed.slice(1)) {
@@ -343,9 +418,14 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
 
           let match = null;
 
-          // ── Strategy 0: vendor SKU / model number ────────────────────────────────
-          // SKUs are the most precise identifier after ASINs and UPCs. Many Amazon
-          // listings include the manufacturer model number in the title.
+          // ── Strategy 0: vendor model number / SKU ────────────────────────────────
+          // Model numbers and SKUs are the most precise identifiers after ASINs and
+          // UPCs. Many Amazon listings include the manufacturer model number in the
+          // title, and Keepa indexes model/MPN for keyword search.
+          if (!match && vendorModel && vendorModel !== vendorSku) {
+            match = await searchAndPick(vendorModel, 0.15);
+            if (!match && vendorBrand) match = await searchAndPick(`${vendorBrand} ${vendorModel}`.trim(), 0.15);
+          }
           if (!match && isUsefulSku) {
             match = await searchAndPick(vendorSku!, 0.15);
             if (!match && vendorBrand) match = await searchAndPick(`${vendorBrand} ${vendorSku}`.trim(), 0.15);
@@ -585,7 +665,6 @@ function compareToLive(
   const liveModel =
     (typeof liveData.model === "string" && liveData.model.trim() ? liveData.model.trim() : null) ||
     (typeof liveData.partNumber === "string" && liveData.partNumber.trim() ? liveData.partNumber.trim() : null);
-  const modelNorm = (s: string) => s.toLowerCase().replace(/[\s\-_\/.]+/g, "");
   const modelMatch = !vendorModel || !liveModel || modelNorm(vendorModel) === modelNorm(liveModel);
   fields.push({
     field: "model", label: "Model Number",
@@ -595,8 +674,10 @@ function compareToLive(
     severity: !vendorModel || !liveModel ? "ok" : modelMatch ? "ok" : "warning",
   });
 
-  // Images — we can confirm both images exist, but cannot auto-compare visual content.
-  // Severity "warning" when both URLs are present signals the user to review them manually.
+  // Images — start as "warning" whenever a vendor image exists; the AI visual
+  // comparison post-pass (applyImageComparison) upgrades this to "ok" or
+  // "mismatch" after actually looking at both images. If the AI is unavailable
+  // or unsure, the "warning" stands and signals manual review.
   const liveImages = Array.isArray(liveData.images) ? liveData.images as string[] : [];
   const hasLiveImages = liveImages.length > 0;
   const vendorImgUrl = p.imageUrl || (() => {
@@ -753,13 +834,16 @@ function parseDims(s: string): [number, number, number] | null {
 
 // ── Multi-signal ASIN candidate picker ───────────────────────────────────────
 // When Keepa returns multiple ASINs for a single UPC, score each candidate
-// across 5 signals and return the highest-scoring one.
+// across 7 signals and return the highest-scoring one.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function pickBestCandidate(p: Product, candidates: any[]): any {
+export function pickBestCandidate(p: Product, candidates: any[]): any {
   if (candidates.length === 1) return candidates[0];
 
   // Extract vendor price for price-range comparison
   const vdRaw = (p.vendorData as Record<string, unknown> | null) ?? {};
+
+  // Vendor model / part number — the strongest identity signal after the barcode itself
+  const vendorModel = extractModelNumber(p.vendorData);
   const vendorPrice = (() => {
     if (p.price != null) return Number(p.price);
     for (const key of ["price", "retail_price", "unit_price", "cost", "msrp", "list_price", "wholesale"]) {
@@ -781,6 +865,19 @@ function pickBestCandidate(p: Product, candidates: any[]): any {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const score = (c: any): number => {
     let s = 0;
+
+    // 0. Model number match — weight 50
+    // A matching model/MPN is nearly a guaranteed correct listing, so it outweighs
+    // every other single signal. Match against the candidate's model AND partNumber
+    // fields; fall back to checking whether the model appears verbatim in the title.
+    if (vendorModel) {
+      const vm = modelNorm(vendorModel);
+      const candModels = [c.model, c.partNumber]
+        .filter((m): m is string => typeof m === "string" && !!m.trim())
+        .map(modelNorm);
+      if (candModels.includes(vm)) s += 50;
+      else if (vm.length >= 4 && modelNorm(c.title as string ?? "").includes(vm)) s += 30;
+    }
 
     // 1. Title similarity — weight 35
     const ts = titleSim(p.name, c.title as string ?? "");
@@ -820,20 +917,16 @@ function pickBestCandidate(p: Product, candidates: any[]): any {
     }
 
     // 5. Pack / quantity match — weight 20
-    // If the vendor title mentions a pack size ("Pack of 6", "6-Count", "6pk", "Set of 3")
-    // strongly prefer ASINs whose Amazon title also mentions the same quantity.
-    // Penalty if Amazon title has a DIFFERENT pack size.
-    const extractQty = (s: string): number | null => {
-      const m = s.match(/(?:pack|set|count|ct|pk|piece|pc|bundle)\s*of\s*(\d+)|(\d+)\s*[-\s]?(?:pack|count|ct|pk|piece|pc|bundle)/i)
-             ?? s.match(/\((\d+)\s*(?:pack|count|ct|pk|piece|pc)\)/i);
-      return m ? parseInt(m[1] ?? m[2], 10) : null;
-    };
-    const vendorQty = extractQty(p.name);
-    const liveQty   = extractQty(c.title as string ?? "");
-    if (vendorQty !== null) {
-      if (liveQty === vendorQty) s += 20;        // exact pack match — big bonus
-      else if (liveQty !== null) s -= 15;         // different pack size — penalty
-      // liveQty null = no mention of pack size — no bonus/penalty
+    // Same rule as verification: a title with no pack mention = single unit (qty 1).
+    // Prefer ASINs whose Amazon title implies the same quantity as the vendor title;
+    // penalize candidates with a different pack size (vendor qty 1 vs "Pack of 6").
+    const vendorQty = extractPackQty(p.name);
+    const liveQty   = extractPackQty(c.title as string ?? "");
+    if (vendorQty === liveQty) {
+      if (vendorQty > 1) s += 20; // explicit pack match — big bonus
+      // both single-unit: no bonus (that's the default, not a signal)
+    } else {
+      s -= 15; // different pack size — penalty
     }
 
     // 6. Availability / sales rank — weight 5
@@ -858,17 +951,20 @@ function pickBestCandidate(p: Product, candidates: any[]): any {
 // No mention → treated as 1 (single unit). Used to flag qty mismatches between
 // the vendor title and the live marketplace title (Pack of 6 ≠ Pack of 1).
 
-function extractPackQty(title: string): number {
+export function extractPackQty(title: string): number {
   const t = title.toLowerCase();
   const patterns: RegExp[] = [
-    /pack[- ]of[- ](\d+)/,          // "pack of 6", "pack-of-6"
-    /(\d+)[- ]pack\b/,              // "6-pack", "6 pack"
-    /set[- ]of[- ](\d+)/,           // "set of 3"
-    /(\d+)[- ](?:pieces?|pcs?)\b/,  // "6 pieces", "6 pcs"
-    /(\d+)[- ]count\b/,             // "6 count"
-    /box[- ]of[- ](\d+)/,           // "box of 12"
-    /(\d+)[- ]units?\b/,            // "6 units"
-    /qty[: ]+(\d+)/,                // "qty: 6"
+    /pack[- ]of[- ](\d+)/,               // "pack of 6", "pack-of-6"
+    /(\d+)[- ]?pack\b/,                  // "6-pack", "6 pack", "6pack"
+    /set[- ]of[- ](\d+)/,                // "set of 3"
+    /(\d+)[- ]?(?:pieces?|pcs?)\b/,      // "6 pieces", "6 pcs", "6pc"
+    /(\d+)[- ]?(?:count|ct)\b/,          // "6 count", "6ct"
+    /(\d+)[- ]?pk\b/,                    // "6pk", "6-pk"
+    /box[- ]of[- ](\d+)/,                // "box of 12"
+    /bundle[- ]of[- ](\d+)/,             // "bundle of 4"
+    /(\d+)[- ]units?\b/,                 // "6 units"
+    /qty[: ]+(\d+)/,                     // "qty: 6"
+    /\((\d+)\s*(?:pack|count|ct|pk|pcs?|pieces?)\)/, // "(6 pack)", "(12 ct)"
   ];
   for (const re of patterns) {
     const m = t.match(re);
@@ -883,6 +979,11 @@ function extractPackQty(title: string): number {
 // ── Model-number helpers ──────────────────────────────────────────────────────
 // Extracts a model / part number from raw vendor spreadsheet data.
 
+/** Normalize a model/part number for comparison: lowercase, strip separators. */
+function modelNorm(s: string): string {
+  return s.toLowerCase().replace(/[\s\-_\/.]+/g, "");
+}
+
 const MODEL_NUMBER_KEYS = [
   "model", "modelnumber", "modelno", "modelnum",
   "mpn", "manufacturerpartnumber", "mfrpartno",
@@ -890,7 +991,7 @@ const MODEL_NUMBER_KEYS = [
   "itemmodelnumber",
 ];
 
-function extractModelNumber(vendorData: unknown): string | null {
+export function extractModelNumber(vendorData: unknown): string | null {
   if (!vendorData || typeof vendorData !== "object") return null;
   const vd = vendorData as Record<string, unknown>;
   const norm = (s: string) => s.toLowerCase().replace(/[\s_\-#.]+/g, "");

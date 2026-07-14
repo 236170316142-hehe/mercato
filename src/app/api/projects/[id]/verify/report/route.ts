@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 
-type FieldResult = { field: string; label: string; stored: string; live: string; severity: string };
+type FieldResult = { field: string; label: string; stored: string; live: string; severity: string; note?: string };
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { user, response } = await authGuard();
@@ -38,7 +38,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const FIELD_LABELS: Record<string, string> = { model: "Model Number" };
   const header = [
     "SKU", "UPC", "ASIN", "Product Name", "Overall Status",
-    "Catalog Image URL", `${mpLabel} Image URL`,
+    "Catalog Image URL", `${mpLabel} Image URL`, "Image Result", "Image Note",
     ...FIELD_ORDER.filter(f => f !== "images").flatMap(f => {
       const label = FIELD_LABELS[f] ?? capitalize(f);
       return [`${label} (Catalog)`, `${label} (${mpLabel})`, `${label} Result`];
@@ -61,6 +61,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       p.verifyStatus ?? "pending",
       imgField?.stored ?? "",
       imgField?.live ?? "",
+      imgField?.severity ?? "N/A",
+      imgField?.note ?? "",
       ...FIELD_ORDER.filter(f => f !== "images").flatMap(f => {
         const fr = byField[f];
         return fr ? [fr.stored, fr.live, fr.severity] : ["N/A", "N/A", "N/A"];
