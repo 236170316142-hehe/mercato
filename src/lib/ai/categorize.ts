@@ -100,8 +100,9 @@ export async function categorizeProducts(
   const mpLower = marketplace.toLowerCase();
   const isMathis = mpLower === "mathis";
   const isBestBuyTop = mpLower === "bestbuy";
-  // Constrained mode = template names drive the allowed category list (Mathis always; Best Buy when templates uploaded)
-  const isConstrained = (isMathis || isBestBuyTop) && !!availableCategories?.length;
+  const isTemuTop = mpLower === "temu";
+  // Constrained mode = template names drive the allowed category list (Mathis always; Temu/Best Buy when templates uploaded)
+  const isConstrained = (isMathis || isBestBuyTop || isTemuTop) && !!availableCategories?.length;
 
   // Smaller batches for constrained-category marketplaces so the AI reasons carefully per product.
   const BATCH = isConstrained ? 8 : 20;
