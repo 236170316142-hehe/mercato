@@ -83,6 +83,64 @@ type ColMap = {
   statusCol: number | null;     // product status / active / discontinued column
 };
 
+/**
+ * Score all candidate SKU columns and return the best one.
+ *
+ * Priority layers (highest wins):
+ *  1. Header name specificity  – "Vendor SKU" > bare "SKU" > "Item No" > "Key Field"
+ *  2. Value uniqueness         – a real SKU has few duplicates
+ *  3. Format quality           – alphanumeric codes, consistent length, not pure digits
+ *  4. Marketplace-prefix penalty – "APSA-*", "FBA-*" etc. are listing IDs, not vendor codes
+ */
+function pickBestSkuCol(headers: string[], sample: string[][], taken: Set<number>): number | null {
+  type Candidate = { idx: number; score: number };
+  const candidates: Candidate[] = [];
+
+  for (let i = 0; i < headers.length; i++) {
+    if (taken.has(i)) continue;
+    const h = headers[i].replace(/[_-]/g, " ");
+
+    let headerScore = 0;
+    // Tier 1 – explicit vendor/supplier/seller/internal prefix
+    if (/\b(?:factory|vendor|supplier|seller|internal|our|your)\s+sku\b/i.test(h)) headerScore = 100;
+    // Tier 2 – bare "SKU"
+    else if (/^skus?#?$|\bsku\b/i.test(h)) headerScore = 70;
+    // Tier 3 – "Item No", "Style #", "Part No", "Product Code", "Catalog No", etc.
+    else if (/\b(?:item|article|style|model|part|ref(?:erence)?|product|stock|catalog|cat|collection|design|pattern)\s*(?:no\.?|num(?:ber)?|code|id|#)\b/i.test(h)) headerScore = 60;
+    // Tier 4 – very generic ("Key Field", "ID Field") — only if nothing better found
+    else if (/\bkey\s*(?:field|code|id)?\b/i.test(h) && !/\bfield\b/i.test(h)) headerScore = 20;
+    else continue; // not a SKU candidate at all
+
+    const vals = sample.map(r => (r[i] ?? "").trim()).filter(Boolean);
+    if (!vals.length) continue;
+
+    // Uniqueness: a true SKU column should have near-100% distinct values
+    const uniqueness = new Set(vals).size / vals.length; // 0–1
+    const uniquenessScore = uniqueness * 25;
+
+    // Format quality: values should look like product codes (alphanumeric, 3–30 chars, not pure numbers)
+    const formatShare = columnShare(sample, i, (v) =>
+      /^[A-Z0-9][A-Z0-9\-_.]{2,29}$/i.test(v) && !/^\d{8,}$/.test(v),
+    );
+    const formatScore = formatShare * 20;
+
+    // Penalty: common marketplace listing-SKU prefixes mean this is a listing ID, not a vendor code
+    const mktPrefixShare = columnShare(sample, i, (v) =>
+      /^(?:APSA|AMZN|WMT|FBA|MFN|B2C|SKU|ATVP)[\-_]/i.test(v),
+    );
+    const prefixPenalty = mktPrefixShare * 50;
+
+    const total = headerScore + uniquenessScore + formatScore - prefixPenalty;
+    candidates.push({ idx: i, score: total });
+  }
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  taken.add(best.idx);
+  return best.idx;
+}
+
 function detectColumns(headers: string[], sample: string[][]): ColMap {
   const taken = new Set<number>();
   const claim = (i: number | null) => { if (i != null) taken.add(i); return i; };
@@ -94,12 +152,8 @@ function detectColumns(headers: string[], sample: string[][]): ColMap {
   // UPC / EAN / barcode
   let codeCol = claim(findHeader(headers, /\b(upc|ean|gtin|barcode|isbn)\b/i, taken));
 
-  // Vendor SKU — covers: SKU, Item No., Style #, Product Code, Stock No., Catalog #, Collection Code, etc.
-  const vendorSkuCol = claim(findHeader(
-    headers,
-    /\b(?:factory|vendor|supplier|seller|internal|our|your)[\s_-]*sku\b|\bsku[s#]?\b|\b(?:item|article|style|model|part|ref(?:erence)?|product|stock|catalog|cat|collection|design|pattern)[\s_-]*(?:no\.?|num(?:ber)?|code|id)\b|\b(?:item|article|style|model|part|ref(?:erence)?|product|stock|catalog|cat|collection|design|pattern)\s*#/i,
-    taken,
-  ));
+  // Vendor SKU — multi-candidate scoring instead of first-match-left-to-right
+  const vendorSkuCol = pickBestSkuCol(headers, sample, taken);
 
   // Brand / manufacturer
   const brandCol = claim(findHeader(headers, /\b(brand|manufacturer|maker)\b/i, taken));
