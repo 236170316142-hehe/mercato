@@ -12,7 +12,7 @@ const MARKETPLACE_TILES = [
   { id: "walmart", label: "Walmart", domain: "walmart.com" },
   { id: "bestbuy", label: "Best Buy", domain: "bestbuy.com" },
   { id: "temu", label: "Temu", domain: "temu.com" },
-  { id: "mathis", label: "Mathis", domain: "mathisbrothers.com" },
+  { id: "mathis", label: "Mathis", domain: "mathishome.com" },
   { id: "sears", label: "Sears", domain: "sears.com" },
 ] as const;
 

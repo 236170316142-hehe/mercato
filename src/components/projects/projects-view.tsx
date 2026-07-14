@@ -48,7 +48,7 @@ const MARKETPLACE_DOMAIN: Record<string, string> = {
   bestbuy: "bestbuy.com",
   walmart: "walmart.com",
   temu: "temu.com",
-  mathis: "mathisbrothers.com",
+  mathis: "mathishome.com",
   sears: "sears.com",
 };
 

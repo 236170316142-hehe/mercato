@@ -65,7 +65,7 @@ const MARKETPLACE_LABELS: Record<string, string> = {
 
 const MARKETPLACE_DOMAIN: Record<string, string> = {
   amazon_us: "amazon.com", amazon: "amazon.com", bestbuy: "bestbuy.com", walmart: "walmart.com",
-  temu: "temu.com", mathis: "mathisbrothers.com", sears: "sears.com",
+  temu: "temu.com", mathis: "mathishome.com", sears: "sears.com",
 };
 
 function MarketplaceLogo({ marketplace, className }: { marketplace: string; className?: string }) {
