@@ -51,11 +51,15 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [fetching, setFetching] = useState(true);
-  // For non-Mathis: user picks which template to export with
+  // For single-template marketplaces: user picks which template to export with
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const mountedRef = useRef(true);
 
   const isMathis = marketplace === "mathis";
+  const isTemu = marketplace === "temu";
+  const isBestBuy = marketplace === "bestbuy";
+  // Category-split marketplaces: one file per category, matched to template automatically
+  const usesCategoryZip = isMathis || isTemu || isBestBuy;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -68,8 +72,8 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
       .then((data) => {
         const tpls: Template[] = data.templates ?? [];
         setTemplates(tpls);
-        // Auto-select first template for non-Mathis
-        if (!isMathis && tpls.length > 0) setSelectedTemplateId(tpls[0].id);
+        // Auto-select first template for single-template marketplaces
+        if (!usesCategoryZip && tpls.length > 0) setSelectedTemplateId(tpls[0].id);
         setFetching(false);
       })
       .catch(() => setFetching(false));
@@ -88,11 +92,11 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
 
   const hasTemplates = templates.length > 0;
 
-  // Mathis: needs templates + categorized products
+  // Category-split (Mathis/Temu/BestBuy): needs categorized products; Mathis also requires templates
   // Other: needs at least 1 product; if templates exist, one must be selected
   const canExport = !loading && !fetching && (
-    isMathis
-      ? hasTemplates && categories.length > 0
+    usesCategoryZip
+      ? (isMathis ? hasTemplates : true) && categories.length > 0
       : products.length > 0 && (!hasTemplates || !!selectedTemplateId)
   );
 
@@ -100,10 +104,10 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
     setLoading(true);
     setStatusMsg("Starting export…");
     try {
-      // Mathis: autoMatch=true (category→template matching on server)
-      // Non-Mathis with template: pass templateIds=[selectedId] so server uses that template
-      // Non-Mathis without template: autoMatch=true falls back to flat export
-      const body = isMathis
+      // Category-split (Mathis/Temu/BestBuy): autoMatch=true — server matches each category to closest template
+      // Single-template with selection: pass templateIds=[selectedId]
+      // Fallback: autoMatch=true → flat export
+      const body = usesCategoryZip
         ? { autoMatch: true }
         : hasTemplates && selectedTemplateId
           ? { templateIds: [selectedTemplateId] }
@@ -145,7 +149,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
           a.download = `mercato-export-${projectId}.zip`;
           a.click();
           URL.revokeObjectURL(url);
-          const fileCount = isMathis ? categories.length : 1;
+          const fileCount = usesCategoryZip ? categories.length : 1;
           toast.success(`ZIP downloaded — ${fileCount} file${fileCount !== 1 ? "s" : ""}`);
           return;
         }
@@ -176,7 +180,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
 
   const buttonLabel = loading
     ? (statusMsg || "Generating ZIP…")
-    : isMathis
+    : usesCategoryZip
       ? `Download ZIP (${categories.length} file${categories.length !== 1 ? "s" : ""})`
       : `Download ZIP (${products.length} product${products.length !== 1 ? "s" : ""})`;
 
@@ -187,7 +191,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
         <div>
           <h2 className="text-lg font-semibold">Export ZIP</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {isMathis
+            {usesCategoryZip
               ? "One Excel file per category — templates matched automatically"
               : "Export all products using your chosen template"}
           </p>
@@ -204,7 +208,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
 
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-4 mb-6">
-        {isMathis ? (
+        {usesCategoryZip ? (
           <>
             <div className="rounded-xl border p-4 bg-green-50 border-green-200">
               <p className="text-2xl font-bold text-green-700">{categories.length}</p>
@@ -237,8 +241,8 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
         )}
       </div>
 
-      {/* Uncategorized warning banner (Mathis only) */}
-      {isMathis && !fetching && uncategorizedCount > 0 && (
+      {/* Uncategorized warning banner */}
+      {usesCategoryZip && !fetching && uncategorizedCount > 0 && (
         <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
@@ -247,7 +251,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
                 {uncategorizedCount} product{uncategorizedCount !== 1 ? "s" : ""} will be excluded from the export
               </p>
               <p className="text-xs text-orange-700 mt-1">
-                These products were marked "Uncategorized" — they don't match any of the 12 Mathis templates (e.g. fragrances, electronics, food items). Only {exportableCount} product{exportableCount !== 1 ? "s" : ""} will be included in the ZIP.
+                These products were marked "Uncategorized" and don't match any available template. Only {exportableCount} product{exportableCount !== 1 ? "s" : ""} will be included in the ZIP.
               </p>
             </div>
           </div>
@@ -263,8 +267,8 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
       {!fetching && (
         <div className="space-y-4">
 
-          {/* ── MATHIS ── */}
-          {isMathis && !hasTemplates && (
+          {/* ── CATEGORY-SPLIT (Mathis / Temu / Best Buy) ── */}
+          {usesCategoryZip && isMathis && !hasTemplates && (
             <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl">
               <FileSpreadsheet className="w-10 h-10 text-muted-foreground mb-3" />
               <p className="text-sm font-medium mb-1">No templates uploaded yet</p>
@@ -274,7 +278,21 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             </div>
           )}
 
-          {isMathis && hasTemplates && categories.length === 0 && (
+          {usesCategoryZip && !isMathis && !hasTemplates && categories.length > 0 && (
+            <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <div className="flex items-start gap-3">
+                <FileSpreadsheet className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-blue-800">No templates — using flat column export</p>
+                  <p className="text-xs text-blue-700 mt-1">
+                    Upload templates per category in the Templates section to use custom column layouts. Without templates, the export uses standard columns.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {usesCategoryZip && categories.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl">
               <Package className="w-10 h-10 text-muted-foreground mb-3" />
               <p className="text-sm font-medium mb-1">No categorized products</p>
@@ -282,20 +300,22 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             </div>
           )}
 
-          {isMathis && hasTemplates && categories.length > 0 && (
+          {usesCategoryZip && categories.length > 0 && (
             <div>
               <h3 className="text-sm font-medium mb-2">Files that will be created</h3>
               <div className="border rounded-xl divide-y overflow-hidden">
                 {categories.map(([category, count]) => {
-                  const matched = matchTemplate(category, templates);
+                  const matched = hasTemplates ? matchTemplate(category, templates) : null;
                   return (
                     <div key={category} className="flex items-center gap-3 px-4 py-2.5">
                       <FileSpreadsheet className="w-4 h-4 text-muted-foreground shrink-0" />
                       <span className="text-sm flex-1 truncate">{category}</span>
-                      <span className="flex items-center gap-1 text-xs text-blue-600 font-medium shrink-0">
-                        <Shuffle className="w-3 h-3" />
-                        {matched.name}
-                      </span>
+                      {matched && (
+                        <span className="flex items-center gap-1 text-xs text-blue-600 font-medium shrink-0">
+                          <Shuffle className="w-3 h-3" />
+                          {matched.name}
+                        </span>
+                      )}
                       <span className="text-xs text-muted-foreground shrink-0">
                         {count} product{count !== 1 ? "s" : ""}
                       </span>
@@ -306,8 +326,8 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             </div>
           )}
 
-          {/* ── OTHER MARKETPLACES ── */}
-          {!isMathis && products.length === 0 && (
+          {/* ── SINGLE-TEMPLATE MARKETPLACES ── */}
+          {!usesCategoryZip && products.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl">
               <Package className="w-10 h-10 text-muted-foreground mb-3" />
               <p className="text-sm font-medium mb-1">No products to export</p>
@@ -315,7 +335,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             </div>
           )}
 
-          {!isMathis && products.length > 0 && !hasTemplates && (
+          {!usesCategoryZip && products.length > 0 && !hasTemplates && (
             <div className="flex flex-col items-center justify-center py-12 text-center border rounded-xl">
               <FileSpreadsheet className="w-10 h-10 text-muted-foreground mb-3" />
               <p className="text-sm font-medium mb-1">No templates uploaded yet</p>
@@ -325,7 +345,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             </div>
           )}
 
-          {!isMathis && products.length > 0 && hasTemplates && (
+          {!usesCategoryZip && products.length > 0 && hasTemplates && (
             <div>
               <h3 className="text-sm font-medium mb-2">Choose export template</h3>
               <p className="text-xs text-muted-foreground mb-3">
