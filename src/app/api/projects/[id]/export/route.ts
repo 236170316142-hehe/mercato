@@ -97,22 +97,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       if (!project) throw new Error("Project not found");
 
-      // Mathis and Temu always use category-split export and require templates.
-      // All other marketplaces fall back to a flat single-file export when no templates are present.
+      // Mathis requires templates (throws if none). Best Buy and Temu gracefully fall back
+      // to flat category ZIP when no templates are uploaded.
       const usesTemplates = mpLower === "mathis";
       if (usesTemplates && !allTemplates.length) {
         throw new Error(`No templates found for ${projectMeta.marketplace}. Upload templates first.`);
       }
 
       const isTemu = mpLower === "temu";
+      const isBestBuy = mpLower === "bestbuy";
 
       let zipBuffer: Buffer;
-      if (isTemu && allTemplates.length) {
-        // Temu with uploaded templates: match each category to the closest template
+      if ((isTemu || isBestBuy) && allTemplates.length) {
+        // Temu/Best Buy with uploaded templates: match each category to the closest template
         // and export in that template's column format — one file per matched category
         zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
-      } else if (isTemu) {
-        // Temu without templates: split by AI-assigned category using flat columns
+      } else if (isTemu || isBestBuy) {
+        // Temu/Best Buy without templates: split by AI-assigned category using flat columns
         zipBuffer = await generateFlatCategoryZip(project.products, projectMeta.marketplace) as Buffer;
       } else if (!allTemplates.length) {
         // Non-Mathis with no templates → flat export (one file, standard columns)

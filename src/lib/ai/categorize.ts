@@ -99,10 +99,11 @@ export async function categorizeProducts(
 ): Promise<CategorizeResult[]> {
   const mpLower = marketplace.toLowerCase();
   const isMathis = mpLower === "mathis";
-  const isConstrained = isMathis && !!availableCategories?.length;
+  const isBestBuyTop = mpLower === "bestbuy";
+  // Constrained mode = template names drive the allowed category list (Mathis always; Best Buy when templates uploaded)
+  const isConstrained = (isMathis || isBestBuyTop) && !!availableCategories?.length;
 
-  // Smaller batches for Mathis (constrained to template categories) so the AI
-  // can reason carefully about each product. Other marketplaces use larger batches.
+  // Smaller batches for constrained-category marketplaces so the AI reasons carefully per product.
   const BATCH = isConstrained ? 8 : 20;
   const PARALLEL = isConstrained ? 2 : 3;
 
@@ -218,6 +219,7 @@ async function categorizeBatchWithContext(
   const mpLower = marketplace.toLowerCase();
   const isMathis = mpLower === "mathis";
   const isTemu = mpLower === "temu";
+  const isBestBuy = mpLower === "bestbuy";
 
   const list = products.map((p, idx) => {
     let line = `${idx + 1}. "${p.name}"`;
@@ -271,6 +273,36 @@ Office & School Supplies: Stationery > Pens & Pencils | Stationery > Notebooks &
 Party & Seasonal: Party Decorations > Balloons & Banners | Party Decorations > Table Decorations | Halloween > Halloween Costumes | Halloween > Halloween Decorations | Halloween > Halloween Props & Accessories | Christmas > Christmas Ornaments | Christmas > Christmas Lights | Christmas > Christmas Decorations | Valentine's Day | Easter | Birthday Supplies
 
 Output the category as: "Category > Subcategory > Product Type" (e.g. "Women's Clothing > Tops > T-Shirts")`;
+  } else if (isBestBuy) {
+    categorySection = `the most specific matching Best Buy category path (Category > Subcategory > Product Type) from Best Buy's real taxonomy:
+
+TV & Home Theater: TVs > LED & QLED TVs | TVs > OLED TVs | TVs > 8K TVs | TVs > Smart TVs | Projectors > Home Theater Projectors | Projectors > Business Projectors | Sound Bars | Home Theater Systems > Home Theater in a Box | Home Theater Systems > AV Receivers | TV Mounts & Accessories > TV Mounts | TV Mounts & Accessories > TV Stands | TV Mounts & Accessories > HDMI Cables
+
+Computers & Tablets: Laptops > Windows Laptops | Laptops > MacBooks | Laptops > Chromebooks | Laptops > 2-in-1 Laptops | Laptops > Gaming Laptops | Desktop Computers > All-in-One Desktops | Desktop Computers > Windows Desktops | Desktop Computers > Mac Desktops | Tablets > iPad | Tablets > Android Tablets | Tablets > Windows Tablets | Monitors > Gaming Monitors | Monitors > 4K Monitors | Monitors > Ultrawide Monitors | Printers > All-in-One Printers | Printers > Laser Printers | Computer Accessories > External Hard Drives | Computer Accessories > USB Hubs | Computer Accessories > Webcams | Computer Accessories > Keyboards | Computer Accessories > Mice | Computer Storage > SSDs | Computer Storage > USB Flash Drives | Computer Components > RAM | Computer Components > Graphics Cards | Computer Components > CPUs
+
+Cell Phones & Wearables: Cell Phones > Apple iPhone | Cell Phones > Samsung Galaxy | Cell Phones > Google Pixel | Cell Phones > Android Phones | Cell Phone Accessories > Phone Cases | Cell Phone Accessories > Screen Protectors | Cell Phone Accessories > Wireless Chargers | Cell Phone Accessories > Charging Cables | Cell Phone Accessories > Phone Holders | Wearable Technology > Apple Watch | Wearable Technology > Samsung Galaxy Watch | Wearable Technology > Fitness Trackers | Wearable Technology > Smart Glasses | Prepaid Phones
+
+Cameras & Camcorders: Digital Cameras > DSLR Cameras | Digital Cameras > Mirrorless Cameras | Digital Cameras > Point & Shoot Cameras | Camcorders > HD Camcorders | Camcorders > 4K Camcorders | Action Cameras > GoPro | Drones > Camera Drones | Drones > Racing Drones | Camera Lenses | Camera Accessories > Camera Bags & Cases | Camera Accessories > Memory Cards | Camera Accessories > Tripods & Monopods | Camera Accessories > Batteries & Chargers | Photo Printing
+
+Audio: Headphones > Over-Ear Headphones | Headphones > On-Ear Headphones | Headphones > Noise-Canceling Headphones | Earbuds > True Wireless Earbuds | Earbuds > Wired Earbuds | Portable Speakers > Bluetooth Speakers | Portable Speakers > Waterproof Speakers | Home Audio > Bookshelf Speakers | Home Audio > Floor Standing Speakers | Home Audio > Subwoofers | Turntables & Record Players | Musical Instruments > Guitars | Musical Instruments > Keyboards & Pianos | Musical Instruments > DJ Equipment | Voice Recorders
+
+Video Games: Video Games > PlayStation Games | Video Games > Xbox Games | Video Games > Nintendo Switch Games | Video Games > PC Games | Gaming Consoles > PlayStation 5 | Gaming Consoles > Xbox Series X|S | Gaming Consoles > Nintendo Switch | PC Gaming > Gaming Desktops | PC Gaming > Gaming Laptops | Gaming Accessories > Controllers | Gaming Accessories > Gaming Headsets | Gaming Accessories > Gaming Keyboards | Gaming Accessories > Gaming Mice | Gaming Accessories > Gaming Chairs | VR Headsets
+
+Appliances: Refrigerators > French Door Refrigerators | Refrigerators > Side-by-Side Refrigerators | Refrigerators > Bottom Freezer Refrigerators | Refrigerators > Top Freezer Refrigerators | Refrigerators > Counter-Depth Refrigerators | Washing Machines > Front Load Washers | Washing Machines > Top Load Washers | Dryers > Gas Dryers | Dryers > Electric Dryers | Dishwashers > Built-In Dishwashers | Dishwashers > Portable Dishwashers | Ranges & Ovens > Gas Ranges | Ranges & Ovens > Electric Ranges | Ranges & Ovens > Induction Ranges | Ranges & Ovens > Wall Ovens | Microwaves > Over-the-Range Microwaves | Microwaves > Countertop Microwaves | Freezers > Chest Freezers | Freezers > Upright Freezers | Cooktops > Gas Cooktops | Cooktops > Electric Cooktops | Range Hoods | Appliance Accessories
+
+Smart Home: Smart Speakers & Displays > Amazon Echo | Smart Speakers & Displays > Google Nest | Smart Speakers & Displays > Apple HomePod | Smart Lighting > Smart Bulbs | Smart Lighting > Smart Light Strips | Smart Thermostats > Nest Thermostats | Smart Thermostats > Ecobee | Smart Security > Indoor Security Cameras | Smart Security > Outdoor Security Cameras | Smart Security > Video Doorbells | Smart Security > Smart Locks | Smart Plugs & Power Strips | Smart Home Hubs & Controllers | Smart Displays
+
+Health, Fitness & Beauty: Fitness Equipment > Treadmills | Fitness Equipment > Exercise Bikes | Fitness Equipment > Ellipticals | Fitness Equipment > Rowing Machines | Fitness Equipment > Weight Benches | Fitness Accessories > Resistance Bands | Fitness Accessories > Yoga Mats | Fitness Accessories > Dumbbells & Weights | Electric Shavers & Trimmers > Men's Electric Shavers | Electric Shavers & Trimmers > Women's Epilators | Hair Care > Hair Dryers | Hair Care > Hair Straighteners & Curlers | Hair Care > Electric Toothbrushes | Personal Care > Massagers | Personal Care > Blood Pressure Monitors | Personal Care > Heating Pads | Medical Monitoring > Glucose Monitors | Medical Monitoring > Pulse Oximeters
+
+Car Electronics & GPS: Car Stereos > Single-DIN Car Stereos | Car Stereos > Double-DIN Car Stereos | Car Speakers > Coaxial Speakers | Car Speakers > Component Speakers | Car Amplifiers | GPS & Navigation > Portable GPS | GPS & Navigation > Dash Cams | Car Video > Backup Cameras | Car Video > In-Car DVD Players | Car Security > Remote Starters | Car Security > Car Alarms | Radar Detectors | Car Accessories > Car Chargers | Car Accessories > Car Mounts
+
+Networking: Routers > Wi-Fi 6 Routers | Routers > Mesh Wi-Fi Systems | Routers > Gaming Routers | Modems & Gateways | Wi-Fi Range Extenders | Network Switches | Network Attached Storage (NAS) | Network Adapters | Ethernet Cables | Powerline Adapters
+
+Movies & Music: Blu-ray & DVD Players | 4K Ultra HD Blu-ray Players | Media Streaming Devices > Roku | Media Streaming Devices > Amazon Fire TV | Media Streaming Devices > Apple TV | Blu-ray Movies | 4K Ultra HD Movies | CDs & Vinyl
+
+Office & School Supplies: Office Electronics > All-in-One Printers | Office Electronics > Scanners | Office Electronics > Label Makers | Office Electronics > Calculators | Office Furniture > Desks | Office Furniture > Office Chairs | Office Supplies > Paper & Notebooks | Office Supplies > Pens & Markers | Shredders | Whiteboards
+
+Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers & Tablets > Laptops > Gaming Laptops")`;
   } else {
     const taxonomies: Record<string, string> = {
       amazon: "Amazon product categories (Electronics > Cameras, Home & Kitchen > Cookware, Clothing > Men's Shoes, etc.)",
@@ -286,6 +318,8 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Women's C
     ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer that sells furniture, mattresses, rugs, bedding, home decor, lighting, AND seasonal/holiday items including Halloween costumes for all ages."
     : isTemu
     ? "You are a product categorization expert for Temu, a global e-commerce marketplace. Temu organizes products by Category > Subcategory > Product Type. Match each product to the most specific product type available in the provided list."
+    : isBestBuy
+    ? "You are a product categorization expert for Best Buy, a major US consumer electronics and appliance retailer. Best Buy organizes products by Category > Subcategory > Product Type. Match each product to the most specific product type that matches Best Buy's real taxonomy."
     : "You are a product categorization expert for a major retail marketplace.";
 
   const reasoningInstruction = `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
