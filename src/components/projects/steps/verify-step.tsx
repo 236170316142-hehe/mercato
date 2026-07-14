@@ -15,6 +15,7 @@ type FieldResult = {
   live: string;
   match: boolean;
   severity: "ok" | "warning" | "mismatch";
+  note?: string;
 };
 
 type Product = {
@@ -302,6 +303,9 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                               <p className="font-medium line-clamp-2">{f.live}</p>
                             )}
                           </div>
+                          {f.note && (
+                            <p className={cn("col-span-3 text-[11px] italic", FIELD_SEVERITY[f.severity])}>{f.note}</p>
+                          )}
                         </div>
                       );
                     })}
