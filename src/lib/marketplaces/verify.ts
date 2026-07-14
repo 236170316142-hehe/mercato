@@ -559,18 +559,46 @@ function compareToLive(
 ): VerifyResult {
   const fields: FieldResult[] = [];
 
-  // Title
+  // Title — semantic similarity + pack-quantity mismatch check
   const sim = titleSim(p.name, liveTitle);
-  fields.push({ field: "title", label: "Title", stored: p.name, live: liveTitle, match: sim >= 0.4, severity: sim >= 0.4 ? "ok" : sim >= 0.2 ? "warning" : "mismatch" });
+  let titleSeverity: "ok" | "warning" | "mismatch" =
+    sim >= 0.4 ? "ok" : sim >= 0.2 ? "warning" : "mismatch";
+  // Pack-quantity check: if vendor title has no quantity (= 1) and live title says "Pack of N"
+  // (N > 1), or vice-versa, that is a definitive mismatch regardless of word similarity.
+  const vendorQty = extractPackQty(p.name);
+  const liveQty = extractPackQty(liveTitle);
+  if (vendorQty !== liveQty) titleSeverity = "mismatch";
+  fields.push({
+    field: "title", label: "Title",
+    stored: p.name, live: liveTitle,
+    match: titleSeverity === "ok",
+    severity: titleSeverity,
+  });
 
   // Brand
   const brandMatch = !p.brand || !liveBrand || brandsMatch(p.brand, liveBrand);
   fields.push({ field: "brand", label: "Brand", stored: p.brand ?? "N/A", live: liveBrand ?? "N/A", match: brandMatch, severity: brandMatch ? "ok" : "warning" });
 
-  // Images — check vendor has image and marketplace listing has images
+  // Model number — compare vendor's model/part number against live listing's model/MPN
+  const vdRaw = (p.vendorData as Record<string, unknown> | null) ?? {};
+  const vendorModel = extractModelNumber(p.vendorData);
+  const liveModel =
+    (typeof liveData.model === "string" && liveData.model.trim() ? liveData.model.trim() : null) ||
+    (typeof liveData.partNumber === "string" && liveData.partNumber.trim() ? liveData.partNumber.trim() : null);
+  const modelNorm = (s: string) => s.toLowerCase().replace(/[\s\-_\/.]+/g, "");
+  const modelMatch = !vendorModel || !liveModel || modelNorm(vendorModel) === modelNorm(liveModel);
+  fields.push({
+    field: "model", label: "Model Number",
+    stored: vendorModel ?? "N/A",
+    live: liveModel ?? "N/A",
+    match: modelMatch,
+    severity: !vendorModel || !liveModel ? "ok" : modelMatch ? "ok" : "warning",
+  });
+
+  // Images — we can confirm both images exist, but cannot auto-compare visual content.
+  // Severity "warning" when both URLs are present signals the user to review them manually.
   const liveImages = Array.isArray(liveData.images) ? liveData.images as string[] : [];
   const hasLiveImages = liveImages.length > 0;
-  const vdRaw = (p.vendorData as Record<string, unknown> | null) ?? {};
   const vendorImgUrl = p.imageUrl || (() => {
     for (const [k, v] of Object.entries(vdRaw)) {
       if (/image|img|photo|picture|thumbnail/i.test(k) && typeof v === "string" && v.startsWith("http")) return v;
@@ -578,13 +606,15 @@ function compareToLive(
     return null;
   })();
   const hasVendorImage = !!vendorImgUrl;
-  const imgMatch = !hasVendorImage || hasLiveImages;
+  // "ok" only when no vendor image (nothing to compare); "warning" when both exist (needs visual review);
+  // "warning" when vendor has image but live has none.
+  const imgSeverity: "ok" | "warning" = !hasVendorImage ? "ok" : "warning";
   fields.push({
     field: "images", label: "Images",
     stored: vendorImgUrl ?? "N/A",
-    live: liveImages[0] ?? (hasLiveImages ? liveImages[0] : "N/A"),
-    match: imgMatch,
-    severity: !hasVendorImage ? "ok" : hasLiveImages ? "ok" : "warning",
+    live: liveImages[0] ?? "N/A",
+    match: hasVendorImage ? hasLiveImages : true,
+    severity: imgSeverity,
   });
 
   // Description — compare vendor description with Amazon description/features
@@ -821,6 +851,58 @@ function pickBestCandidate(p: Product, candidates: any[]): any {
     if (cs > bestScore) { bestScore = cs; best = c; }
   }
   return best;
+}
+
+// ── Pack-quantity helpers ─────────────────────────────────────────────────────
+// Extracts the item-count / pack size from a product title.
+// No mention → treated as 1 (single unit). Used to flag qty mismatches between
+// the vendor title and the live marketplace title (Pack of 6 ≠ Pack of 1).
+
+function extractPackQty(title: string): number {
+  const t = title.toLowerCase();
+  const patterns: RegExp[] = [
+    /pack[- ]of[- ](\d+)/,          // "pack of 6", "pack-of-6"
+    /(\d+)[- ]pack\b/,              // "6-pack", "6 pack"
+    /set[- ]of[- ](\d+)/,           // "set of 3"
+    /(\d+)[- ](?:pieces?|pcs?)\b/,  // "6 pieces", "6 pcs"
+    /(\d+)[- ]count\b/,             // "6 count"
+    /box[- ]of[- ](\d+)/,           // "box of 12"
+    /(\d+)[- ]units?\b/,            // "6 units"
+    /qty[: ]+(\d+)/,                // "qty: 6"
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) {
+      const qty = parseInt(m[1], 10);
+      if (qty > 0 && qty <= 500) return qty;
+    }
+  }
+  return 1; // default: single unit
+}
+
+// ── Model-number helpers ──────────────────────────────────────────────────────
+// Extracts a model / part number from raw vendor spreadsheet data.
+
+const MODEL_NUMBER_KEYS = [
+  "model", "modelnumber", "modelno", "modelnum",
+  "mpn", "manufacturerpartnumber", "mfrpartno",
+  "partnumber", "partno", "partnum",
+  "itemmodelnumber",
+];
+
+function extractModelNumber(vendorData: unknown): string | null {
+  if (!vendorData || typeof vendorData !== "object") return null;
+  const vd = vendorData as Record<string, unknown>;
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_\-#.]+/g, "");
+  for (const [k, v] of Object.entries(vd)) {
+    if (MODEL_NUMBER_KEYS.includes(norm(k))) {
+      if (v && typeof v === "string") {
+        const val = v.trim();
+        if (val && !val.startsWith("http")) return val;
+      }
+    }
+  }
+  return null;
 }
 
 // Common retail abbreviation synonyms — both directions are registered
