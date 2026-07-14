@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { FileText, Plus, Trash2, X, ChevronDown, ChevronUp, Upload, FileSpreadsheet, Pencil, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type Template = {
   id: string;
@@ -29,6 +30,7 @@ function parseColumns(raw: unknown): ColumnDef[] {
 type AddMode = "file" | "manual";
 
 export function AdminTemplatesClient({ templates: initial }: { templates: Template[] }) {
+  const confirm = useConfirm();
   const [templates, setTemplates] = useState(initial);
   const [showAdd, setShowAdd] = useState(false);
   const [addMode, setAddMode] = useState<AddMode>("file");
@@ -174,7 +176,11 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this template?")) return;
+    const ok = await confirm({
+      title: "Delete this template?",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     try {
       const res = await fetch(`/api/templates?id=${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed");
