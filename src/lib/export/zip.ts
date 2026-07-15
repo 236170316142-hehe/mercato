@@ -343,7 +343,7 @@ async function fillTemplateXlsx(
   const dropdownOptions = new Map<number, string[]>();
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dvModel = (ws.dataValidations as any)?.model ?? {};
+    const dvModel = (ws as any).dataValidations?.model ?? {};
     for (const [rangeKey, dv] of Object.entries(dvModel)) {
       const dvTyped = dv as { type?: string; formulae?: string[] };
       if (dvTyped.type !== "list" || !dvTyped.formulae?.[0]) continue;
