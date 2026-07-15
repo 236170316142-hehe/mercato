@@ -92,15 +92,16 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  // Mathis & Best Buy: constrain AI to uploaded template names so each product lands in
+  // Best Buy: constrain AI to uploaded template names so each product lands in
   // a category that has a matching export template.
-  // Temu: always uses temu_categories.csv taxonomy inside categorizeProducts (not templates).
+  // Temu & Mathis: always use their CSV taxonomy sheets inside categorizeProducts
+  // (temu_categories.csv / mathis_categories.csv) — not template names. The top level
+  // of each assigned path still fuzzy-matches export templates at export time.
   // All other marketplaces use their standard taxonomy freely.
   const mpLower = project.marketplace.toLowerCase();
-  const isMathis = mpLower === "mathis";
   const isBestBuy = mpLower === "bestbuy";
   let availableCategories: string[] = [];
-  if (isMathis || isBestBuy) {
+  if (isBestBuy) {
     const marketplaceTemplates = await prisma.exportTemplate.findMany({
       where: {
         marketplace: { equals: project.marketplace, mode: "insensitive" },
@@ -152,9 +153,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       categorized: results.length,
       categories: availableCategories.length
         ? availableCategories
-        : project.marketplace.toLowerCase() === "temu"
+        : mpLower === "temu"
           ? ["(temu_categories.csv taxonomy)"]
-          : [],
+          : mpLower === "mathis"
+            ? ["(mathis_categories.csv taxonomy)"]
+            : [],
     });
   } catch (err) {
     await prisma.project.update({ where: { id }, data: { status: "verified" } });

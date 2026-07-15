@@ -1,6 +1,7 @@
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { formatTemuTaxonomyForPrompt, loadTemuCategoryPaths } from "@/lib/ai/temu-taxonomy";
+import { formatMathisTaxonomyForPrompt, loadMathisCategoryPaths } from "@/lib/ai/mathis-taxonomy";
 
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -109,12 +110,19 @@ export async function categorizeProducts(
     availableCategories = loadTemuCategoryPaths();
   }
 
-  // Constrained mode = AI must pick from a fixed list (Mathis / Best Buy templates; Temu CSV taxonomy)
+  // Mathis works the same way: the full taxonomy sheet (mathis_categories.csv, built from
+  // the live mathishome.com navigation) drives categorization instead of template names.
+  // Top level of each path still matches the Mathis export templates, so export matching works.
+  if (isMathis) {
+    availableCategories = loadMathisCategoryPaths();
+  }
+
+  // Constrained mode = AI must pick from a fixed list (Best Buy templates; Temu/Mathis CSV taxonomy)
   const isConstrained = (isMathis || isBestBuyTop || isTemuTop) && !!availableCategories?.length;
 
   // Smaller batches for constrained-category marketplaces so the AI reasons carefully per product.
-  // Temu has ~420 leaf paths — keep batches small so the taxonomy fits with product context.
-  const BATCH = isTemuTop ? 5 : isConstrained ? 8 : 20;
+  // Temu/Mathis have ~420 leaf paths — keep batches small so the taxonomy fits with product context.
+  const BATCH = (isTemuTop || isMathis) ? 5 : isConstrained ? 8 : 20;
   const PARALLEL = isConstrained ? 2 : 3;
 
   const model = availableCategories?.length
@@ -256,6 +264,21 @@ If nothing fits, use "Uncategorized".`
 ${taxonomy}
 
 If nothing fits, use "Uncategorized".`;
+  } else if (isMathis && availableCategories?.length) {
+    // Full taxonomy from mathis_categories.csv — Claude must copy an exact leaf path.
+    // Paths are 2 or 3 levels deep ("Living Room > Sofas", "Seasonal > Halloween > Adult Costumes").
+    const taxonomy = formatMathisTaxonomyForPrompt();
+    categorySection = strictMode
+      ? `EXACTLY one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2 or 3 levels deep):
+
+${taxonomy}
+
+If nothing fits, use "Uncategorized".`
+      : `exactly one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2 or 3 levels deep, e.g. "Living Room > Sofas" or "Seasonal > Halloween > Adult Costumes"):
+
+${taxonomy}
+
+If nothing fits, use "Uncategorized".`;
   } else if (availableCategories?.length) {
     const guide = buildCategoryGuide(availableCategories);
     categorySection = strictMode
@@ -303,7 +326,7 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers
   }
 
   const storeContext = isMathis
-    ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer that sells furniture, mattresses, rugs, bedding, home decor, lighting, AND seasonal/holiday items including Halloween costumes for all ages."
+    ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer that sells furniture, mattresses, rugs, bedding, home decor, lighting, AND seasonal/holiday items including Halloween costumes for all ages. You are given Mathis's official category sheet (built from mathishome.com). Match each product to the single most specific leaf path from that sheet."
     : isTemu
     ? "You are a product categorization expert for Temu, a global e-commerce marketplace. You are given Temu's official category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet."
     : isBestBuy
@@ -313,15 +336,24 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers
   const reasoningInstruction = `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
 
   const mathisSizeRule = isMathis ? `
-SIZE CODE → CATEGORY RULE (Mathis, mandatory):
-- T1/T2/T3/T4/T5/T6/T7 in the name = toddler costume → Baby & Kids
-- 0-3M / 3-6M / 6-12M / 12-18M / 18-24M / 2T / 3T / 4T = infant/toddler → Baby & Kids
-- (4-6) / (4-7) / (6-8) / (7-9) / (7-10) / (8-10) / (10-12) as child age range = child costume → Baby & Kids
-- "Infant", "Toddler", "Baby", "Kids", "Child", "Boys", "Girls" in the name → Baby & Kids (unless clearly a furniture item)
-- Adult / Teen / Plus / XL / (12-14) / (14-16) / (16-18) → Seasonal
-- Any character name (nationality, animal, occupation, fantasy) + child size code → Baby & Kids costume
-- Any character name + adult size or no size → Seasonal costume
-- "Outdoor" category is for PATIO FURNITURE only — NEVER assign a costume or wearable item to Outdoor` : "";
+WEARABLE / COSTUME RULES (Mathis, mandatory) — decide in TWO steps:
+
+STEP 1 — Is this actually a costume or costume/dress-up item?
+A costume is a themed outfit or accessory for Halloween, cosplay, theatrical, or dress-up play (pirate, witch, princess, superhero, animal, historical/fantasy character, etc.).
+- REAL clothing, footwear, and genuine cultural/religious/ceremonial garments are NOT costumes. Examples that are NOT costumes: a kippah/yarmulke (real Jewish headwear), a hijab, a turban worn as real attire, a regular suit, dress, shirt, jacket, hat, or shoes meant to actually wear.
+- If the item is NOT a costume AND does not fit any furniture/home/decor/seasonal-decor path on the sheet, output "Uncategorized". Mathis is a furniture & home retailer — it does NOT sell everyday apparel, so real clothing has no home here and must be "Uncategorized". Do NOT force real apparel into a costume path.
+
+STEP 2 — Only if STEP 1 says it IS a costume item, use the size/audience signal to pick the path:
+- Full costume (themed outfit), child size → "Baby & Kids > Kids' Costumes > Child Costumes"
+  Child size codes: (4-6)/(4-7)/(6-8)/(7-9)/(7-10)/(8-10)/(10-12), or the words Kids/Child/Boys/Girls/Youth
+- Full costume, infant/toddler size → "Baby & Kids > Kids' Costumes > Infant & Toddler Costumes"
+  Infant/toddler codes: T1–T7, 0-3M/3-6M/6-12M/12-18M/18-24M, 2T/3T/4T, or the words Infant/Toddler/Baby
+- Full costume, adult size or no size → "Seasonal > Halloween > Adult Costumes"
+- Full costume, teen size ((12-14)/(14-16)/(16-18)/Teen) → "Seasonal > Halloween > Teen Costumes"
+- Costume ACCESSORY (a single piece worn WITH a costume: hat, crown, tiara, wig, mask, cape, gloves, prop, jewelry, belt, sash) — regardless of child or adult size → "Seasonal > Halloween > Costume Accessories". (There is no separate kids-accessory leaf, so all costume accessories use this path.) Wigs and masks specifically → "Seasonal > Halloween > Wigs & Masks".
+- Outdoor paths are for PATIO products only — NEVER assign a costume or wearable item to an Outdoor path.
+
+Note: A hat, crown, or top hat alone is an ACCESSORY, not a full costume — do not send it to a Kids'/Child Costumes path.` : "";
 
   const rules = availableCategories?.length ? `
 RULES:
@@ -331,12 +363,18 @@ RULES:
 4. Use all available information: product name, brand, description, vendor category, web context
 5. If the product name includes a size, use it as a strong signal for age/audience${mathisSizeRule}` : "";
 
-  const temuJsonExample = isTemu
+  const usesTaxonomySheet = isTemu || isMathis;
+
+  const jsonExample = isTemu
     ? `[{"index":1,"category":"Women's Clothing > Tops > T-Shirts","path":"Women's Clothing > Tops > T-Shirts","confidence":0.95},...]`
+    : isMathis
+    ? `[{"index":1,"category":"Living Room > Sofas","path":"Living Room > Sofas","confidence":0.95},...]`
     : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
 
   const pathHint = isTemu
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Women's Clothing > Tops > T-Shirts")`
+    : isMathis
+    ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Living Room > Sofas" or "Seasonal > Halloween > Adult Costumes")`
     : `- path: full path e.g. "Mathis Brothers > Seasonal"`;
 
   const prompt = `${storeContext}
@@ -349,7 +387,7 @@ Products:
 ${list}
 
 Respond ONLY with a JSON array — no markdown, no explanation:
-${temuJsonExample}
+${jsonExample}
 ${rules}
 ${pathHint}
 - confidence: 0.0–1.0 (how certain you are)
@@ -358,7 +396,7 @@ ${pathHint}
   const { text } = await generateText({
     model: anthropic(model),
     prompt,
-    maxOutputTokens: isTemu ? 2500 : 2000,
+    maxOutputTokens: usesTaxonomySheet ? 2500 : 2000,
   });
 
   const fallbackCat = availableCategories?.[0] ?? "General";
@@ -387,12 +425,12 @@ ${pathHint}
                       + normCat.split(" ").filter((w) => w.length > 2 && normAllowed.includes(w)).length;
           if (score > bestScore) { bestScore = score; best = allowed; }
         }
-        const minScore = isTemu ? 4 : 2;
+        const minScore = usesTaxonomySheet ? 4 : 2;
         cat = bestScore >= minScore ? best! : "Uncategorized";
       }
     }
-    // For Temu, path should always mirror the validated leaf category
-    const path = isTemu ? cat : (r.path?.trim() || cat);
+    // For taxonomy-sheet marketplaces (Temu/Mathis), path always mirrors the validated leaf category
+    const path = usesTaxonomySheet ? cat : (r.path?.trim() || cat);
     return {
       productId: products[r.index - 1]?.id ?? "",
       category: cat,

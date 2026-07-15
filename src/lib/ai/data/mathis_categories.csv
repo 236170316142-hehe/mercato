@@ -1,0 +1,419 @@
+Category,Subcategory,Product Type
+Living Room,Sofas,
+Living Room,Sleeper Sofas,
+Living Room,Sectionals,
+Living Room,Reclining Furniture,
+Living Room,Reclining Sofas,
+Living Room,Reclining Sectionals,
+Living Room,Loveseats,
+Living Room,Recliners,
+Living Room,Accent Chairs,
+Living Room,Futons,
+Living Room,Ottomans & Poufs,
+Living Room,Coffee Tables,
+Living Room,End & Side Tables,
+Living Room,Console & Sofa Tables,
+Living Room,TV Stands,
+Living Room,Cabinets & Chests,
+Living Room,Fireplaces,
+Living Room,Living Room Sets,
+Bedroom,Beds,
+Bedroom,Headboards,
+Bedroom,Murphy Beds,
+Bedroom,Dressers & Chests,
+Bedroom,Nightstands,
+Bedroom,Armoires & Wardrobes,
+Bedroom,Benches,
+Bedroom,Vanities,
+Bedroom,Trundles & Slats,
+Bedroom,Bedroom Sets,
+Dining Room,Dining Tables,
+Dining Room,Dining Chairs,
+Dining Room,Dining Benches,
+Dining Room,Dining Sets,
+Dining Room,Bar & Pub Tables,
+Dining Room,Bar Stools,
+Dining Room,Bar Cabinets & Carts,
+Dining Room,Sideboards & Buffets,
+Dining Room,Display & China Cabinets,
+Dining Room,Kitchen Islands & Carts,
+Home Office,Desks,
+Home Office,Office Chairs,
+Home Office,Office Sets,
+Home Office,Bookcases,
+Home Office,File Cabinets,
+Home Office,Craft & Sewing Tables,
+Home Office,Laptop Carts & Stands,
+Home Office,Office Accessories,
+Home Office,Gaming,
+Mattress,Types,Traditional Mattresses
+Mattress,Types,Memory Foam Mattresses
+Mattress,Types,Hybrid Mattresses
+Mattress,Types,Gel Mattresses
+Mattress,Comfort Level,Soft
+Mattress,Comfort Level,Medium
+Mattress,Comfort Level,Firm
+Mattress,Comfort Level,Extra Firm
+Mattress,Sizes,California King
+Mattress,Sizes,King
+Mattress,Sizes,Split-Head King
+Mattress,Sizes,Queen
+Mattress,Sizes,Full
+Mattress,Sizes,Twin XL
+Mattress,Sizes,Twin
+Mattress,Sizes,Crib & Toddler
+Mattress,Mattress Accessories,Adjustable Bases
+Mattress,Mattress Accessories,Boxsprings & Foundations
+Mattress,Mattress Accessories,Bed Frames
+Mattress,Mattress Accessories,Mattress Protectors
+Mattress,Mattress Accessories,Mattress Toppers & Pads
+Mattress,Mattress Accessories,Bed Pillows
+Mattress,Mattress Accessories,Sheets & Pillowcases
+Outdoor,Outdoor Seating,Outdoor Sectionals
+Outdoor,Outdoor Seating,Outdoor Sofas
+Outdoor,Outdoor Seating,Outdoor Loveseats
+Outdoor,Outdoor Seating,Outdoor Chairs
+Outdoor,Outdoor Seating,Outdoor Benches
+Outdoor,Outdoor Seating,Outdoor Ottomans & Poufs
+Outdoor,Outdoor Seating,Outdoor Porch Swings
+Outdoor,Outdoor Sets,Outdoor Seating Sets
+Outdoor,Outdoor Sets,Outdoor Dining Sets
+Outdoor,Outdoor Sets,Outdoor Bar Sets
+Outdoor,Outdoor Sets,Outdoor Bistro Sets
+Outdoor,Outdoor Dining,Outdoor Dining Tables
+Outdoor,Outdoor Dining,Outdoor Dining Chairs
+Outdoor,Outdoor Tables,Outdoor Coffee Tables
+Outdoor,Outdoor Tables,Outdoor End & Side Tables
+Outdoor,Outdoor Tables,Fire Pit Tables
+Outdoor,Outdoor Bar,Outdoor Bar Tables
+Outdoor,Outdoor Bar,Outdoor Bar Stools
+Outdoor,Outdoor Bar,Outdoor Bars & Carts
+Outdoor,Outdoor Heating,Fire Pits
+Outdoor,Outdoor Heating,Heaters
+Outdoor,Outdoor Heating,Firewood Holders
+Outdoor,Outdoor Heating,Firepit Covers & Screens
+Outdoor,Outdoor Accessories,Outdoor Shades
+Outdoor,Outdoor Accessories,Hammocks
+Outdoor,Outdoor Accessories,Outdoor Decor
+Outdoor,Outdoor Accessories,Outdoor Throw Pillows
+Outdoor,Outdoor Accessories,Outdoor Seat Cushions
+Outdoor,Outdoor Accessories,Outdoor Furniture Covers
+Outdoor,Outdoor Accessories,Grills & Accessories
+Outdoor,Outdoor Accessories,Outdoor Games
+Outdoor,Outdoor Accessories,Storage & Organization
+Outdoor,Outdoor Accessories,Bird Houses & Accessories
+Outdoor,Outdoor Accessories,Coolers
+Outdoor,Outdoor Accessories,Outdoor Rugs
+Outdoor,Outdoor Accessories,Outdoor Lighting
+Outdoor,Outdoor Accessories,Outdoor Tableware
+Outdoor,Gardening,Garden Beds
+Outdoor,Gardening,Garden Houses & Sheds
+Outdoor,Gardening,Garden Arbors & Trellises
+Outdoor,Gardening,Garden Carts
+Outdoor,Gardening,Gardening Accessories
+Outdoor,Gardening,Potting Tables
+Outdoor,Gardening,Planters & Stands
+Baby & Kids,Nursery Furniture,Cribs
+Baby & Kids,Nursery Furniture,Cradles & Bassinets
+Baby & Kids,Nursery Furniture,Nursery Chairs
+Baby & Kids,Nursery Furniture,Changing Tables & Pads
+Baby & Kids,Nursery Furniture,Crib Mattresses
+Baby & Kids,Nursery Furniture,Conversion Kits
+Baby & Kids,Nursery Furniture,Baby Seating
+Baby & Kids,Kids Furniture,Kids Beds & Headboards
+Baby & Kids,Kids Furniture,Bunk & Loft Beds
+Baby & Kids,Kids Furniture,Daybeds
+Baby & Kids,Kids Furniture,Kids Bedroom Sets
+Baby & Kids,Kids Furniture,Kids Dressers & Chests
+Baby & Kids,Kids Furniture,Kids Nightstands
+Baby & Kids,Kids Furniture,Kids Desks
+Baby & Kids,Kids Furniture,Kids Desk Chairs
+Baby & Kids,Kids Furniture,Kids Vanities
+Baby & Kids,Kids Playroom,Montessori Inspired
+Baby & Kids,Kids Playroom,Pretend Play
+Baby & Kids,Kids Playroom,Doll Houses
+Baby & Kids,Kids Playroom,Tents & Playhouses
+Baby & Kids,Kids Playroom,Indoor Climbers & Slides
+Baby & Kids,Kids Playroom,Little Cruisers
+Baby & Kids,Kids Playroom,Rockers
+Baby & Kids,Kids Playroom,Stuffed Animals
+Baby & Kids,Kids Playroom,Kids Table & Chair Sets
+Baby & Kids,Kids Playroom,Kids Seating
+Baby & Kids,Kids Playroom,Outdoor Toys
+Baby & Kids,Kids Playroom,Step Stools
+Baby & Kids,Baby & Kids Essentials,Highchairs
+Baby & Kids,Baby & Kids Essentials,Plates & Utensils
+Baby & Kids,Baby & Kids Essentials,Food Storage
+Baby & Kids,Baby & Kids Essentials,Backpacks
+Baby & Kids,Baby & Kids Essentials,Humidifiers
+Baby & Kids,Baby & Kids Essentials,Dehumidifiers
+Baby & Kids,Baby & Kids Essentials,Air Purifiers
+Baby & Kids,Baby & Kids Decor,Baby & Kids Celebrations
+Baby & Kids,Baby & Kids Decor,Baby & Kids Rugs
+Baby & Kids,Baby & Kids Decor,Baby & Kids Lighting
+Baby & Kids,Baby & Kids Decor,Baby & Kids Art
+Baby & Kids,Baby & Kids Decor,Decorative Accents
+Baby & Kids,Bedding,Baby Bedding
+Baby & Kids,Bedding,Kids Bedding
+Baby & Kids,Bedding,Swaddles
+Baby & Kids,Bedding,Bibs & Burp Cloths
+Baby & Kids,Baby & Kids Storage,Toy Storage
+Baby & Kids,Baby & Kids Storage,Baby & Kids Bookcases
+Baby & Kids,Baby & Kids Storage,Trundles
+Baby & Kids,Kids' Costumes,Infant & Toddler Costumes
+Baby & Kids,Kids' Costumes,Child Costumes
+Rugs,Rooms,Living Room Rugs
+Rugs,Rooms,Bedroom Rugs
+Rugs,Rooms,Baby & Kids Rugs
+Rugs,Rooms,Hallway & Stair Rugs
+Rugs,Rooms,Dining Room Rugs
+Rugs,Rooms,Office Rugs
+Rugs,Rooms,Outdoor Rugs
+Rugs,Rooms,Bath & Kitchen Rugs
+Rugs,Rooms,Utility Rugs
+Rugs,Styles,Traditional
+Rugs,Styles,Transitional
+Rugs,Styles,Contemporary & Modern
+Rugs,Styles,Solid
+Rugs,Styles,Earthy Tones
+Rugs,Styles,Geometric
+Rugs,Styles,Natural Textures
+Rugs,Styles,Tufted Textures
+Rugs,Styles,Organic Shapes
+Rugs,Styles,Indoor Outdoor Rugs
+Rugs,Sizes & Shapes,Oversized
+Rugs,Sizes & Shapes,10' x 14'
+Rugs,Sizes & Shapes,9' x 12'
+Rugs,Sizes & Shapes,8' x 10'
+Rugs,Sizes & Shapes,6' x 9'
+Rugs,Sizes & Shapes,5' x 7'
+Rugs,Sizes & Shapes,4' x 6'
+Rugs,Sizes & Shapes,3' x 5'
+Rugs,Sizes & Shapes,Runner
+Rugs,Sizes & Shapes,Square
+Rugs,Sizes & Shapes,Round & Oval
+Rugs,Accessories,Rug Pads
+Bedding & Bath,Bed Linens,Sheets & Pillowcases
+Bedding & Bath,Bed Linens,Pillow Shams & Euro Shams
+Bedding & Bath,Bed Linens,Quilts & Coverlets
+Bedding & Bath,Bed Linens,Blankets & Throws
+Bedding & Bath,Bed Linens,Comforters & Sets
+Bedding & Bath,Bed Linens,Duvet Covers & Sets
+Bedding & Bath,Bed Linens,Decorative Pillows
+Bedding & Bath,Bedding Essentials,Bed Pillows
+Bedding & Bath,Bedding Essentials,Duvet Inserts
+Bedding & Bath,Bedding Essentials,Mattress Protectors
+Bedding & Bath,Bedding Essentials,Mattress Toppers & Pads
+Bedding & Bath,Bath Linens,Bath Towels
+Bedding & Bath,Bath Linens,Bath Robes
+Bedding & Bath,Bath Linens,Bath Rugs & Mats
+Bedding & Bath,Bath Accessories,Countertop Accessories
+Bedding & Bath,Bath Accessories,Bathroom Mirrors
+Bedding & Bath,Bath Accessories,Hampers & Wastebaskets
+Bedding & Bath,Bath Accessories,Shower Curtains & Liners
+Bedding & Bath,Bath Accessories,Shower Rods & Hooks
+Bedding & Bath,Bath Accessories,Storage & Organization
+Bedding & Bath,Bath Furniture,Vanities
+Bedding & Bath,Bath Furniture,Bathroom Cabinets
+Bedding & Bath,Bath Furniture,Bathroom Shelving
+Bedding & Bath,Bath Furniture,Bathroom Benches
+Bedding & Bath,Bathroom Hardware,Shower Heads
+Bedding & Bath,Bathroom Hardware,Shower Faucets
+Bedding & Bath,Bathroom Hardware,Bathtub & Shower Faucets
+Bedding & Bath,Bathroom Hardware,Bathroom Sink Faucets
+Bedding & Bath,Bathroom Hardware,Bathtub Faucets
+Bedding & Bath,Dorm Essentials,Dorm Bedding & Pillows & Throws
+Bedding & Bath,Dorm Essentials,Dorm Furniture
+Bedding & Bath,Dorm Essentials,Dorm Decor & Lighting
+Bedding & Bath,Dorm Essentials,Study Area
+Bedding & Bath,Dorm Essentials,Break Station
+Bedding & Bath,Dorm Essentials,Dorm Storage & Organization
+Bedding & Bath,Dorm Essentials,Dorm Bath
+Decor,Wall Art & Decor,Prints
+Decor,Wall Art & Decor,Photography
+Decor,Wall Art & Decor,Paintings
+Decor,Wall Art & Decor,One of a Kind
+Decor,Wall Art & Decor,Oversized Wall Art
+Decor,Wall Art & Decor,Wall Panels
+Decor,Wall Art & Decor,Wall Accents
+Decor,Wall Art & Decor,Display Shelves
+Decor,Wall Art & Decor,Tapestries
+Decor,Wall Art & Decor,Wallpaper & Decals
+Decor,Flowers & Plants,Faux Plants
+Decor,Flowers & Plants,Faux Flowers
+Decor,Flowers & Plants,Faux Trees
+Decor,Flowers & Plants,Faux Stems
+Decor,Flowers & Plants,Wreaths
+Decor,Flowers & Plants,Garlands & Swag
+Decor,Flowers & Plants,Faux Panels
+Decor,Flowers & Plants,Fresh Flowers
+Decor,Flowers & Plants,Live Plants
+Decor,Flowers & Plants,Indoor Planters
+Decor,Accents,Mirrors
+Decor,Accents,Vases & Jars & Bottles & Urns
+Decor,Accents,Baskets
+Decor,Accents,Boxes
+Decor,Accents,Trays & Bowls
+Decor,Accents,Tissue Holders
+Decor,Accents,Clocks
+Decor,Accents,Picture Frames
+Decor,Accents,Easels
+Decor,Accents,Pedestals
+Decor,Accents,Candles & Holders
+Decor,Accents,Fragrances & Diffusers
+Decor,Accents,Bookends
+Decor,Accents,Decorative Books
+Decor,Accents,Magazine Holders
+Decor,Accents,Chains & Crystals & Spheres
+Decor,Accents,Globes
+Decor,Accents,Hooks & Pegs
+Decor,Accents,Signs
+Decor,Accents,Ladders
+Decor,Accents,Slipcovers
+Decor,Accents,Decorative Screens
+Decor,Accents,Games
+Decor,Accents,Indoor Fountains
+Decor,Sculptures,Busts
+Decor,Sculptures,Statues
+Decor,Sculptures,Figurines
+Decor,Sculptures,Fruit Sculptures
+Decor,Sculptures,Animal Sculptures
+Decor,Sculptures,Shape Sculptures
+Decor,Sculptures,Vehicle Sculptures
+Decor,Sculptures,Nature Sculptures
+Decor,Pillows & Throws,Throw Pillows
+Decor,Pillows & Throws,Blankets & Throws
+Decor,Pets,Pet Beds
+Decor,Pets,Pet Toys
+Decor,Pets,Pet Travel Accessories
+Decor,Pets,Pet Furniture
+Decor,Pets,Pet Supplies
+Decor,Pets,Cat Trees & Scratchers
+Decor,Pets,Pet Outdoor Essentials
+Decor,Pets,Fish & Aquatic Pets
+Decor,Pets,Farm Animals
+Decor,Pets,Small Animals
+Lighting,Table & Floor Lamps,Table Lamps
+Lighting,Table & Floor Lamps,Floor Lamps
+Lighting,Table & Floor Lamps,Desk Lamps
+Lighting,Table & Floor Lamps,Baby & Kids Lamps
+Lighting,Table & Floor Lamps,Lamp Sets
+Lighting,Table & Floor Lamps,Lamp Shades
+Lighting,Ceiling Lights,Pendants
+Lighting,Ceiling Lights,Chandeliers
+Lighting,Ceiling Lights,Flush Mount Lighting
+Lighting,Wall Lights,Sconces
+Lighting,Wall Lights,Picture Lights
+Lighting,Wall Lights,Night Lights
+Lighting,Wall Lights,Swing Arm Wall Sconces
+Lighting,Wall Lights,Vanity Lights
+Lighting,Ceiling Fans,Indoor Fans
+Lighting,Ceiling Fans,Outdoor Fans
+Lighting,Ceiling Fans,Ceiling Fan Shades
+Lighting,Outdoor Lights,Outdoor Wall Lighting
+Lighting,Outdoor Lights,Outdoor Ceiling Lights
+Lighting,Outdoor Lights,Lanterns & Lamps
+Lighting,Outdoor Lights,String Lights
+Lighting,Outdoor Lights,Decorative Lights
+Lighting,Outdoor Lights,Deck Lighting
+Lighting,Novelty,Light Signs
+Lighting,Novelty,Lighted Figurines
+Kitchen,Tabletop & Bar,Dinnerware
+Kitchen,Tabletop & Bar,Party Sets
+Kitchen,Tabletop & Bar,Drinkware
+Kitchen,Tabletop & Bar,Serveware
+Kitchen,Tabletop & Bar,Flatware & Cutlery
+Kitchen,Tabletop & Bar,Steak Knives
+Kitchen,Tabletop & Bar,Serving Tools
+Kitchen,Tabletop & Bar,Cocktail & Bar
+Kitchen,Tabletop & Bar,Dining Accessories
+Kitchen,Tabletop & Bar,Table Linens
+Kitchen,Cookware & Bakeware,Cookware Sets
+Kitchen,Cookware & Bakeware,Pots & Pans
+Kitchen,Cookware & Bakeware,Dutch Ovens & Braisers
+Kitchen,Cookware & Bakeware,Grill Pans & Griddles
+Kitchen,Cookware & Bakeware,Specialty Cookware
+Kitchen,Cookware & Bakeware,Bakeware Sets
+Kitchen,Cookware & Bakeware,Baking Dishes
+Kitchen,Cookware & Bakeware,Baking Sheets & Pans
+Kitchen,Cookware & Bakeware,Specialty Bakeware
+Kitchen,Cookware & Bakeware,Tea Kettles
+Kitchen,Kitchen Tools,Knives & Cutting Boards
+Kitchen,Kitchen Tools,Tools & Utensils
+Kitchen,Kitchen Tools,Food Prep
+Kitchen,Kitchen Tools,Storage & Organization
+Kitchen,Electrics,Blenders & Juicers
+Kitchen,Electrics,Toasters & Toaster Ovens
+Kitchen,Electrics,Mixers & Attachments
+Kitchen,Electrics,Deep Fryers & Air Fryers
+Kitchen,Electrics,Food Processors
+Kitchen,Electrics,Slow Cookers & Multi Cookers
+Kitchen,Electrics,Microwaves
+Kitchen,Electrics,Coffee & Espresso Makers
+Kitchen,Electrics,Wine Fridges
+Kitchen,Electrics,Specialty Electrics
+Kitchen,Kitchen Furniture,Wine Racks
+Kitchen,Kitchen Furniture,Bakers Racks
+Kitchen,Kitchen Furniture,Food Pantries
+Kitchen,Kitchen Furniture,Islands & Carts
+Storage,Entryway,Console & Sofa Tables
+Storage,Entryway,Entryway Benches
+Storage,Entryway,Entryway Storage
+Storage,Entryway,Coat Racks
+Storage,Entryway,Hall Trees
+Storage,Closet,Drawer Organization
+Storage,Closet,Shelf Organization
+Storage,Closet,Closet Systems
+Storage,Closet,Bins & Baskets
+Storage,Closet,Hanging Organization
+Storage,Closet,Jewelry Organization
+Storage,Closet,Shoe Storage
+Storage,Closet,Underbed Storage
+Storage,Bathroom,Cabinet Organization
+Storage,Bathroom,Countertop Organization
+Storage,Bathroom,Bins & Baskets
+Storage,Bathroom,Caddies & Totes
+Storage,Bathroom,Makeup Organizers
+Storage,Bathroom,Organization Carts
+Storage,Bathroom,Shelf Organization
+Storage,Bathroom,Toilet Paper Holders
+Storage,Bathroom,Step Stools
+Storage,Kitchen,Trashcans
+Storage,Kitchen,Bar & Beverage
+Storage,Kitchen,Cabinet Organization
+Storage,Kitchen,Countertop Organization
+Storage,Kitchen,Dish & Drying Racks
+Storage,Kitchen,Drawer Organization
+Storage,Kitchen,Food Storage
+Storage,Kitchen,Pantry Organization
+Storage,Kitchen,Sink Organization
+Storage,Laundry & Cleaning,Drying Racks
+Storage,Laundry & Cleaning,Holders & Dispensers
+Storage,Laundry & Cleaning,Laundry Storage
+Storage,Garage,Shelving & Storage Racks
+Storage,Garage,Tool Storage
+Storage,Garage,Work Benches
+Storage,Office,Desktop Organization
+Storage,Office,Hanging Organization
+Storage,Baby & Kids,Boxes & Benches
+Storage,Baby & Kids,Kids Closet Organizers
+Storage,Baby & Kids,Toy Organizers
+Storage,Outdoor,Patio Storage
+Storage,Outdoor,Sheds
+Storage,Specialty,Craft Organizers
+Storage,Specialty,Pet Storage
+Storage,Specialty,Travel Organization
+Seasonal,Christmas,Christmas Trees
+Seasonal,Christmas,Ornaments
+Seasonal,Christmas,Christmas Decor
+Seasonal,Christmas,Holiday Lights
+Seasonal,Christmas,Wreaths & Garlands
+Seasonal,Halloween,Adult Costumes
+Seasonal,Halloween,Teen Costumes
+Seasonal,Halloween,Costume Accessories
+Seasonal,Halloween,Wigs & Masks
+Seasonal,Halloween,Halloween Decor
+Seasonal,Thanksgiving,Thanksgiving Decor
+Seasonal,Valentines Day,Valentines Decor
+Seasonal,Easter,Easter Decor
+Seasonal,Fourth of July,Fourth of July Decor
