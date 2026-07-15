@@ -65,8 +65,7 @@ Format: [{"id":"<id>","title":"<title>"}, ...]
 
 Products:
 ${JSON.stringify(input, null, 2)}`,
-        maxTokens: 1500,
-        temperature: 0.3,
+        maxOutputTokens: 1500,
       });
 
       const match = text.match(/\[[\s\S]*\]/);
