@@ -1,0 +1,66 @@
+import { readFileSync } from "fs";
+import { join } from "path";
+
+/** Full Temu path: "Category > Subcategory > Sub-Subcategory" */
+export type TemuCategoryPath = string;
+
+let cachedPaths: TemuCategoryPath[] | null = null;
+let cachedPromptBlock: string | null = null;
+
+function csvPath(): string {
+  return join(process.cwd(), "src/lib/ai/data/temu_categories.csv");
+}
+
+/** Load and cache every leaf path from temu_categories.csv. */
+export function loadTemuCategoryPaths(): TemuCategoryPath[] {
+  if (cachedPaths) return cachedPaths;
+
+  const raw = readFileSync(csvPath(), "utf8");
+  const paths: TemuCategoryPath[] = [];
+
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.toLowerCase().startsWith("category,")) continue;
+
+    // Simple CSV split — fields have no embedded commas in this file
+    const cols = trimmed.split(",").map((c) => c.trim());
+    const [category, subcategory, subSub] = cols;
+    if (!category || !subcategory || !subSub) continue;
+    paths.push(`${category} > ${subcategory} > ${subSub}`);
+  }
+
+  if (paths.length === 0) {
+    throw new Error("temu_categories.csv is empty or could not be parsed");
+  }
+
+  cachedPaths = paths;
+  return cachedPaths;
+}
+
+/**
+ * Format the taxonomy for the Claude prompt, grouped by top-level category
+ * so the model can scan it efficiently (~420 leaf paths).
+ */
+export function formatTemuTaxonomyForPrompt(): string {
+  if (cachedPromptBlock) return cachedPromptBlock;
+
+  const paths = loadTemuCategoryPaths();
+  const byTop = new Map<string, string[]>();
+
+  for (const path of paths) {
+    const top = path.split(" > ")[0] ?? path;
+    const rest = path.slice(top.length + 3); // after "Top > "
+    if (!byTop.has(top)) byTop.set(top, []);
+    byTop.get(top)!.push(rest);
+  }
+
+  const lines: string[] = [];
+  for (const [top, leaves] of byTop) {
+    lines.push(`${top}:`);
+    lines.push(leaves.map((l) => `  - ${top} > ${l}`).join("\n"));
+    lines.push("");
+  }
+
+  cachedPromptBlock = lines.join("\n").trim();
+  return cachedPromptBlock;
+}

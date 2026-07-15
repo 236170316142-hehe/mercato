@@ -1,5 +1,6 @@
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { formatTemuTaxonomyForPrompt, loadTemuCategoryPaths } from "@/lib/ai/temu-taxonomy";
 
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -101,11 +102,19 @@ export async function categorizeProducts(
   const isMathis = mpLower === "mathis";
   const isBestBuyTop = mpLower === "bestbuy";
   const isTemuTop = mpLower === "temu";
-  // Constrained mode = template names drive the allowed category list (Mathis always; Temu/Best Buy when templates uploaded)
+
+  // Temu always uses the official taxonomy from temu_categories.csv (not export template names).
+  // Claude is given the full sheet + product details and must pick an exact leaf path.
+  if (isTemuTop) {
+    availableCategories = loadTemuCategoryPaths();
+  }
+
+  // Constrained mode = AI must pick from a fixed list (Mathis / Best Buy templates; Temu CSV taxonomy)
   const isConstrained = (isMathis || isBestBuyTop || isTemuTop) && !!availableCategories?.length;
 
   // Smaller batches for constrained-category marketplaces so the AI reasons carefully per product.
-  const BATCH = isConstrained ? 8 : 20;
+  // Temu has ~420 leaf paths — keep batches small so the taxonomy fits with product context.
+  const BATCH = isTemuTop ? 5 : isConstrained ? 8 : 20;
   const PARALLEL = isConstrained ? 2 : 3;
 
   const model = availableCategories?.length
@@ -233,47 +242,25 @@ async function categorizeBatchWithContext(
   }).join("\n");
 
   let categorySection: string;
-  if (availableCategories?.length) {
+  if (isTemu && availableCategories?.length) {
+    // Full taxonomy from temu_categories.csv — Claude must copy an exact leaf path
+    const taxonomy = formatTemuTaxonomyForPrompt();
+    categorySection = strictMode
+      ? `EXACTLY one leaf path from this Temu taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory"):
+
+${taxonomy}
+
+If nothing fits, use "Uncategorized".`
+      : `exactly one leaf path from this Temu taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory", e.g. "Women's Clothing > Tops > T-Shirts"):
+
+${taxonomy}
+
+If nothing fits, use "Uncategorized".`;
+  } else if (availableCategories?.length) {
     const guide = buildCategoryGuide(availableCategories);
     categorySection = strictMode
       ? `EXACTLY one of these categories (copy the name character-for-character):\n${availableCategories.map((c) => `- ${c}`).join("\n")}`
       : `exactly one of these categories:\n${availableCategories.map((c) => `- ${c}`).join("\n")}\n\nCategory guide:\n${guide}`;
-  } else if (isTemu) {
-    categorySection = `the most specific matching Temu category path (Category > Subcategory > Product Type) from Temu's real taxonomy:
-
-Women's Clothing: Tops > T-Shirts | Tops > Blouses & Shirts | Tops > Hoodies & Sweatshirts | Tops > Bodysuits | Dresses > Casual Dresses | Dresses > Formal & Evening Dresses | Dresses > Mini Dresses | Dresses > Maxi Dresses | Bottoms > Pants & Trousers | Bottoms > Jeans | Bottoms > Shorts | Bottoms > Skirts | Bottoms > Leggings | Outerwear > Jackets & Coats | Outerwear > Blazers | Swimwear > Bikinis | Swimwear > One-Piece Swimsuits | Lingerie & Sleepwear > Bras | Lingerie & Sleepwear > Underwear | Lingerie & Sleepwear > Pajamas & Nightwear | Activewear > Sports Bras | Activewear > Yoga Pants | Activewear > Athletic Sets | Sets & Co-ords > Matching Sets | Costumes & Cosplay > Halloween Costumes | Costumes & Cosplay > Cosplay Costumes
-
-Men's Clothing: Tops > T-Shirts | Tops > Shirts & Polos | Tops > Hoodies & Sweatshirts | Tops > Sweaters | Bottoms > Pants & Trousers | Bottoms > Jeans | Bottoms > Shorts | Outerwear > Jackets & Coats | Outerwear > Vests | Swimwear > Swim Trunks | Activewear > Athletic Tops | Activewear > Athletic Bottoms | Underwear & Lounge > Underwear | Underwear & Lounge > Sleepwear | Costumes & Cosplay > Halloween Costumes
-
-Kids' Fashion: Girls' Clothing > Dresses | Girls' Clothing > Tops | Girls' Clothing > Pants & Leggings | Boys' Clothing > Tops | Boys' Clothing > Pants & Shorts | Baby & Toddler > Onesies & Rompers | Baby & Toddler > Sets | Baby & Toddler > Sleepwear | Kids' Costumes > Halloween Costumes | Kids' Costumes > Dress-Up
-
-Shoes: Women's Shoes > Heels | Women's Shoes > Flats | Women's Shoes > Sneakers | Women's Shoes > Sandals | Women's Shoes > Boots | Women's Shoes > Slippers | Men's Shoes > Sneakers | Men's Shoes > Loafers & Dress Shoes | Men's Shoes > Boots | Men's Shoes > Sandals | Kids' Shoes > Girls' Shoes | Kids' Shoes > Boys' Shoes
-
-Bags & Luggage: Handbags > Shoulder Bags | Handbags > Tote Bags | Handbags > Clutches | Crossbody Bags | Backpacks | Wallets & Cardholders | Luggage & Travel Bags > Suitcases | Luggage & Travel Bags > Duffel Bags | Fanny Packs & Belt Bags
-
-Jewelry & Accessories: Necklaces | Earrings > Stud Earrings | Earrings > Hoop Earrings | Earrings > Drop & Dangle Earrings | Bracelets & Bangles | Rings | Anklets | Watches > Women's Watches | Watches > Men's Watches | Sunglasses & Eyewear | Hats & Caps > Baseball Caps | Hats & Caps > Beanies | Scarves & Wraps | Belts | Hair Accessories > Clips & Pins | Hair Accessories > Headbands | Hair Accessories > Scrunchies | Gloves & Mittens | Socks & Hosiery
-
-Beauty & Health: Skincare > Serums & Essences | Skincare > Moisturizers & Creams | Skincare > Cleansers & Toners | Skincare > Face Masks | Skincare > Sunscreen | Makeup > Foundation & Concealer | Makeup > Lipstick & Lip Gloss | Makeup > Eyeshadow | Makeup > Mascara & Eyeliner | Makeup > Blush & Bronzer | Makeup > Makeup Brushes & Tools | Hair Care > Shampoo & Conditioner | Hair Care > Hair Masks & Treatments | Hair Care > Styling Tools | Hair Care > Hair Extensions & Wigs | Nail Care > Nail Polish | Nail Care > Nail Art Supplies | Nail Care > Nail Tools | Fragrances & Perfumes | Personal Care > Body Wash & Soap | Personal Care > Deodorant | Personal Care > Razors & Shavers | Health & Wellness > Vitamins & Supplements | Health & Wellness > Massagers & Relaxation | Oral Care > Toothbrushes | Oral Care > Teeth Whitening
-
-Home & Kitchen: Bedding > Comforters & Duvets | Bedding > Sheet Sets | Bedding > Pillows & Pillowcases | Bedding > Mattress Covers | Bath > Towels | Bath > Bath Mats | Bath > Shower Curtains | Bath > Bathroom Accessories | Kitchen & Dining > Cookware | Kitchen & Dining > Bakeware | Kitchen & Dining > Kitchen Utensils & Gadgets | Kitchen & Dining > Dinnerware & Plates | Kitchen & Dining > Glasses & Drinkware | Kitchen & Dining > Food Storage & Containers | Home Decor > Wall Art & Posters | Home Decor > Candles & Holders | Home Decor > Vases & Decorative Objects | Home Decor > Throw Pillows & Blankets | Home Decor > Rugs & Mats | Home Decor > Mirrors | Storage & Organization > Closet Organizers | Storage & Organization > Drawer Organizers | Storage & Organization > Storage Boxes & Bins | Storage & Organization > Shelving Units | Furniture > Chairs | Furniture > Tables | Furniture > Desks | Furniture > Shelves & Bookcases | Garden & Outdoor > Planters & Pots | Garden & Outdoor > Garden Tools | Garden & Outdoor > Outdoor Decor | Lighting > LED Strip Lights | Lighting > String Lights | Lighting > Desk Lamps | Lighting > Night Lights | Cleaning > Mops & Brooms | Cleaning > Cleaning Brushes & Scrubbers | Cleaning > Laundry Accessories
-
-Electronics: Phone Accessories > Phone Cases & Covers | Phone Accessories > Screen Protectors | Phone Accessories > Chargers & Cables | Phone Accessories > Phone Holders & Stands | Computers & Tablets > Laptop Accessories | Computers & Tablets > Tablet Cases | Computers & Tablets > Keyboards & Mice | Audio > Earbuds & In-Ear Headphones | Audio > Headphones | Audio > Bluetooth Speakers | Cameras & Photography > Camera Accessories | Cameras & Photography > Ring Lights | Cameras & Photography > Tripods & Stabilizers | Smart Home > Smart Bulbs | Smart Home > Smart Plugs | Smart Home > Security Cameras | Wearables > Smartwatches | Wearables > Fitness Trackers | Gaming > Gaming Controllers | Gaming > Gaming Headsets | Gaming > Gaming Accessories | TV Accessories > TV Mounts | TV Accessories > Streaming Devices | Power & Batteries > Power Banks | Power & Batteries > Surge Protectors & Extension Cords
-
-Sports & Outdoors: Exercise & Fitness > Dumbbells & Weights | Exercise & Fitness > Resistance Bands | Exercise & Fitness > Yoga Mats | Exercise & Fitness > Jump Ropes | Exercise & Fitness > Ab Rollers | Outdoor Recreation > Camping Gear | Outdoor Recreation > Hiking Accessories | Outdoor Recreation > Cycling Accessories | Team Sports > Basketball Accessories | Team Sports > Soccer Accessories | Water Sports > Swimming Accessories | Water Sports > Beach Accessories | Sports Apparel > Athletic Tops | Sports Apparel > Athletic Bottoms | Sports Accessories > Water Bottles | Sports Accessories > Sports Bags
-
-Toys & Games: Action Figures & Collectibles | Dolls & Stuffed Animals > Plush Toys | Dolls & Stuffed Animals > Dolls | Building Toys > Building Blocks | Building Toys > Model Kits | Board Games & Card Games | Puzzles | Educational Toys > STEM Toys | Educational Toys > Learning Toys | Ride-On Toys > Scooters | Ride-On Toys > Electric Ride-Ons | Arts & Crafts > Craft Kits | Arts & Crafts > Drawing & Painting | Outdoor Play > Balls | Outdoor Play > Bubbles & Blowers | Remote Control Toys
-
-Pet Supplies: Dog Supplies > Dog Collars & Leashes | Dog Supplies > Dog Beds & Furniture | Dog Supplies > Dog Toys | Dog Supplies > Dog Grooming | Dog Supplies > Dog Clothing & Accessories | Cat Supplies > Cat Toys | Cat Supplies > Cat Beds | Cat Supplies > Litter & Accessories | Cat Supplies > Cat Grooming | Small Animal Supplies | Bird Supplies | Fish & Aquatics | Pet Apparel
-
-Automotive: Car Electronics > Dash Cams | Car Electronics > Car Chargers | Car Electronics > GPS & Navigation | Car Accessories > Seat Covers | Car Accessories > Car Floor Mats | Car Accessories > Air Fresheners | Car Care > Car Cleaning Kits | Tools & Equipment
-
-Tools & Home Improvement: Power Tools | Hand Tools | Hardware & Fasteners | Electrical > Extension Cords | Electrical > Smart Plugs | Plumbing | Painting Supplies | Safety & Security
-
-Office & School Supplies: Stationery > Pens & Pencils | Stationery > Notebooks & Journals | Art Supplies > Markers & Highlighters | Art Supplies > Paints & Canvases | Organization > Binders & Folders | Backpacks & Bags
-
-Party & Seasonal: Party Decorations > Balloons & Banners | Party Decorations > Table Decorations | Halloween > Halloween Costumes | Halloween > Halloween Decorations | Halloween > Halloween Props & Accessories | Christmas > Christmas Ornaments | Christmas > Christmas Lights | Christmas > Christmas Decorations | Valentine's Day | Easter | Birthday Supplies
-
-Output the category as: "Category > Subcategory > Product Type" (e.g. "Women's Clothing > Tops > T-Shirts")`;
   } else if (isBestBuy) {
     categorySection = `the most specific matching Best Buy category path (Category > Subcategory > Product Type) from Best Buy's real taxonomy:
 
@@ -318,7 +305,7 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers
   const storeContext = isMathis
     ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer that sells furniture, mattresses, rugs, bedding, home decor, lighting, AND seasonal/holiday items including Halloween costumes for all ages."
     : isTemu
-    ? "You are a product categorization expert for Temu, a global e-commerce marketplace. Temu organizes products by Category > Subcategory > Product Type. Match each product to the most specific product type available in the provided list."
+    ? "You are a product categorization expert for Temu, a global e-commerce marketplace. You are given Temu's official category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet."
     : isBestBuy
     ? "You are a product categorization expert for Best Buy, a major US consumer electronics and appliance retailer. Best Buy organizes products by Category > Subcategory > Product Type. Match each product to the most specific product type that matches Best Buy's real taxonomy."
     : "You are a product categorization expert for a major retail marketplace.";
@@ -344,6 +331,14 @@ RULES:
 4. Use all available information: product name, brand, description, vendor category, web context
 5. If the product name includes a size, use it as a strong signal for age/audience${mathisSizeRule}` : "";
 
+  const temuJsonExample = isTemu
+    ? `[{"index":1,"category":"Women's Clothing > Tops > T-Shirts","path":"Women's Clothing > Tops > T-Shirts","confidence":0.95},...]`
+    : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
+
+  const pathHint = isTemu
+    ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Women's Clothing > Tops > T-Shirts")`
+    : `- path: full path e.g. "Mathis Brothers > Seasonal"`;
+
   const prompt = `${storeContext}
 
 ${reasoningInstruction}
@@ -354,16 +349,16 @@ Products:
 ${list}
 
 Respond ONLY with a JSON array — no markdown, no explanation:
-[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]
+${temuJsonExample}
 ${rules}
-- path: full path e.g. "Mathis Brothers > Seasonal"
+${pathHint}
 - confidence: 0.0–1.0 (how certain you are)
 - Return exactly ${products.length} items in the same order as the product list`;
 
   const { text } = await generateText({
     model: anthropic(model),
     prompt,
-    maxOutputTokens: 2000,
+    maxOutputTokens: isTemu ? 2500 : 2000,
   });
 
   const fallbackCat = availableCategories?.[0] ?? "General";
@@ -372,23 +367,36 @@ ${rules}
   const mapResult = (r: { index: number; category: string; path: string; confidence: number }) => {
     let cat = r.category?.trim() ?? "";
     if (allowedSet && !allowedSet.has(cat)) {
-      // AI returned something slightly off — try word-overlap mapping before giving up
-      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      const normCat = norm(cat);
-      let best: string | null = null;
-      let bestScore = 0;
-      for (const allowed of availableCategories ?? []) {
-        const normAllowed = norm(allowed);
-        const score = normAllowed.split(" ").filter(w => w.length > 2 && normCat.includes(w)).length
-                    + normCat.split(" ").filter(w => w.length > 2 && normAllowed.includes(w)).length;
-        if (score > bestScore) { bestScore = score; best = allowed; }
+      // Normalize spacing around ">" then try case-insensitive exact match
+      const compact = (s: string) => s.replace(/\s*>\s*/g, " > ").replace(/\s+/g, " ").trim();
+      const compactCat = compact(cat);
+      const ciMatch = (availableCategories ?? []).find(
+        (a) => a.toLowerCase() === compactCat.toLowerCase(),
+      );
+      if (ciMatch) {
+        cat = ciMatch;
+      } else {
+        // Word-overlap fallback — require a stronger score for long Temu paths
+        const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const normCat = norm(cat);
+        let best: string | null = null;
+        let bestScore = 0;
+        for (const allowed of availableCategories ?? []) {
+          const normAllowed = norm(allowed);
+          const score = normAllowed.split(" ").filter((w) => w.length > 2 && normCat.includes(w)).length
+                      + normCat.split(" ").filter((w) => w.length > 2 && normAllowed.includes(w)).length;
+          if (score > bestScore) { bestScore = score; best = allowed; }
+        }
+        const minScore = isTemu ? 4 : 2;
+        cat = bestScore >= minScore ? best! : "Uncategorized";
       }
-      cat = bestScore >= 2 ? best! : "Uncategorized";
     }
+    // For Temu, path should always mirror the validated leaf category
+    const path = isTemu ? cat : (r.path?.trim() || cat);
     return {
       productId: products[r.index - 1]?.id ?? "",
       category: cat,
-      path: r.path?.trim() || cat,
+      path,
       confidence: r.confidence ?? 0.5,
     };
   };
