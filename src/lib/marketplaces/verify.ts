@@ -75,11 +75,16 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
   const isUrl = (v: string | undefined): v is string => !!v && v.startsWith("http");
   const nameById = new Map(products.map((p) => [p.id, p.name]));
 
-  const targets: { result: VerifyResult; field: FieldResult }[] = [];
+  type Target = { result: VerifyResult; field: FieldResult; liveImageUrl: string };
+  const targets: Target[] = [];
   for (const r of results) {
     const field = r.fields.find((f) => f.field === "images");
-    if (!field || !isUrl(field.stored) || !isUrl(field.live)) continue;
-    targets.push({ result: r, field });
+    if (!field || !isUrl(field.stored)) continue;
+    // Use the actual image URL from liveData — field.live may be a product page URL (Walmart)
+    const liveImages = Array.isArray(r.liveData.images) ? r.liveData.images as string[] : [];
+    const liveImageUrl = liveImages.find(isUrl);
+    if (!liveImageUrl) continue;
+    targets.push({ result: r, field, liveImageUrl });
   }
   if (!targets.length) return;
 
@@ -87,11 +92,14 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
   const verdicts = await compareProductImagesBatch(
     targets.map((t) => ({
       vendorImageUrl: t.field.stored,
-      liveImageUrl: t.field.live,
+      liveImageUrl: t.liveImageUrl,
       productName: nameById.get(t.result.productId) ?? "",
     })),
   );
 
+  // Same hard/soft field logic as compareToLive: soft fields (images, description,
+  // dimensions) showing "warning" must not alone push overall status to "warning".
+  const HARD_FIELDS = new Set(["title", "brand", "model"]);
   targets.forEach((t, i) => {
     const v = verdicts[i];
     if (v.verdict === "match") {
@@ -108,10 +116,10 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
         ? `AI visual check: images differ — ${v.reason}`
         : `Needs manual review — ${v.reason}`;
 
-    // Recompute the overall status from the updated field severities.
+    // Recompute overall status with HARD_FIELDS awareness.
     const hasMismatch = t.result.fields.some((f) => f.severity === "mismatch");
-    const hasWarning = t.result.fields.some((f) => f.severity === "warning");
-    t.result.status = hasMismatch ? "mismatch" : hasWarning ? "warning" : "ok";
+    const hasHardWarning = t.result.fields.some((f) => f.severity === "warning" && HARD_FIELDS.has(f.field));
+    t.result.status = hasMismatch ? "mismatch" : hasHardWarning ? "warning" : "ok";
   });
 }
 
@@ -1045,7 +1053,10 @@ export function extractModelNumber(vendorData: unknown): string | null {
     if (MODEL_NUMBER_KEYS.includes(norm(k))) {
       if (v && typeof v === "string") {
         const val = v.trim();
-        if (val && !val.startsWith("http")) return val;
+        // Require at least one digit or separator character so that plain vehicle/product
+        // names like "Tacoma" (from a "Compatible Model" column) are not mistaken for
+        // part numbers. Real model numbers (6200-0056, B2-19FC, AX.1000) always have one.
+        if (val && !val.startsWith("http") && (/\d/.test(val) || /[-_\/\.]/.test(val))) return val;
       }
     }
   }
