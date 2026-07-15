@@ -92,15 +92,15 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  // Mathis, Best Buy, and Temu: constrain AI to uploaded template names so each product lands in
-  // a category that has a matching export template. All other marketplaces use their standard
-  // taxonomy freely — templates are chosen by the user at export time, not categorization time.
+  // Mathis & Best Buy: constrain AI to uploaded template names so each product lands in
+  // a category that has a matching export template.
+  // Temu: always uses temu_categories.csv taxonomy inside categorizeProducts (not templates).
+  // All other marketplaces use their standard taxonomy freely.
   const mpLower = project.marketplace.toLowerCase();
   const isMathis = mpLower === "mathis";
   const isBestBuy = mpLower === "bestbuy";
-  const isTemu = mpLower === "temu";
   let availableCategories: string[] = [];
-  if (isMathis || isBestBuy || isTemu) {
+  if (isMathis || isBestBuy) {
     const marketplaceTemplates = await prisma.exportTemplate.findMany({
       where: {
         marketplace: { equals: project.marketplace, mode: "insensitive" },
@@ -148,7 +148,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     await prisma.project.update({ where: { id }, data: { status: "categorized" } });
 
-    return NextResponse.json({ categorized: results.length, categories: availableCategories });
+    return NextResponse.json({
+      categorized: results.length,
+      categories: availableCategories.length
+        ? availableCategories
+        : project.marketplace.toLowerCase() === "temu"
+          ? ["(temu_categories.csv taxonomy)"]
+          : [],
+    });
   } catch (err) {
     await prisma.project.update({ where: { id }, data: { status: "verified" } });
     const msg = err instanceof Error ? err.message : "Categorization failed";
