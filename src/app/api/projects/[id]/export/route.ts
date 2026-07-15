@@ -80,8 +80,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const mpLower = mp.toLowerCase();
       const mpFamily = mpLower === "amazon_us" || mpLower === "amazon" ? ["amazon_us", "amazon"] : [mpLower];
 
-      // Always use the lightweight TemplateRow select (no fileData)
-      const templateSelect = { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true };
+      // Include fileData so category-zip exports can use fillTemplateXlsx and preserve
+      // original template formatting, column widths, styles, and dropdown validations.
+      const templateSelect = { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true, fileData: true };
       const [project, allTemplates] = await Promise.all([
         prisma.project.findUnique({ where: { id }, include: { products: true } }),
         useAutoMatch
@@ -96,6 +97,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ]);
 
       if (!project) throw new Error("Project not found");
+
+      // For Walmart exports: AI-generate optimised titles (meaning + attributes + USPs)
+      // instead of copying vendor titles word-for-word. Falls back to vendor name on error.
+      if (mpLower === "walmart" && project.products.length > 0) {
+        try {
+          const { generateMarketplaceTitles } = await import("@/lib/ai/generate-title");
+          const titleMap = await generateMarketplaceTitles("walmart", project.products);
+          if (titleMap.size > 0) {
+            project.products = project.products.map((p) =>
+              titleMap.has(p.id) ? { ...p, name: titleMap.get(p.id)! } : p
+            );
+          }
+        } catch (err) {
+          console.warn("[export] title generation failed, using vendor names:", err);
+        }
+      }
 
       // Mathis requires templates (throws if none). Best Buy and Temu gracefully fall back
       // to flat category ZIP when no templates are uploaded.
@@ -120,16 +137,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         zipBuffer = await generateFlatExport(project.products, projectMeta.marketplace) as Buffer;
       } else if (useTemplateIds) {
         // Non-Mathis: user picked a specific template → all products in one file.
-        // For Walmart: load fileData to preserve original template formatting & dropdowns.
-        let templateFileData: Buffer | null = null;
-        if (mpLower === "walmart" && allTemplates[0]) {
-          const withData = await prisma.exportTemplate.findUnique({
-            where: { id: allTemplates[0].id },
-            select: { fileData: true },
-          });
-          templateFileData = withData?.fileData ? Buffer.from(withData.fileData as unknown as ArrayBuffer) : null;
-        }
-        zipBuffer = await generateSingleTemplateExport(project.products, allTemplates[0], projectMeta.marketplace, templateFileData) as Buffer;
+        // fileData is already loaded in allTemplates (included in templateSelect above).
+        const tpl = allTemplates[0];
+        const templateFileData = tpl?.fileData ? Buffer.from(tpl.fileData as unknown as ArrayBuffer) : null;
+        zipBuffer = await generateSingleTemplateExport(project.products, tpl, projectMeta.marketplace, templateFileData) as Buffer;
       } else if (useAutoMatch) {
         zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
       } else {

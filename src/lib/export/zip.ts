@@ -4,15 +4,13 @@ import type { Product, ExportTemplate } from "@prisma/client";
 
 type Column = { key: string; label: string; required?: boolean };
 
-// Minimal template shape needed by generateCategoryZip — excludes the large fileData BYTEA blob.
-// The route can use a `select` query to avoid fetching fileData, which is never used in the
-// pure-XML XLSX path.
 export type TemplateRow = {
   id: string;
   name: string;
   category?: string | null;
   fileFormat: string;
   columns: unknown;
+  fileData?: Buffer | null; // included when caller wants formatting/dropdowns preserved
 };
 
 // ── Flat export (non-Mathis marketplaces, no templates required) ─────────────
@@ -132,6 +130,10 @@ export async function generateCategoryZip(
 
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
+    } else if (template.fileData) {
+      // Preserve original template formatting, column widths, styles and dropdowns
+      const buffer = await fillTemplateXlsx(categoryProducts, columns, Buffer.from(template.fileData as unknown as ArrayBuffer));
+      zip.file(`${fileName}.xlsx`, buffer);
     } else {
       const buffer = await createXlsxFromScratch(categoryProducts, columns, category);
       zip.file(`${fileName}.xlsx`, buffer);
@@ -334,11 +336,38 @@ async function fillTemplateXlsx(
     }
   }
 
+  // Extract dropdown validation options per 1-based column index.
+  // ExcelJS stores dataValidations keyed by range string like "D3:D10000".
+  // We parse the column letter to get the column index, then decode the
+  // inline list formula (e.g. '"New,Used,Refurbished"') into an array of options.
+  const dropdownOptions = new Map<number, string[]>();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dvModel = (ws.dataValidations as any)?.model ?? {};
+    for (const [rangeKey, dv] of Object.entries(dvModel)) {
+      const dvTyped = dv as { type?: string; formulae?: string[] };
+      if (dvTyped.type !== "list" || !dvTyped.formulae?.[0]) continue;
+      // Extract leading column letters from range reference (e.g. "D3" → "D")
+      const colLetters = /^([A-Z]+)/i.exec(rangeKey.split(":")[0])?.[1];
+      if (!colLetters) continue;
+      let ci = 0;
+      for (const ch of colLetters.toUpperCase()) ci = ci * 26 + (ch.charCodeAt(0) - 64);
+      const formula = dvTyped.formulae[0];
+      if (formula.startsWith('"') && formula.endsWith('"')) {
+        const opts = formula.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+        if (opts.length) dropdownOptions.set(ci, opts);
+      }
+    }
+  } catch { /* dataValidations not accessible — skip silently */ }
+
   // Append product rows after the header
   for (const p of products) {
     const newRow = ws.addRow([]);
     for (const [col, colIdx] of colIndexMap) {
-      newRow.getCell(colIdx).value = (getProductField(p, col.key) ?? "") as ExcelJS.CellValue;
+      const rawValue = String(getProductField(p, col.key) ?? "");
+      const opts = dropdownOptions.get(colIdx);
+      const cellValue = opts?.length ? pickDropdownValue(rawValue, opts) : rawValue;
+      newRow.getCell(colIdx).value = cellValue as ExcelJS.CellValue;
     }
     newRow.commit();
   }
@@ -566,10 +595,20 @@ function getProductField(p: Product, key: string): unknown {
     goods_id: goodsId,
     product_id: productId,
 
-    // Amazon flat-file external ID
+    // Amazon flat-file external ID — detect type from digit count (UPC-12, EAN-13, GTIN-14, ASIN)
     external_product_id: p.upc ?? fromVendor("upc", "ean", "barcode") ?? p.asin ?? verifiedAsin ?? "",
-    external_product_id_type: (p.upc || fromVendor("upc", "ean", "barcode")) ? "UPC" : (p.asin || verifiedAsin) ? "ASIN" : "",
-    product_id_type: (p.upc || fromVendor("upc", "ean", "barcode")) ? "UPC" : (p.asin || verifiedAsin) ? "ASIN" : "",
+    external_product_id_type: (() => {
+      const barcodeVal = String(p.upc ?? fromVendor("upc", "ean", "barcode") ?? "");
+      if (barcodeVal) return detectUpcType(barcodeVal);
+      if (p.asin || verifiedAsin) return "ASIN";
+      return "";
+    })(),
+    product_id_type: (() => {
+      const barcodeVal = String(p.upc ?? fromVendor("upc", "ean", "barcode") ?? "");
+      if (barcodeVal) return detectUpcType(barcodeVal);
+      if (p.asin || verifiedAsin) return "ASIN";
+      return "";
+    })(),
 
     // Listing actions
     listing_action: "Add",
@@ -817,6 +856,45 @@ function getProductField(p: Product, key: string): unknown {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Detect whether a barcode string is UPC-A (12 digits), EAN-8/13, GTIN-14, or ASIN.
+ * Returns the correct identifier type string for use in marketplace templates.
+ */
+function detectUpcType(raw: string): "UPC" | "EAN" | "GTIN" | "ASIN" | "" {
+  if (!raw) return "";
+  const s = String(raw).trim();
+  if (/^B[0-9A-Z]{9}$/i.test(s)) return "ASIN";
+  const digits = s.replace(/\D/g, "");
+  if (digits.length === 8)  return "EAN";
+  if (digits.length === 12) return "UPC";
+  if (digits.length === 13) return "EAN";
+  if (digits.length === 14) return "GTIN";
+  return "UPC";
+}
+
+/**
+ * Pick the best matching value from an Excel dropdown option list.
+ * Preference order: exact (case-insensitive) → substring → first-word → original value.
+ */
+function pickDropdownValue(raw: string, options: string[]): string {
+  if (!raw || !options.length) return raw;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const normRaw = norm(raw);
+  // 1. Exact match
+  const exact = options.find((o) => norm(o) === normRaw);
+  if (exact) return exact;
+  // 2. Option contains the raw value or vice versa
+  const sub = options.find((o) => norm(o).includes(normRaw) || normRaw.includes(norm(o)));
+  if (sub) return sub;
+  // 3. Matching first word
+  const firstWord = normRaw.split(/[^a-z0-9]+/)[0];
+  if (firstWord.length > 1) {
+    const word = options.find((o) => norm(o).startsWith(firstWord));
+    if (word) return word;
+  }
+  return raw; // no match — keep original; Excel will flag it as invalid
+}
 
 function normalizeKey(s: string): string {
   return s.toLowerCase()

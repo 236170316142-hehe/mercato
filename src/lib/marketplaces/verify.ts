@@ -545,11 +545,17 @@ async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
       if (!item) return notFound(p.id);
 
       const priceInCents = item.salePrice != null ? Math.round(item.salePrice * 100) : null;
-      // Map Affiliate API fields to what compareToLive expects
+      // Build Walmart product page URL from itemId (not the image URL)
+      const slug = (item.name ?? "product")
+        .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+      const walmartProductUrl = item.itemId
+        ? `https://www.walmart.com/ip/${slug}/${item.itemId}`
+        : "";
       const liveDataForCompare = {
         ...item,
         images: [item.largeImage, item.thumbnailImage].filter(Boolean),
         description: item.shortDescription ?? item.longDescription ?? "",
+        productUrl: walmartProductUrl,
       };
       return compareToLive(
         p,
@@ -713,10 +719,12 @@ function compareToLive(
   // "ok" only when no vendor image (nothing to compare); "warning" when both exist (needs visual review);
   // "warning" when vendor has image but live has none.
   const imgSeverity: "ok" | "warning" = !hasVendorImage ? "ok" : "warning";
+  // For live value: prefer a product page URL (Walmart) over raw image URL — more useful in the report
+  const liveImgOrUrl = (liveData.productUrl as string | undefined) || liveImages[0] || "N/A";
   fields.push({
     field: "images", label: "Images",
     stored: vendorImgUrl ?? "N/A",
-    live: liveImages[0] ?? "N/A",
+    live: liveImgOrUrl,
     match: hasVendorImage ? hasLiveImages : true,
     severity: imgSeverity,
   });

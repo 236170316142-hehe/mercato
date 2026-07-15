@@ -101,14 +101,14 @@ function pickBestSkuCol(headers: string[], sample: string[][], taken: Set<number
     const h = headers[i].replace(/[_-]/g, " ");
 
     let headerScore = 0;
-    // Tier 1 – explicit vendor/supplier/seller/internal prefix
-    if (/\b(?:factory|vendor|supplier|seller|internal|our|your)\s+sku\b/i.test(h)) headerScore = 100;
-    // Tier 2 – bare "SKU"
-    else if (/^skus?#?$|\bsku\b/i.test(h)) headerScore = 70;
+    // Tier 1 – exact "SKU" (client instruction: always prefer the column literally named SKU)
+    if (/^sku$/i.test(h)) headerScore = 100;
+    // Tier 2 – explicit vendor/supplier/seller/internal prefix
+    else if (/\b(?:factory|vendor|supplier|seller|internal|our|your)\s+sku\b/i.test(h)) headerScore = 90;
     // Tier 3 – "Item No", "Style #", "Part No", "Product Code", "Catalog No", etc.
     else if (/\b(?:item|article|style|model|part|ref(?:erence)?|product|stock|catalog|cat|collection|design|pattern)\s*(?:no\.?|num(?:ber)?|code|id|#)\b/i.test(h)) headerScore = 60;
-    // Tier 4 – very generic ("Key Field", "ID Field") — only if nothing better found
-    else if (/\bkey\s*(?:field|code|id)?\b/i.test(h) && !/\bfield\b/i.test(h)) headerScore = 20;
+    // Tier 4 – very generic ("Key Field") — last resort
+    else if (/\bkey\s*field\b/i.test(h)) headerScore = 20;
     else continue; // not a SKU candidate at all
 
     const vals = sample.map(r => (r[i] ?? "").trim()).filter(Boolean);
@@ -124,13 +124,7 @@ function pickBestSkuCol(headers: string[], sample: string[][], taken: Set<number
     );
     const formatScore = formatShare * 20;
 
-    // Penalty: common marketplace listing-SKU prefixes mean this is a listing ID, not a vendor code
-    const mktPrefixShare = columnShare(sample, i, (v) =>
-      /^(?:APSA|AMZN|WMT|FBA|MFN|B2C|SKU|ATVP)[\-_]/i.test(v),
-    );
-    const prefixPenalty = mktPrefixShare * 50;
-
-    const total = headerScore + uniquenessScore + formatScore - prefixPenalty;
+    const total = headerScore + uniquenessScore + formatScore;
     candidates.push({ idx: i, score: total });
   }
 
