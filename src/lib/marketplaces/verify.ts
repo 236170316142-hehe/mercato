@@ -639,10 +639,24 @@ function compareToLive(
 ): VerifyResult {
   const fields: FieldResult[] = [];
 
-  // Title — semantic similarity + pack-quantity mismatch check
+  // Title — semantic similarity + recall signal + pack-quantity mismatch check
   const sim = titleSim(p.name, liveTitle);
+  // Recall: what fraction of vendor title words are found in the live title?
+  // Walmart/Walmart titles are often much longer and more verbose. A short vendor
+  // title like "iStep 6 Inch Running Board" is fully contained within a longer
+  // Walmart title like "APS iStep 6 Inch Black Running Board Nerf Bars for Jeep…"
+  // The Jaccard score drops because of the many extra Walmart words, but recall
+  // tells us the vendor's key terms are all there.
+  const wv = normalizeTitle(p.name);
+  const wl = normalizeTitle(liveTitle);
+  let recallHits = 0;
+  for (const w of wv) if (wl.has(w)) recallHits++;
+  const recall = wv.size > 0 ? recallHits / wv.size : 0;
+
   let titleSeverity: "ok" | "warning" | "mismatch" =
-    sim >= 0.4 ? "ok" : sim >= 0.2 ? "warning" : "mismatch";
+    sim >= 0.4 || recall >= 0.6 ? "ok"     // Jaccard ok OR 60%+ vendor words found in live title
+    : sim >= 0.2 || recall >= 0.4 ? "warning"
+    : "mismatch";
   // Pack-quantity check: if vendor title has no quantity (= 1) and live title says "Pack of N"
   // (N > 1), or vice-versa, that is a definitive mismatch regardless of word similarity.
   const vendorQty = extractPackQty(p.name);
@@ -655,8 +669,17 @@ function compareToLive(
     severity: titleSeverity,
   });
 
-  // Brand
-  const brandMatch = !p.brand || !liveBrand || brandsMatch(p.brand, liveBrand);
+  // Brand — standard matching + cross-check with product titles.
+  // Vendors often store the parent-company name ("APS") while the marketplace
+  // shows the product-line brand ("iStep"). If the live brand appears in the
+  // vendor's product title, or the vendor brand appears in the live title,
+  // we know it's the same product family.
+  const liveBrandInVendorTitle = !!(liveBrand && p.name.toLowerCase().includes(liveBrand.toLowerCase()));
+  const vendorBrandInLiveTitle = !!(p.brand && liveTitle.toLowerCase().includes(p.brand.toLowerCase()));
+  const brandMatch = !p.brand || !liveBrand
+    || brandsMatch(p.brand, liveBrand)
+    || liveBrandInVendorTitle
+    || vendorBrandInLiveTitle;
   fields.push({ field: "brand", label: "Brand", stored: p.brand ?? "N/A", live: liveBrand ?? "N/A", match: brandMatch, severity: brandMatch ? "ok" : "warning" });
 
   // Model number — compare vendor's model/part number against live listing's model/MPN
@@ -698,13 +721,20 @@ function compareToLive(
     severity: imgSeverity,
   });
 
-  // Description — compare vendor description with Amazon description/features
+  // Description — compare vendor description with live description/features.
+  // Skip comparison when the vendor description is too short or looks like
+  // placeholder/restricted text — these produce false warnings because they
+  // have near-zero word overlap with any real marketplace description.
   const liveDesc = [
     typeof liveData.description === "string" ? liveData.description : "",
     ...(Array.isArray(liveData.features) ? liveData.features as string[] : []),
   ].filter(Boolean).join(" ");
   const vendorDesc = p.description ?? "";
-  const descSim = vendorDesc && liveDesc ? wordOverlap(vendorDesc, liveDesc) : null;
+  const vendorDescWords = vendorDesc.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(w => w.length > 3);
+  // Placeholder detection: too short (<8 meaningful words) OR common filler phrases
+  const isPlaceholderDesc = vendorDescWords.length < 8
+    || /\b(restricted|confidential|proprietary|call for|n\/a|see image|coming soon|tbd|contact us)\b/i.test(vendorDesc);
+  const descSim = !isPlaceholderDesc && vendorDesc && liveDesc ? wordOverlap(vendorDesc, liveDesc) : null;
   fields.push({
     field: "description", label: "Description",
     stored: vendorDesc || "N/A",
@@ -777,12 +807,20 @@ function compareToLive(
     severity: dimSeverity,
   });
 
+  // Status rollup — distinguish hard fields (identity-critical) from soft fields
+  // (informational). A warning on a soft field alone is surfaced in the report
+  // for manual review but does NOT change the overall status to "warning".
+  // Hard: title, brand, model  →  any warning/mismatch here = escalates status
+  // Soft: images, description, dimensions  →  shown in report, but won't alone
+  //       cause "warning" overall (too many false positives from short vendor
+  //       descriptions and visual-only image checks)
+  const HARD_FIELDS = new Set(["title", "brand", "model"]);
   const hasMismatch = fields.some((f) => f.severity === "mismatch");
-  const hasWarning = fields.some((f) => f.severity === "warning");
+  const hasHardWarning = fields.some((f) => f.severity === "warning" && HARD_FIELDS.has(f.field));
 
   return {
     productId: p.id,
-    status: hasMismatch ? "mismatch" : hasWarning ? "warning" : "ok",
+    status: hasMismatch ? "mismatch" : hasHardWarning ? "warning" : "ok",
     fields,
     liveData,
   };
@@ -1022,6 +1060,15 @@ const SYNONYMS: Record<string, string> = {
   fridge: "refrigerator", refrigerator: "fridge",
   sofa: "couch", couch: "sofa",
   stool: "chair", barstool: "stool",
+  // Automotive running boards / steps
+  sidestep: "runningboard", runningboard: "sidestep",
+  nerfbar: "runningboard", stepbar: "runningboard",
+  sideboard: "runningboard", stepboard: "runningboard",
+  // Home / furniture
+  comforter: "bedding", quilt: "bedding", duvet: "bedding",
+  loveseat: "sofa", sectional: "sofa",
+  dresser: "chest", armoire: "wardrobe", wardrobe: "armoire",
+  rug: "carpet", carpet: "rug",
 };
 
 function normalizeTitle(s: string): Set<string> {
