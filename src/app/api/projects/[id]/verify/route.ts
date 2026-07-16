@@ -4,8 +4,16 @@ export const maxDuration = 300;
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import { verifyProducts } from "@/lib/marketplaces/verify";
+import {
+  estimateAmazonVerifyTokens,
+  refreshKeepaTokens,
+} from "@/lib/keepa/client";
 
 const BATCH_SIZE = 50;
+
+function isAmazonMarketplace(marketplace: string): boolean {
+  return marketplace === "amazon" || marketplace === "amazon_us";
+}
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { user, response } = await authGuard();
@@ -40,14 +48,42 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  const allProducts = project.products;
+
+  // Preflight: Amazon verify needs Keepa tokens (estimate + 100 buffer) before starting.
+  if (isAmazonMarketplace(project.marketplace) && allProducts.length > 0) {
+    const { estimated, required } = estimateAmazonVerifyTokens(allProducts.length);
+    const tokenInfo = await refreshKeepaTokens();
+    const tokensLeft = tokenInfo?.tokensLeft ?? 0;
+
+    if (tokensLeft < required) {
+      const refillRate = tokenInfo?.refillRate ?? 0;
+      const shortfall = required - tokensLeft;
+      const waitMins = refillRate > 0 ? Math.ceil(shortfall / refillRate) : null;
+      const waitHint = waitMins != null
+        ? ` Tokens refill at ${refillRate}/min — try again in about ${waitMins} minute${waitMins === 1 ? "" : "s"}.`
+        : "";
+
+      return NextResponse.json(
+        {
+          error: `Not enough Keepa tokens available to verify. Need ${required.toLocaleString()} tokens (${estimated.toLocaleString()} estimated + 100 buffer), but only ${tokensLeft.toLocaleString()} available.${waitHint}`,
+          code: "INSUFFICIENT_KEEPA_TOKENS",
+          tokensLeft,
+          estimated,
+          required,
+          refillRate,
+        },
+        { status: 429 },
+      );
+    }
+  }
+
   await prisma.project.update({ where: { id }, data: { status: "verifying" } });
 
   let totalProcessed = 0;
   let totalSkipped = 0;
 
   try {
-    const allProducts = project.products;
-
     for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
       const batch = allProducts.slice(i, i + BATCH_SIZE);
       const results = await verifyProducts(project.marketplace, batch as Parameters<typeof verifyProducts>[1]);

@@ -2,9 +2,14 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 /**
- * Full Mathis path: "Category > Subcategory" or "Category > Subcategory > Product Type".
- * Unlike Temu, some Mathis branches are naturally 2 levels deep (e.g. "Living Room > Sofas"),
- * so the third column is optional in mathis_categories.csv.
+ * Full Mathis path from mathishome.com navigation, up to 4 levels:
+ *   Department > Category > Subcategory > Product Type
+ * e.g. "Furniture > Living Room Furniture > Sofas"
+ *      "Furniture > Living Room Furniture > Sofas & Loveseats > Sofas"
+ *      "Mattress > Mattress Type > Memory Foam Mattresses"
+ *      "Seasonal > Halloween > Adult Costumes"
+ *
+ * Department (level 1) matches Mathis export template names (Furniture, Mattress, Outdoor, …).
  */
 export type MathisCategoryPath = string;
 
@@ -15,26 +20,54 @@ function csvPath(): string {
   return join(process.cwd(), "src/lib/ai/data/mathis_categories.csv");
 }
 
+function isHeader(line: string): boolean {
+  const lower = line.toLowerCase();
+  return lower.startsWith("department,") || lower.startsWith("category,");
+}
+
+/** Minimal CSV line parser that respects double-quoted fields. */
+function parseCsvLine(line: string): string[] {
+  const cols: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      cols.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  cols.push(cur);
+  return cols;
+}
+
 /** Load and cache every leaf path from mathis_categories.csv. */
 export function loadMathisCategoryPaths(): MathisCategoryPath[] {
-  if (cachedPaths) return cachedPaths;
+  // In dev, always re-read so CSV edits apply without a server restart.
+  if (cachedPaths && process.env.NODE_ENV === "production") return cachedPaths;
 
   const raw = readFileSync(csvPath(), "utf8");
   const paths: MathisCategoryPath[] = [];
 
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.toLowerCase().startsWith("category,")) continue;
+    if (!trimmed || isHeader(trimmed)) continue;
 
-    // Simple CSV split — fields have no embedded commas in this file
-    const cols = trimmed.split(",").map((c) => c.trim());
-    const [category, subcategory, productType] = cols;
-    if (!category || !subcategory) continue;
-    paths.push(
-      productType
-        ? `${category} > ${subcategory} > ${productType}`
-        : `${category} > ${subcategory}`,
-    );
+    const cols = parseCsvLine(trimmed);
+    const parts = cols.map((c) => c.trim()).filter(Boolean);
+    if (parts.length < 2) continue;
+    paths.push(parts.join(" > "));
   }
 
   if (paths.length === 0) {
@@ -42,15 +75,16 @@ export function loadMathisCategoryPaths(): MathisCategoryPath[] {
   }
 
   cachedPaths = paths;
+  cachedPromptBlock = null; // rebuild prompt if CSV changed
   return cachedPaths;
 }
 
 /**
- * Format the taxonomy for the Claude prompt, grouped by top-level category
- * so the model can scan it efficiently (~420 leaf paths).
+ * Format the taxonomy for the Claude prompt, grouped by department (level 1)
+ * so the model can scan it efficiently (~480 leaf paths, up to 4 levels).
  */
 export function formatMathisTaxonomyForPrompt(): string {
-  if (cachedPromptBlock) return cachedPromptBlock;
+  if (cachedPromptBlock && process.env.NODE_ENV === "production") return cachedPromptBlock;
 
   const paths = loadMathisCategoryPaths();
   const byTop = new Map<string, string[]>();

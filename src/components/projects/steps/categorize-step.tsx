@@ -37,7 +37,7 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
           <h2 className="text-lg font-semibold">Auto-Categorization</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             {isMathis
-              ? "AI matches each product to an exact path"
+              ? "AI matches each product to an exact Mathis path (up to 4 levels)"
               : isTemu
               ? "AI matches each product to an exact path from the Temu category sheet"
               : `AI assigns each product to the correct ${marketplace} category`}
@@ -117,7 +117,7 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
           <h3 className="text-base font-semibold mb-1">Ready to categorize</h3>
           <p className="text-sm text-muted-foreground max-w-sm">
             {isMathis
-              ? "AI will send each product plus the Mathis category sheet to Claude and assign the most specific Category > Subcategory > Product Type path. Products that don't fit any path will be flagged."
+              ? "AI will match each product to the Mathis Home taxonomy (Department > Category > Subcategory > Product Type, up to 4 levels). Products that don't fit any path will be flagged."
               : isTemu
               ? "AI will send each product plus the Temu category sheet to Claude and assign the most specific Category > Subcategory > Sub-Subcategory path."
               : `AI will analyze each product and assign it to the correct category in the ${marketplace} taxonomy.`}

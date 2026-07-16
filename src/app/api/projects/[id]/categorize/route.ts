@@ -4,6 +4,7 @@ export const maxDuration = 300;
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import { categorizeProducts, type ProductInput } from "@/lib/ai/categorize";
+import { enrichSkuOnlyProducts, looksLikeSkuName } from "@/lib/ai/resolve-sku";
 
 // Keys we try (in order) when extracting the vendor's own category from raw spreadsheet data.
 const VENDOR_CATEGORY_KEYS = [
@@ -118,7 +119,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     // Build ProductInput with vendor category hint + supplemental context fields
-    const productInputs: ProductInput[] = project.products.map((p) => ({
+    let productInputs: ProductInput[] = project.products.map((p) => ({
       id: p.id,
       name: p.name,
       brand: p.brand,
@@ -126,6 +127,30 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       vendorCategory: extractVendorCategory(p.vendorData),
       vendorContext: extractVendorContext(p.vendorData),
     }));
+
+    // SKU-only sheets (common for Mathis): resolve codes like TOVF-TOVL54566 → real
+    // product titles via web search before asking Claude to categorize.
+    const skuOnly = productInputs.filter((p) => looksLikeSkuName(p.name));
+    let enrichedCount = 0;
+    if (skuOnly.length > 0) {
+      const { products: enriched, enrichments } = await enrichSkuOnlyProducts(productInputs);
+      productInputs = enriched;
+      enrichedCount = enrichments.length;
+      if (enrichments.length > 0) {
+        await Promise.all(
+          enrichments.map((e) =>
+            prisma.product.update({
+              where: { id: e.productId },
+              data: {
+                name: e.name,
+                brand: e.brand,
+                description: e.description,
+              },
+            }),
+          ),
+        );
+      }
+    }
 
     const results = await categorizeProducts(
       project.marketplace,
@@ -149,8 +174,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     await prisma.project.update({ where: { id }, data: { status: "categorized" } });
 
+    const matched = results.filter((r) => r.category && r.category !== "Uncategorized").length;
+    const unmatched = results.length - matched;
+
     return NextResponse.json({
       categorized: results.length,
+      matched,
+      unmatched,
+      enrichedFromSku: enrichedCount,
       categories: availableCategories.length
         ? availableCategories
         : mpLower === "temu"

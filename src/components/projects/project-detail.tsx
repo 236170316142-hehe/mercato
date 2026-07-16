@@ -114,7 +114,11 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
       const res = await fetch(`/api/projects/${project.id}/verify`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error ?? "Verification failed");
+        if (data.code === "INSUFFICIENT_KEEPA_TOKENS") {
+          toast.warning(data.error ?? "Not enough Keepa tokens available to verify");
+        } else {
+          toast.error(data.error ?? "Verification failed");
+        }
       } else {
         if (data.skipped > 0) {
           toast.warning(`Verified ${data.verified} products. ${data.skipped} skipped (Keepa tokens ran low — previous results preserved). Re-verify when tokens refill.`);
@@ -140,7 +144,15 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
       if (!res.ok) {
         toast.error(data.error ?? "Categorization failed");
       } else {
-        toast.success(`Categorized ${data.categorized} products`);
+        const matched = typeof data.matched === "number" ? data.matched : data.categorized;
+        const unmatched = typeof data.unmatched === "number" ? data.unmatched : 0;
+        if (matched === 0 && unmatched > 0) {
+          toast.warning(`No category match for ${unmatched} product${unmatched === 1 ? "" : "s"}`);
+        } else if (unmatched > 0) {
+          toast.success(`Categorized ${matched} product${matched === 1 ? "" : "s"} (${unmatched} unmatched)`);
+        } else {
+          toast.success(`Categorized ${matched} product${matched === 1 ? "" : "s"}`);
+        }
         await refreshProject();
         setActiveStep(2);
       }

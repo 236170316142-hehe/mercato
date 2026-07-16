@@ -20,6 +20,20 @@ export async function refreshKeepaTokens(): Promise<KeepaTokenInfo | null> {
   return lastToken;
 }
 
+/** Typical Keepa cost for ASIN/UPC product lookups (base + rating). */
+export const KEEPA_TOKENS_PER_PRODUCT = 2;
+/** Extra tokens that must remain available before a verify run may start. */
+export const KEEPA_VERIFY_TOKEN_BUFFER = 100;
+
+/** Estimate Keepa tokens for an Amazon verify, plus the +100 start buffer. */
+export function estimateAmazonVerifyTokens(productCount: number): {
+  estimated: number;
+  required: number;
+} {
+  const estimated = Math.max(0, productCount) * KEEPA_TOKENS_PER_PRODUCT;
+  return { estimated, required: estimated + KEEPA_VERIFY_TOKEN_BUFFER };
+}
+
 function getKey(): string {
   const key = process.env.KEEPA_API_KEY;
   if (!key) throw new KeepaError("KEEPA_API_KEY not configured in .env", 401, "NO_KEY");

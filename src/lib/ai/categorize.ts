@@ -266,15 +266,16 @@ ${taxonomy}
 If nothing fits, use "Uncategorized".`;
   } else if (isMathis && availableCategories?.length) {
     // Full taxonomy from mathis_categories.csv — Claude must copy an exact leaf path.
-    // Paths are 2 or 3 levels deep ("Living Room > Sofas", "Seasonal > Halloween > Adult Costumes").
+    // Paths are 2–4 levels: Department > Category > Subcategory > Product Type
+    // (e.g. "Furniture > Living Room Furniture > Sofas", "Mattress > Mattress Type > Memory Foam Mattresses").
     const taxonomy = formatMathisTaxonomyForPrompt();
     categorySection = strictMode
-      ? `EXACTLY one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2 or 3 levels deep):
+      ? `EXACTLY one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2–4 levels: Department > Category > Subcategory > Product Type):
 
 ${taxonomy}
 
 If nothing fits, use "Uncategorized".`
-      : `exactly one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2 or 3 levels deep, e.g. "Living Room > Sofas" or "Seasonal > Halloween > Adult Costumes"):
+      : `exactly one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2–4 levels deep, e.g. "Furniture > Living Room Furniture > Sofas" or "Furniture > Living Room Furniture > Sofas & Loveseats > Sofas" or "Seasonal > Halloween > Adult Costumes"):
 
 ${taxonomy}
 
@@ -326,7 +327,7 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers
   }
 
   const storeContext = isMathis
-    ? "You are a product categorization expert for Mathis Brothers, a large Oklahoma-based retailer that sells furniture, mattresses, rugs, bedding, home decor, lighting, AND seasonal/holiday items including Halloween costumes for all ages. You are given Mathis's official category sheet (built from mathishome.com). Match each product to the single most specific leaf path from that sheet."
+    ? "You are a product categorization expert for Mathis Brothers / Mathis Home. Their catalog is organized in up to 4 levels: Department > Category > Subcategory > Product Type (from mathishome.com). Departments include Furniture, Mattress, Outdoor, Baby & Kids, Rugs, Decor, Lighting, Bedding & Bath, Kitchen, Organization, Home Improvement, and Seasonal. Always pick the deepest matching leaf path (prefer 3–4 levels over shallow ones)."
     : isTemu
     ? "You are a product categorization expert for Temu, a global e-commerce marketplace. You are given Temu's official category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet."
     : isBestBuy
@@ -350,8 +351,8 @@ STEP 2 — Only if STEP 1 says it IS a costume item, use the size/audience signa
   Infant/toddler codes: T1–T7, 0-3M/3-6M/6-12M/12-18M/18-24M, 2T/3T/4T, or the words Infant/Toddler/Baby
 - Full costume, adult size or no size → "Seasonal > Halloween > Adult Costumes"
 - Full costume, teen size ((12-14)/(14-16)/(16-18)/Teen) → "Seasonal > Halloween > Teen Costumes"
-- Costume ACCESSORY (a single piece worn WITH a costume: hat, crown, tiara, wig, mask, cape, gloves, prop, jewelry, belt, sash) — regardless of child or adult size → "Seasonal > Halloween > Costume Accessories". (There is no separate kids-accessory leaf, so all costume accessories use this path.) Wigs and masks specifically → "Seasonal > Halloween > Wigs & Masks".
-- Outdoor paths are for PATIO products only — NEVER assign a costume or wearable item to an Outdoor path.
+- Costume ACCESSORY (a single piece worn WITH a costume: hat, crown, tiara, wig, mask, cape, gloves, prop, jewelry, belt, sash) — regardless of child or adult size → "Seasonal > Halloween > Costume Accessories". Wigs and masks specifically → "Seasonal > Halloween > Wigs & Masks".
+- Outdoor / Furniture paths are for home/patio products only — NEVER assign a costume or wearable item there.
 
 Note: A hat, crown, or top hat alone is an ACCESSORY, not a full costume — do not send it to a Kids'/Child Costumes path.` : "";
 
@@ -368,13 +369,13 @@ RULES:
   const jsonExample = isTemu
     ? `[{"index":1,"category":"Women's Clothing > Tops > T-Shirts","path":"Women's Clothing > Tops > T-Shirts","confidence":0.95},...]`
     : isMathis
-    ? `[{"index":1,"category":"Living Room > Sofas","path":"Living Room > Sofas","confidence":0.95},...]`
+    ? `[{"index":1,"category":"Furniture > Living Room Furniture > Sofas","path":"Furniture > Living Room Furniture > Sofas","confidence":0.95},...]`
     : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
 
   const pathHint = isTemu
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Women's Clothing > Tops > T-Shirts")`
     : isMathis
-    ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Living Room > Sofas" or "Seasonal > Halloween > Adult Costumes")`
+    ? `- category and path: must be the exact leaf path from the taxonomy sheet (2–4 levels, e.g. "Furniture > Living Room Furniture > Sofas" or "Seasonal > Halloween > Adult Costumes")`
     : `- path: full path e.g. "Mathis Brothers > Seasonal"`;
 
   const prompt = `${storeContext}
