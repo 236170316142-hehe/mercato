@@ -308,38 +308,48 @@ async function fillTemplateXlsx(
   }
 
   // Determine the first data row.
-  // Some templates (e.g. Temu) have hidden instruction rows between the header and the
-  // first data row. Scan forward up to 10 rows to find the first row that either has
-  // formula cells (pre-built Temu VLOOKUP rows) or is entirely empty.
+  // Some templates (e.g. Temu) place hidden INSTRUCTION rows between the header and
+  // the first real data row. We only want to skip past genuine instruction rows —
+  // NOT a stale sample/example data row, which must be overwritten so it doesn't
+  // survive in the output. Heuristic: a row is an "instruction" row (skip it) only
+  // if it looks like guidance — a single populated cell, or text containing typical
+  // instruction words. A row that fills most columns is stale DATA → overwrite it.
+  const instructionRe = /example|required|optional|instruction|do not|enter |select |format|max |min /i;
   let firstDataRow = headerRowNum + 1;
   for (let r = headerRowNum + 1; r <= headerRowNum + 10; r++) {
     const row = ws.getRow(r);
     let hasFormula = false;
-    let hasLiteralText = false;
+    let populated = 0;
+    let looksLikeInstruction = false;
     row.eachCell((cell) => {
       const v = cell.value;
-      if (v !== null && typeof v === "object" && "formula" in (v as object)) hasFormula = true;
-      else if (v !== null && v !== undefined && v !== "") hasLiteralText = true;
+      if (v !== null && typeof v === "object" && "formula" in (v as object)) { hasFormula = true; return; }
+      if (v !== null && v !== undefined && v !== "") {
+        populated++;
+        if (instructionRe.test(String(v))) looksLikeInstruction = true;
+      }
     });
-    if (hasFormula || !hasLiteralText) { firstDataRow = r; break; }
-  }
-
-  // Remove all existing data rows in ONE splice — avoids the slow per-row loop.
-  // Guard against edge cases: spliceRows(n, 0) is a no-op; negative count must not happen.
-  const lastRow = ws.lastRow?.number ?? headerRowNum;
-  const existingDataRows = Math.max(0, lastRow - headerRowNum);
-  if (existingDataRows > 0) {
-    try {
-      ws.spliceRows(headerRowNum + 1, existingDataRows);
-    } catch {
-      // Some complex templates (merged cells, named ranges) reject spliceRows — ignore and overwrite in place
+    // Formula row (Temu VLOOKUP) or empty row → data starts here, stop scanning.
+    if (hasFormula || populated === 0) { firstDataRow = r; break; }
+    // A sparse/instruction-looking row is guidance → skip past it.
+    // A densely-filled row is stale sample data → overwrite from here.
+    if (looksLikeInstruction || populated <= Math.max(1, Math.floor(colIndexMap.length / 3))) {
+      firstDataRow = r + 1;
+      continue;
     }
+    firstDataRow = r;
+    break;
   }
 
-  // Extract dropdown validation options per 1-based column index.
-  // ExcelJS stores dataValidations keyed by range string like "D3:D10000".
-  // We parse the column letter to get the column index, then decode the
-  // inline list formula (e.g. '"New,Used,Refurbished"') into an array of options.
+  // Extract dropdown validation options per 1-based column index BEFORE we clear
+  // rows — resolving a range-reference dropdown (=Lists!$A$1:$A$3) reads cells
+  // from the workbook, which must still be intact.
+  //
+  // ExcelJS stores dataValidations keyed either as a range ("D3:D10000") or, more
+  // commonly, per-cell ("D10", "D11", …). Either way the leading letters give the
+  // column. A list formula is one of two forms:
+  //   • inline  — '"New,Used,Refurbished"'  → split on commas
+  //   • range   — '=Lists!$A$1:$A$3' or 'Sheet2!$A:$A' → read the referenced cells
   const dropdownOptions = new Map<number, string[]>();
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -347,29 +357,40 @@ async function fillTemplateXlsx(
     for (const [rangeKey, dv] of Object.entries(dvModel)) {
       const dvTyped = dv as { type?: string; formulae?: string[] };
       if (dvTyped.type !== "list" || !dvTyped.formulae?.[0]) continue;
-      // Extract leading column letters from range reference (e.g. "D3" → "D")
       const colLetters = /^([A-Z]+)/i.exec(rangeKey.split(":")[0])?.[1];
       if (!colLetters) continue;
       let ci = 0;
       for (const ch of colLetters.toUpperCase()) ci = ci * 26 + (ch.charCodeAt(0) - 64);
-      const formula = dvTyped.formulae[0];
-      if (formula.startsWith('"') && formula.endsWith('"')) {
-        const opts = formula.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
-        if (opts.length) dropdownOptions.set(ci, opts);
-      }
+      // First per-column formula wins (they're identical across a column's cells)
+      if (dropdownOptions.has(ci)) continue;
+      const opts = resolveDropdownOptions(wb, dvTyped.formulae[0]);
+      if (opts.length) dropdownOptions.set(ci, opts);
     }
   } catch { /* dataValidations not accessible — skip silently */ }
 
-  // Append product rows after the header
-  for (const p of products) {
-    const newRow = ws.addRow([]);
+  // Clear existing sample/data rows, then write products into FIXED row positions
+  // starting at firstDataRow. We do NOT use ws.addRow(): data-validations extend the
+  // worksheet's used range far below the real data (e.g. to row 100), so addRow would
+  // append after that phantom range and leave a stale sample row plus a block of blanks.
+  const lastRow = ws.lastRow?.number ?? headerRowNum;
+  for (let i = 0; i < products.length; i++) {
+    const p = products[i];
+    const row = ws.getRow(firstDataRow + i);
     for (const [col, colIdx] of colIndexMap) {
       const rawValue = String(getProductField(p, col.key) ?? "");
       const opts = dropdownOptions.get(colIdx);
       const cellValue = opts?.length ? pickDropdownValue(rawValue, opts) : rawValue;
-      newRow.getCell(colIdx).value = cellValue as ExcelJS.CellValue;
+      row.getCell(colIdx).value = cellValue as ExcelJS.CellValue;
     }
-    newRow.commit();
+    row.commit();
+  }
+
+  // Blank out any leftover template rows below the data we just wrote (the old
+  // sample row and any rows the previous content occupied).
+  for (let r = firstDataRow + products.length; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    for (const [, colIdx] of colIndexMap) row.getCell(colIdx).value = null;
+    row.commit();
   }
 
   return wb.xlsx.writeBuffer() as unknown as Promise<Buffer>;
@@ -532,6 +553,13 @@ function getProductField(p: Product, key: string): unknown {
 
   const livePrice = typeof ld?.price === "number" && ld.price > 0 ? ld.price / 100 : null;
   const verifiedAsin = typeof ld?.asin === "string" ? ld.asin : null;
+  // Marketplace product-page URL (e.g. Walmart https://www.walmart.com/ip/...),
+  // built during verification and stored in liveData.productUrl. This is the
+  // product listing link — NOT the image URL.
+  const productPageUrl =
+    (typeof ld?.productUrl === "string" && ld.productUrl) ||
+    (fromVendor("product_url", "product_page_url", "listing_url", "item_url", "url") as string | undefined) ||
+    "";
 
   const price = p.price != null
     ? p.price
@@ -658,6 +686,18 @@ function getProductField(p: Product, key: string): unknown {
     width: fromVendor("width", "item_width") ?? "",
     height: fromVendor("height", "item_height", "depth") ?? "",
     weight: fromVendor("weight", "item_weight", "unit_weight") ?? "",
+
+    // Product-page URL — Walmart "product link"/URL columns must be the listing
+    // page (https://www.walmart.com/ip/...), NOT the image URL.
+    product_url: productPageUrl,
+    product_page_url: productPageUrl,
+    product_link: productPageUrl,
+    listing_url: productPageUrl,
+    item_url: productPageUrl,
+    item_page_url: productPageUrl,
+    buy_url: productPageUrl,
+    site_product_link: productPageUrl,
+    url: productPageUrl,
 
     // Image — covers generic keys and Mathis-specific names
     image_url: p.imageUrl || fromLive("image") || "",
@@ -874,25 +914,98 @@ function detectUpcType(raw: string): "UPC" | "EAN" | "GTIN" | "ASIN" | "" {
 }
 
 /**
+ * Resolve a data-validation list formula into its option strings.
+ * Handles both inline lists ('"A,B,C"') and range references
+ * ('=Lists!$A$1:$A$3', 'Sheet2!$A:$A', or a same-sheet '$A$1:$A$10') by reading
+ * the referenced cells from the workbook.
+ */
+function resolveDropdownOptions(wb: ExcelJS.Workbook, formula: string): string[] {
+  const f = formula.trim().replace(/^=/, "");
+  // Inline list: "New,Used,Refurbished"
+  if (f.startsWith('"') && f.endsWith('"')) {
+    return f.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  // Range reference, optionally sheet-qualified: [Sheet!]A1:A10 (with optional $)
+  const m = /^(?:'?([^'!]+)'?!)?\$?([A-Z]+)\$?(\d+)?(?::\$?([A-Z]+)\$?(\d+)?)?$/i.exec(f);
+  if (!m) return [];
+  const [, sheetName, c1, r1, c2, r2] = m;
+  const ws = sheetName ? wb.getWorksheet(sheetName) : wb.worksheets[0];
+  if (!ws) return [];
+  const colNum = (letters: string) => {
+    let n = 0;
+    for (const ch of letters.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+    return n;
+  };
+  const startCol = colNum(c1);
+  const endCol = c2 ? colNum(c2) : startCol;
+  const startRow = r1 ? parseInt(r1, 10) : 1;
+  // Whole-column ref (A:A) has no row bound — cap the scan at the sheet's used rows.
+  const endRow = r2 ? parseInt(r2, 10) : (r1 ? startRow : (ws.lastRow?.number ?? 1));
+  const opts: string[] = [];
+  for (let r = Math.min(startRow, endRow); r <= Math.max(startRow, endRow); r++) {
+    for (let c = Math.min(startCol, endCol); c <= Math.max(startCol, endCol); c++) {
+      const v = ws.getRow(r).getCell(c).value;
+      const text = v == null ? "" : typeof v === "object" && "result" in v ? String((v as { result?: unknown }).result ?? "") : String(v);
+      if (text.trim()) opts.push(text.trim());
+    }
+  }
+  return opts;
+}
+
+/**
  * Pick the best matching value from an Excel dropdown option list.
- * Preference order: exact (case-insensitive) → substring → first-word → original value.
+ * Preference order:
+ *   1. exact (case-insensitive, punctuation-insensitive)
+ *   2. whole-WORD overlap — the raw value contains the option as a distinct word
+ *      (or vice-versa). This is word-boundary aware, so "used - like new" matches
+ *      "Used" (a whole word) and does NOT falsely match "New" via the trailing
+ *      "...new". Ties are broken by longer option, then earlier word position.
+ *   3. collapsed substring — last-resort loose containment
+ * Falls back to the original value (Excel flags it invalid) when nothing matches.
  */
 function pickDropdownValue(raw: string, options: string[]): string {
   if (!raw || !options.length) return raw;
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const normRaw = norm(raw);
-  // 1. Exact match
-  const exact = options.find((o) => norm(o) === normRaw);
+  const collapse = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+  const collapsedRaw = collapse(raw);
+  // 1. Exact (punctuation-insensitive)
+  const exact = options.find((o) => collapse(o) === collapsedRaw);
   if (exact) return exact;
-  // 2. Option contains the raw value or vice versa
-  const sub = options.find((o) => norm(o).includes(normRaw) || normRaw.includes(norm(o)));
-  if (sub) return sub;
-  // 3. Matching first word
-  const firstWord = normRaw.split(/[^a-z0-9]+/)[0];
-  if (firstWord.length > 1) {
-    const word = options.find((o) => norm(o).startsWith(firstWord));
-    if (word) return word;
+
+  // 2. Whole-word overlap, scored
+  const rawWords = words(raw);
+  const rawWordSet = new Set(rawWords);
+  let best: string | null = null;
+  let bestScore = -1;
+  for (const o of options) {
+    const optWords = words(o);
+    if (!optWords.length) continue;
+    // How many of the option's words appear as whole words in the raw value…
+    const optInRaw = optWords.filter((w) => rawWordSet.has(w)).length;
+    // …and vice-versa (raw words appearing in the option)
+    const optWordSet = new Set(optWords);
+    const rawInOpt = rawWords.filter((w) => optWordSet.has(w)).length;
+    const overlap = optInRaw + rawInOpt;
+    if (overlap === 0) continue;
+    // Earliest matching word position in the raw string (lower = better)
+    const pos = optWords.reduce((min, w) => {
+      const i = rawWords.indexOf(w);
+      return i >= 0 && i < min ? i : min;
+    }, Number.MAX_SAFE_INTEGER);
+    // Score: overlap dominates, then earlier position, then longer option
+    const score = overlap * 1000 - pos * 10 + collapse(o).length;
+    if (score > bestScore) { bestScore = score; best = o; }
   }
+  if (best) return best;
+
+  // 3. Collapsed substring (loose) — either direction
+  const sub = options.find((o) => {
+    const c = collapse(o);
+    return c && (c.includes(collapsedRaw) || collapsedRaw.includes(c));
+  });
+  if (sub) return sub;
+
   return raw; // no match — keep original; Excel will flag it as invalid
 }
 

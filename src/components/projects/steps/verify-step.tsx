@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   ShieldCheck, Loader2, ChevronDown, ChevronUp,
-  CheckCircle2, AlertTriangle, XCircle, HelpCircle, Download, ThumbsUp, Ban,
+  CheckCircle2, AlertTriangle, XCircle, HelpCircle, Download, ThumbsUp, Ban, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -16,6 +16,8 @@ type FieldResult = {
   match: boolean;
   severity: "ok" | "warning" | "mismatch";
   note?: string;
+  liveImage?: string; // marketplace image URL (images field)
+  liveUrl?: string;   // marketplace product page URL (images field)
 };
 
 type Product = {
@@ -35,6 +37,12 @@ const STATUS_CONFIG = {
   mismatch:     { label: "Mismatch",     color: "bg-red-100 text-red-700",       icon: XCircle },
   not_found:    { label: "Not found",    color: "bg-gray-100 text-gray-600",     icon: HelpCircle },
   discontinued: { label: "Discontinued", color: "bg-purple-100 text-purple-700", icon: Ban },
+};
+
+const AI_NOTE_STYLE = {
+  ok:       { wrap: "border-green-200 bg-green-50", badge: "bg-green-500", pill: "bg-green-100 text-green-700", text: "text-green-900" },
+  warning:  { wrap: "border-yellow-200 bg-yellow-50", badge: "bg-yellow-500", pill: "bg-yellow-100 text-yellow-700", text: "text-yellow-900" },
+  mismatch: { wrap: "border-red-200 bg-red-50", badge: "bg-red-500", pill: "bg-red-100 text-red-700", text: "text-red-900" },
 };
 
 const FIELD_SEVERITY = {
@@ -64,6 +72,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
   const [approving, setApproving] = useState<string | null>(null);
   const [discontinuing, setDiscontinuing] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const hasResults = products.some((p) => p.verifyStatus);
 
   const marketplaceLabel =
@@ -284,28 +293,76 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                           <div>
                             <p className="text-muted-foreground mb-0.5">Catalog</p>
                             {isImg && isUrl(f.stored) ? (
-                              <div className="flex flex-col gap-1">
-                                <img src={f.stored} alt="Catalog" className="w-16 h-16 object-cover rounded border" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                                <a href={f.stored} target="_blank" rel="noreferrer" className="text-blue-600 underline truncate max-w-[160px]">View image</a>
-                              </div>
+                              <img
+                                src={f.stored}
+                                alt="Catalog"
+                                className="w-16 h-16 object-cover rounded border cursor-zoom-in transition hover:opacity-80"
+                                onClick={() => setPreviewImage(f.stored)}
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                              />
                             ) : (
                               <p className="font-medium line-clamp-2">{f.stored}</p>
                             )}
                           </div>
                           <div>
                             <p className="text-muted-foreground mb-0.5">{marketplaceLabel}</p>
-                            {isImg && isUrl(f.live) ? (
-                              <div className="flex flex-col gap-1">
-                                <img src={f.live} alt={marketplaceLabel} className="w-16 h-16 object-cover rounded border" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                                <a href={f.live} target="_blank" rel="noreferrer" className="text-blue-600 underline truncate max-w-[160px]">View image</a>
-                              </div>
+                            {isImg ? (
+                              (() => {
+                                // Prefer the dedicated image/URL fields; fall back to `live`
+                                // (older records where `live` held one URL).
+                                const liveImg = f.liveImage || (isUrl(f.live) && !f.liveUrl ? f.live : "");
+                                const liveUrl = f.liveUrl || (isUrl(f.live) ? f.live : "");
+                                if (!liveImg && !liveUrl) {
+                                  return <p className="font-medium line-clamp-2">{f.live}</p>;
+                                }
+                                return (
+                                  <div className="flex flex-col gap-1">
+                                    {liveImg && (
+                                      <img
+                                        src={liveImg}
+                                        alt={marketplaceLabel}
+                                        className="w-16 h-16 object-cover rounded border cursor-zoom-in transition hover:opacity-80"
+                                        onClick={() => setPreviewImage(liveImg)}
+                                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                      />
+                                    )}
+                                    {liveUrl ? (
+                                      <a href={liveUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline truncate max-w-[160px]">
+                                        View Product
+                                      </a>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewImage(liveImg)}
+                                        className="text-blue-600 underline truncate max-w-[160px] text-left"
+                                      >
+                                        View Image
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })()
                             ) : (
                               <p className="font-medium line-clamp-2">{f.live}</p>
                             )}
                           </div>
-                          {f.note && (
-                            <p className={cn("col-span-3 text-[11px] italic", FIELD_SEVERITY[f.severity])}>{f.note}</p>
-                          )}
+                          {f.note && (() => {
+                            const style = AI_NOTE_STYLE[f.severity];
+                            const noteText = f.note.replace(/^\s*ai visual check:?\s*/i, "");
+                            return (
+                              <div className={cn("col-span-3 flex items-start gap-2 rounded-lg border px-3 py-2", style.wrap)}>
+                                <span className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full shadow-sm", style.badge)}>
+                                  <Sparkles className="h-3 w-3 text-white" />
+                                </span>
+                                <p className={cn("text-[11px] leading-relaxed", style.text)}>
+                                  <span className={cn("mr-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide", style.pill)}>
+                                    AI Visual Check
+                                  </span>
+                                  {noteText}
+                                </p>
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -317,6 +374,30 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Image preview modal — opens when a thumbnail or "View Image" is clicked */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-h-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              aria-label="Close preview"
+              className="absolute -right-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-gray-700 shadow hover:bg-gray-100"
+            >
+              <XCircle className="h-5 w-5" />
+            </button>
+            <img
+              src={previewImage}
+              alt="Preview"
+              className="max-h-[80vh] max-w-full rounded-lg bg-white object-contain shadow-xl"
+            />
+          </div>
         </div>
       )}
     </div>
