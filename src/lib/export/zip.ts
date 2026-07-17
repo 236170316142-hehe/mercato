@@ -322,10 +322,6 @@ async function fillTemplateXlsx(
   }
 
   // ── Map template columns to our column definitions ─────────────────────────
-  // No style borrowing — data cells must use the default style (no background fill)
-  // so they appear white, matching what manual entry looks like. Borrowing the first
-  // data row's style would copy the green template-sample row's fill to all output rows.
-
   type ColEntry = { col: Column; letter: string };
   const colEntries: ColEntry[] = [];
   for (const col of columns) {
@@ -351,36 +347,89 @@ async function fillTemplateXlsx(
     if (!letter || dropdowns.has(letter)) continue;
     const formula = dv[2].match(/<formula1>([\s\S]*?)<\/formula1>/)?.[1]?.trim() ?? "";
     if (formula.startsWith('"') && formula.endsWith('"')) {
-      // Inline list: "New,Used,Refurbished"
       const opts = formula.slice(1, -1).split(",").map(s => s.trim()).filter(Boolean);
       if (opts.length) dropdowns.set(letter, opts);
     } else if (formula) {
-      // Range reference: =Lists!$A$1:$A$10 — read from the referenced sheet
       const opts = await resolveXmlRangeDropdown(tplZip, formula.replace(/^=/, ""), sheetNameToPath, ssArr);
       if (opts.length) dropdowns.set(letter, opts);
     }
   }
 
-  // ── Build new data row XML ─────────────────────────────────────────────────
-  let nextRow = headerRowNum + 1;
-  const newRowsXml = products.map(p => {
-    const rn = nextRow++;
+  // ── Build output rows using the template's own pre-formatted rows ──────────
+  // Index existing data rows from the template (rowNum → rowXml).
+  // The template's data-entry rows carry per-cell styles (pink fill, borders, etc.).
+  // We reuse those rows' cell s= attributes so exported data looks identical to
+  // manually-entered data — the only thing we change is the cell value.
+  const templateDataRows = new Map<number, string>();
+  for (const rm of rowMatches) {
+    const rn = parseInt(rm[1]);
+    if (rn > headerRowNum) templateDataRows.set(rn, rm[0]);
+  }
+
+  // Fallback style per column from the first template data row (used when we
+  // need to create rows beyond the template's pre-formatted area).
+  const borrowedStyle = new Map<string, string>(); // letter → s-index
+  for (const cm of (templateDataRows.get(headerRowNum + 1) ?? "").matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
+    const s = cm[2].match(/\bs="(\d+)"/)?.[1];
+    if (s) borrowedStyle.set(cm[1], s);
+  }
+
+  const outputRows: string[] = [];
+
+  for (let i = 0; i < products.length; i++) {
+    const p = products[i];
+    const rn = headerRowNum + 1 + i;
+    const tplRow = templateDataRows.get(rn);
+
+    // Per-cell style from the corresponding template row; fall back to borrowed style.
+    const cellStyles = new Map<string, string>();
+    if (tplRow) {
+      for (const cm of tplRow.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
+        const s = cm[2].match(/\bs="(\d+)"/)?.[1];
+        if (s) cellStyles.set(cm[1], s);
+      }
+    }
+    const getStyle = (letter: string): string => {
+      const s = cellStyles.get(letter) ?? borrowedStyle.get(letter);
+      return s ? ` s="${s}"` : "";
+    };
+
+    // Row-level attributes (height, spans, etc.) preserved from the template row.
+    const rowAttrs = tplRow ? (tplRow.match(/<row\b([^>]*)>/)?.[1] ?? ` r="${rn}"`) : ` r="${rn}"`;
+
     const cells = colEntries.map(({ col, letter }) => {
       const raw = String(getProductField(p, col.key) ?? "");
       const val = dropdowns.has(letter) ? pickDropdownValue(raw, dropdowns.get(letter)!) : raw;
       const ref = `${letter}${rn}`;
       const isLargeId = /^\d{10,}$/.test(val);
+      const sAttr = getStyle(letter);
       if (val !== "" && !isLargeId && !Number.isNaN(Number(val))) {
-        return `<c r="${ref}"><v>${x(val)}</v></c>`;
+        return `<c r="${ref}"${sAttr}><v>${x(val)}</v></c>`;
       }
-      return `<c r="${ref}" t="s"><v>${ssIdx(val)}</v></c>`;
+      return `<c r="${ref}"${sAttr} t="s"><v>${ssIdx(val)}</v></c>`;
     }).join("");
-    return `<row r="${rn}">${cells}</row>`;
-  }).join("");
 
-  // Preserve header row (and any rows above it); discard all data rows after
+    outputRows.push(`<row${rowAttrs}>${cells}</row>`);
+  }
+
+  // Remaining template rows beyond product count — clear values but preserve
+  // row structure and cell styles (empty pink input area stays intact).
+  const maxTplRow = templateDataRows.size > 0 ? Math.max(...templateDataRows.keys()) : headerRowNum;
+  for (let rn = headerRowNum + 1 + products.length; rn <= maxTplRow; rn++) {
+    const tplRow = templateDataRows.get(rn);
+    if (!tplRow) continue;
+    const cleared = tplRow
+      .replace(/<v>[\s\S]*?<\/v>/g, "")
+      .replace(/<f>[\s\S]*?<\/f>/g, "")
+      .replace(/<is>[\s\S]*?<\/is>/g, "")
+      .replace(/\s*\bt="[^"]*"/g, "")
+      .replace(/<c\b([^>]*)><\/c>/g, "<c$1/>");
+    outputRows.push(cleared);
+  }
+
+  // Assemble sheetData: header rows + output rows
   const keptRows = rowMatches.filter(rm => parseInt(rm[1]) <= headerRowNum).map(rm => rm[0]).join("");
-  sheetXml = sheetXml.replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${keptRows}${newRowsXml}</sheetData>`);
+  sheetXml = sheetXml.replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${keptRows}${outputRows.join("")}</sheetData>`);
 
   // ── Write modified files back into the ZIP ─────────────────────────────────
   tplZip.file(sheetPath, sheetXml);
