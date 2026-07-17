@@ -112,8 +112,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
       }
 
-      // Mathis requires templates (throws if none). Best Buy and Temu gracefully fall back
-      // to flat category ZIP when no templates are uploaded.
+      // Mathis requires templates (throws if none). Walmart, Best Buy and Temu gracefully
+      // fall back to flat category ZIP when no templates are uploaded.
       const usesTemplates = mpLower === "mathis";
       if (usesTemplates && !allTemplates.length) {
         throw new Error(`No templates found for ${projectMeta.marketplace}. Upload templates first.`);
@@ -121,14 +121,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       const isTemu = mpLower === "temu";
       const isBestBuy = mpLower === "bestbuy";
+      const isWalmart = mpLower === "walmart";
+      // Category-split marketplaces: products grouped by category, each group filled into
+      // the closest matching uploaded template (one output file per template).
+      const usesCategoryExport = isTemu || isBestBuy || isWalmart;
 
       let zipBuffer: Buffer;
-      if ((isTemu || isBestBuy) && allTemplates.length) {
-        // Temu/Best Buy with uploaded templates: match each category to the closest template
+      if (usesCategoryExport && allTemplates.length) {
+        // With uploaded templates: match each category to the closest template
         // and export in that template's column format — one file per matched category
         zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
-      } else if (isTemu || isBestBuy) {
-        // Temu/Best Buy without templates: split by AI-assigned category using flat columns
+      } else if (usesCategoryExport) {
+        // Without templates: split by AI-assigned category using flat columns
         zipBuffer = await generateFlatCategoryZip(project.products, projectMeta.marketplace) as Buffer;
       } else if (!allTemplates.length) {
         // Non-Mathis with no templates → flat export (one file, standard columns)
