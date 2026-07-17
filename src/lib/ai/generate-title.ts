@@ -4,9 +4,9 @@ import type { Product } from "@prisma/client";
 
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Copywriting is quality-critical and low-volume (one short title per product),
-// so use a strong model rather than the cheap default. Overridable via env.
-const TITLE_MODEL = process.env.TITLE_ANTHROPIC_MODEL ?? "claude-sonnet-5";
+// Haiku: fast, low-memory, handles title generation well at this batch size.
+// Override via TITLE_ANTHROPIC_MODEL env var if a stronger model is needed.
+const TITLE_MODEL = process.env.TITLE_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
 const TITLE_RULES: Record<string, { maxLen: number; guidance: string }> = {
   walmart: {

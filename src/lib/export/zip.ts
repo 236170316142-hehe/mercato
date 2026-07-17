@@ -117,10 +117,10 @@ export async function generateCategoryZip(
   }
 
   // Process categories sequentially with event-loop yields between each file.
-  // ExcelJS template loading (fillTemplateXlsx) is synchronous CPU work that blocks
-  // the Node.js event loop for 10–15 s per file, preventing poll requests from being
-  // served. We skip template file loading and use column definitions only (createXlsxFromScratch).
-  // This is non-blocking and completes in < 1 s total.
+  // Always use createXlsxFromScratch (JSZip, ~1MB RAM) — never fillTemplateXlsx (ExcelJS,
+  // 50–200MB RAM per file). On Render's 512MB free tier, ExcelJS across multiple category
+  // files causes SIGABRT OOM crashes. Column definitions still come from the matched
+  // template so the correct columns are written; only visual styling is skipped.
   for (const [category, categoryProducts] of groups) {
     await new Promise<void>((r) => setImmediate(r)); // yield so HTTP polls can be served
 
@@ -130,10 +130,6 @@ export async function generateCategoryZip(
 
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
-    } else if (template.fileData) {
-      // Preserve original template formatting, column widths, styles and dropdowns
-      const buffer = await fillTemplateXlsx(categoryProducts, columns, Buffer.from(template.fileData as unknown as ArrayBuffer));
-      zip.file(`${fileName}.xlsx`, buffer);
     } else {
       const buffer = await createXlsxFromScratch(categoryProducts, columns, category);
       zip.file(`${fileName}.xlsx`, buffer);
@@ -231,9 +227,7 @@ export async function generateExportZip(
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(filtered, columns));
     } else {
-      const buffer = fileData
-        ? await fillTemplateXlsx(filtered, columns, fileData)
-        : await createXlsxFromScratch(filtered, columns, template.name);
+      const buffer = await createXlsxFromScratch(filtered, columns, template.name);
       zip.file(`${fileName}.xlsx`, buffer);
     }
   }
