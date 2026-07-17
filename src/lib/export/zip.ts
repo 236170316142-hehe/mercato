@@ -1,5 +1,4 @@
 import JSZip from "jszip";
-import ExcelJS from "exceljs";
 import type { Product, ExportTemplate } from "@prisma/client";
 
 type Column = { key: string; label: string; required?: boolean };
@@ -117,10 +116,9 @@ export async function generateCategoryZip(
   }
 
   // Process categories sequentially with event-loop yields between each file.
-  // Always use createXlsxFromScratch (JSZip, ~1MB RAM) — never fillTemplateXlsx (ExcelJS,
-  // 50–200MB RAM per file). On Render's 512MB free tier, ExcelJS across multiple category
-  // files causes SIGABRT OOM crashes. Column definitions still come from the matched
-  // template so the correct columns are written; only visual styling is skipped.
+  // Uses fillTemplateXlsx (JSZip XML, ~3–5× file size) when the matched template
+  // has fileData so original formatting/dropdowns are preserved.
+  // Falls back to createXlsxFromScratch when no fileData is attached.
   for (const [category, categoryProducts] of groups) {
     await new Promise<void>((r) => setImmediate(r)); // yield so HTTP polls can be served
 
@@ -130,6 +128,9 @@ export async function generateCategoryZip(
 
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
+    } else if (template.fileData) {
+      const buffer = await fillTemplateXlsx(categoryProducts, columns, template.fileData as Buffer);
+      zip.file(`${fileName}.xlsx`, buffer);
     } else {
       const buffer = await createXlsxFromScratch(categoryProducts, columns, category);
       zip.file(`${fileName}.xlsx`, buffer);
@@ -226,6 +227,9 @@ export async function generateExportZip(
 
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(filtered, columns));
+    } else if (fileData) {
+      const buffer = await fillTemplateXlsx(filtered, columns, fileData);
+      zip.file(`${fileName}.xlsx`, buffer);
     } else {
       const buffer = await createXlsxFromScratch(filtered, columns, template.name);
       zip.file(`${fileName}.xlsx`, buffer);
@@ -243,151 +247,211 @@ function eligibleProducts(products: Product[], _marketplace: string): Product[] 
 }
 
 // ── Fill existing template file with product rows ─────────────────────────────
+// Uses pure JSZip + XML string manipulation — no ExcelJS.
+// Memory cost: ~3–5× template file size (vs ExcelJS at 50–200×, which OOMs on
+// Render's 512MB free tier). All original formatting is preserved verbatim:
+// styles, column widths, frozen panes, merged cells, dropdown validations,
+// conditional formatting — nothing in the XML is touched except <sheetData> rows.
 
 async function fillTemplateXlsx(
   products: Product[],
   columns: Column[],
   fileData: Buffer,
 ): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook();
-  // ExcelJS type expects bare Buffer; Prisma Bytes resolves to Buffer<ArrayBuffer> in TS5
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await wb.xlsx.load(fileData as any);
+  const tplZip = await JSZip.loadAsync(fileData);
 
-  // Prefer a sheet literally named "Template" (Temu / multi-tab workbooks).
-  // Fall back to the sheet with the most rows, then worksheets[0].
-  const ws =
-    wb.worksheets.find((s) => /^template$/i.test(s.name)) ??
-    wb.worksheets.reduce(
-      (best, s) => ((s.rowCount ?? 0) > (best.rowCount ?? 0) ? s : best),
-      wb.worksheets[0],
-    );
-  if (!ws) return createXlsxFromScratch(products, columns, "Sheet1");
+  // ── Locate target worksheet ────────────────────────────────────────────────
+  const relsXml = await tplZip.file("xl/_rels/workbook.xml.rels")?.async("string") ?? "";
+  const rIdToTarget = new Map<string, string>();
+  for (const m of relsXml.matchAll(/Id="([^"]+)"[^>]+Target="([^"]+)"/g)) {
+    const t = m[2];
+    rIdToTarget.set(m[1], t.startsWith("xl/") ? t : `xl/${t}`);
+  }
+  const wbXml = await tplZip.file("xl/workbook.xml")?.async("string") ?? "";
+  const sheetDefs = [...wbXml.matchAll(/<sheet\b[^>]+name="([^"]*)"[^>]+r:id="([^"]*)"/gi)]
+    .map(m => ({ name: m[1], rId: m[2] }));
 
-  // Find the header row: row with the most *literal* (non-formula) non-empty cells.
-  // Formula-heavy data rows would otherwise score higher than the real header.
+  // name→path map for resolving dropdown range references (=Lists!$A$1:$A$10)
+  const sheetNameToPath = new Map<string, string>();
+  for (const sd of sheetDefs) {
+    const p = rIdToTarget.get(sd.rId);
+    if (p) sheetNameToPath.set(sd.name.toLowerCase(), p);
+  }
+
+  const targetDef = sheetDefs.find(s => /^template$/i.test(s.name)) ?? sheetDefs[0];
+  const sheetPath = targetDef ? rIdToTarget.get(targetDef.rId) : null;
+  if (!sheetPath || !tplZip.file(sheetPath)) {
+    return createXlsxFromScratch(products, columns, "Sheet1");
+  }
+  let sheetXml = await tplZip.file(sheetPath)!.async("string");
+
+  // ── Shared strings ─────────────────────────────────────────────────────────
+  const ssPath = "xl/sharedStrings.xml";
+  const existingSsXml = await tplZip.file(ssPath)?.async("string") ?? "";
+  const ssArr: string[] = [];
+  for (const m of existingSsXml.matchAll(/<si>([\s\S]*?)<\/si>/g)) ssArr.push(extractSsText(m[1]));
+  const ssMap = new Map<string, number>(ssArr.map((s, i) => [s, i]));
+  const ssIdx = (s: string): number => {
+    let i = ssMap.get(s);
+    if (i === undefined) { i = ssArr.length; ssMap.set(s, i); ssArr.push(s); }
+    return i;
+  };
+
+  // ── Parse header row ───────────────────────────────────────────────────────
+  const sdMatch = sheetXml.match(/<sheetData>([\s\S]*?)<\/sheetData>/);
+  if (!sdMatch) return createXlsxFromScratch(products, columns, "Sheet1");
+  const rowMatches = [...sdMatch[1].matchAll(/<row\b[^>]*\br="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)];
+
+  // Header = row with the most literal (non-formula) cells
   let headerRowNum = 1;
-  let maxLiteralCells = 0;
-  ws.eachRow((row, rowNumber) => {
-    let count = 0;
-    row.eachCell((cell) => {
-      const v = cell.value;
-      const isFormula = v !== null && typeof v === "object" && "formula" in (v as object);
-      if (!isFormula && v !== null && v !== undefined && v !== "") count++;
-    });
-    if (count > maxLiteralCells) { maxLiteralCells = count; headerRowNum = rowNumber; }
-  });
+  let headerRowXml = "";
+  let maxLiteral = 0;
+  for (const rm of rowMatches) {
+    const count = (rm[0].match(/<c\b/g)?.length ?? 0) - (rm[0].match(/<f>/g)?.length ?? 0);
+    if (count > maxLiteral) { maxLiteral = count; headerRowNum = parseInt(rm[1]); headerRowXml = rm[0]; }
+  }
+  if (!headerRowXml) return createXlsxFromScratch(products, columns, "Sheet1");
 
-  // Build a map: normalised header text → 1-based column index
-  const headerToCol = new Map<string, number>();
-  const headerRow = ws.getRow(headerRowNum);
-  headerRow.eachCell((cell, colNumber) => {
-    const text = normalizeKey(String(cell.value ?? ""));
-    if (text) headerToCol.set(text, colNumber);
-  });
+  // Map column letter → header label (resolve shared-string refs)
+  const colLetterToHeader = new Map<string, string>();
+  for (const cm of headerRowXml.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)>([\s\S]*?)<\/c>/g)) {
+    const [, letter, attrs, content] = cm;
+    const vVal = content.match(/<v>(\d+)<\/v>/)?.[1] ?? "";
+    const tVal = content.match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] ?? "";
+    const label = /\bt="s"/.test(attrs) && vVal ? (ssArr[parseInt(vVal)] ?? "") : xmlUnescape(tVal || vVal);
+    if (label) colLetterToHeader.set(letter, label);
+  }
 
-  // Map each column definition to a column index in the template
-  const colIndexMap: [Column, number][] = [];
+  // ── Map template columns to our column definitions ─────────────────────────
+  // Borrow cell styles from the first existing data row so new rows look the same
+  const firstDataXml = rowMatches.find(rm => parseInt(rm[1]) > headerRowNum)?.[0] ?? "";
+  const letterToStyle = new Map<string, string>();
+  for (const cm of firstDataXml.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
+    const s = cm[2].match(/\bs="(\d+)"/)?.[1];
+    if (s) letterToStyle.set(cm[1], s);
+  }
+
+  type ColEntry = { col: Column; letter: string; sAttr: string };
+  const colEntries: ColEntry[] = [];
   for (const col of columns) {
-    const byLabel = headerToCol.get(normalizeKey(col.label));
-    const byKey   = headerToCol.get(normalizeKey(col.key));
-    const idx = byLabel ?? byKey;
-    if (idx !== undefined) colIndexMap.push([col, idx]);
-  }
-
-  // If no columns matched the template headers, fall back to a fresh workbook
-  // so the file is never silently empty.
-  if (colIndexMap.length === 0) {
-    return createXlsxFromScratch(products, columns, ws.name);
-  }
-
-  // Determine the first data row.
-  // Some templates (e.g. Temu) place hidden INSTRUCTION rows between the header and
-  // the first real data row. We only want to skip past genuine instruction rows —
-  // NOT a stale sample/example data row, which must be overwritten so it doesn't
-  // survive in the output. Heuristic: a row is an "instruction" row (skip it) only
-  // if it looks like guidance — a single populated cell, or text containing typical
-  // instruction words. A row that fills most columns is stale DATA → overwrite it.
-  const instructionRe = /example|required|optional|instruction|do not|enter |select |format|max |min /i;
-  let firstDataRow = headerRowNum + 1;
-  for (let r = headerRowNum + 1; r <= headerRowNum + 10; r++) {
-    const row = ws.getRow(r);
-    let hasFormula = false;
-    let populated = 0;
-    let looksLikeInstruction = false;
-    row.eachCell((cell) => {
-      const v = cell.value;
-      if (v !== null && typeof v === "object" && "formula" in (v as object)) { hasFormula = true; return; }
-      if (v !== null && v !== undefined && v !== "") {
-        populated++;
-        if (instructionRe.test(String(v))) looksLikeInstruction = true;
+    for (const [letter, header] of colLetterToHeader) {
+      if (normalizeKey(header) === normalizeKey(col.label) || normalizeKey(header) === normalizeKey(col.key)) {
+        colEntries.push({ col, letter, sAttr: letterToStyle.has(letter) ? ` s="${letterToStyle.get(letter)}"` : "" });
+        break;
       }
-    });
-    // Formula row (Temu VLOOKUP) or empty row → data starts here, stop scanning.
-    if (hasFormula || populated === 0) { firstDataRow = r; break; }
-    // A sparse/instruction-looking row is guidance → skip past it.
-    // A densely-filled row is stale sample data → overwrite from here.
-    if (looksLikeInstruction || populated <= Math.max(1, Math.floor(colIndexMap.length / 3))) {
-      firstDataRow = r + 1;
-      continue;
     }
-    firstDataRow = r;
-    break;
+  }
+  if (colEntries.length === 0) return createXlsxFromScratch(products, columns, "Sheet1");
+
+  // OOXML requires cells within a row to appear in left-to-right column order
+  colEntries.sort((a, b) => {
+    if (a.letter.length !== b.letter.length) return a.letter.length - b.letter.length;
+    return a.letter.localeCompare(b.letter);
+  });
+
+  // ── Dropdown options from dataValidations ──────────────────────────────────
+  const dropdowns = new Map<string, string[]>(); // column letter → options
+  for (const dv of sheetXml.matchAll(/<dataValidation\b[^>]*\btype="list"[^>]*\bsqref="([^"]+)"[^>]*>([\s\S]*?)<\/dataValidation>/g)) {
+    const letter = /^([A-Z]+)/i.exec(dv[1])?.[1]?.toUpperCase();
+    if (!letter || dropdowns.has(letter)) continue;
+    const formula = dv[2].match(/<formula1>([\s\S]*?)<\/formula1>/)?.[1]?.trim() ?? "";
+    if (formula.startsWith('"') && formula.endsWith('"')) {
+      // Inline list: "New,Used,Refurbished"
+      const opts = formula.slice(1, -1).split(",").map(s => s.trim()).filter(Boolean);
+      if (opts.length) dropdowns.set(letter, opts);
+    } else if (formula) {
+      // Range reference: =Lists!$A$1:$A$10 — read from the referenced sheet
+      const opts = await resolveXmlRangeDropdown(tplZip, formula.replace(/^=/, ""), sheetNameToPath, ssArr);
+      if (opts.length) dropdowns.set(letter, opts);
+    }
   }
 
-  // Extract dropdown validation options per 1-based column index BEFORE we clear
-  // rows — resolving a range-reference dropdown (=Lists!$A$1:$A$3) reads cells
-  // from the workbook, which must still be intact.
-  //
-  // ExcelJS stores dataValidations keyed either as a range ("D3:D10000") or, more
-  // commonly, per-cell ("D10", "D11", …). Either way the leading letters give the
-  // column. A list formula is one of two forms:
-  //   • inline  — '"New,Used,Refurbished"'  → split on commas
-  //   • range   — '=Lists!$A$1:$A$3' or 'Sheet2!$A:$A' → read the referenced cells
-  const dropdownOptions = new Map<number, string[]>();
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dvModel = (ws as any).dataValidations?.model ?? {};
-    for (const [rangeKey, dv] of Object.entries(dvModel)) {
-      const dvTyped = dv as { type?: string; formulae?: string[] };
-      if (dvTyped.type !== "list" || !dvTyped.formulae?.[0]) continue;
-      const colLetters = /^([A-Z]+)/i.exec(rangeKey.split(":")[0])?.[1];
-      if (!colLetters) continue;
-      let ci = 0;
-      for (const ch of colLetters.toUpperCase()) ci = ci * 26 + (ch.charCodeAt(0) - 64);
-      // First per-column formula wins (they're identical across a column's cells)
-      if (dropdownOptions.has(ci)) continue;
-      const opts = resolveDropdownOptions(wb, dvTyped.formulae[0]);
-      if (opts.length) dropdownOptions.set(ci, opts);
-    }
-  } catch { /* dataValidations not accessible — skip silently */ }
+  // ── Build new data row XML ─────────────────────────────────────────────────
+  let nextRow = headerRowNum + 1;
+  const newRowsXml = products.map(p => {
+    const rn = nextRow++;
+    const cells = colEntries.map(({ col, letter, sAttr }) => {
+      const raw = String(getProductField(p, col.key) ?? "");
+      const val = dropdowns.has(letter) ? pickDropdownValue(raw, dropdowns.get(letter)!) : raw;
+      const ref = `${letter}${rn}`;
+      const isLargeId = /^\d{10,}$/.test(val);
+      if (val !== "" && !isLargeId && !Number.isNaN(Number(val))) {
+        return `<c r="${ref}"${sAttr}><v>${x(val)}</v></c>`;
+      }
+      return `<c r="${ref}"${sAttr} t="s"><v>${ssIdx(val)}</v></c>`;
+    }).join("");
+    return `<row r="${rn}">${cells}</row>`;
+  }).join("");
 
-  // Clear existing sample/data rows, then write products into FIXED row positions
-  // starting at firstDataRow. We do NOT use ws.addRow(): data-validations extend the
-  // worksheet's used range far below the real data (e.g. to row 100), so addRow would
-  // append after that phantom range and leave a stale sample row plus a block of blanks.
-  const lastRow = ws.lastRow?.number ?? headerRowNum;
-  for (let i = 0; i < products.length; i++) {
-    const p = products[i];
-    const row = ws.getRow(firstDataRow + i);
-    for (const [col, colIdx] of colIndexMap) {
-      const rawValue = String(getProductField(p, col.key) ?? "");
-      const opts = dropdownOptions.get(colIdx);
-      const cellValue = opts?.length ? pickDropdownValue(rawValue, opts) : rawValue;
-      row.getCell(colIdx).value = cellValue as ExcelJS.CellValue;
-    }
-    row.commit();
+  // Preserve header row (and any rows above it); discard all data rows after
+  const keptRows = rowMatches.filter(rm => parseInt(rm[1]) <= headerRowNum).map(rm => rm[0]).join("");
+  sheetXml = sheetXml.replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${keptRows}${newRowsXml}</sheetData>`);
+
+  // ── Write modified files back into the ZIP ─────────────────────────────────
+  tplZip.file(sheetPath, sheetXml);
+
+  const newSsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${ssArr.length}" uniqueCount="${ssArr.length}">
+${ssArr.map(s => `<si><t xml:space="preserve">${x(s)}</t></si>`).join("")}</sst>`;
+  tplZip.file(ssPath, newSsXml);
+
+  // Register sharedStrings in [Content_Types].xml if the template omitted it
+  const ctXml = await tplZip.file("[Content_Types].xml")?.async("string") ?? "";
+  if (ctXml && !ctXml.includes("sharedStrings")) {
+    tplZip.file("[Content_Types].xml", ctXml.replace(
+      "</Types>",
+      `<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`,
+    ));
   }
 
-  // Blank out any leftover template rows below the data we just wrote (the old
-  // sample row and any rows the previous content occupied).
-  for (let r = firstDataRow + products.length; r <= lastRow; r++) {
-    const row = ws.getRow(r);
-    for (const [, colIdx] of colIndexMap) row.getCell(colIdx).value = null;
-    row.commit();
-  }
+  return tplZip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }) as unknown as Promise<Buffer>;
+}
 
-  return wb.xlsx.writeBuffer() as unknown as Promise<Buffer>;
+/** Resolve a dataValidation range reference (e.g. =Lists!$A$1:$A$10) by reading
+ *  cells from the referenced sheet in the template ZIP. */
+async function resolveXmlRangeDropdown(
+  tplZip: JSZip,
+  formula: string,
+  sheetNameToPath: Map<string, string>,
+  ssArr: string[],
+): Promise<string[]> {
+  const m = /^(?:'?([^'!]+)'?!)?\$?([A-Z]+)\$?(\d+)?(?::\$?[A-Z]+\$?(\d+)?)?$/i.exec(formula);
+  if (!m) return [];
+  const [, sheetName, colLetter, r1, r2] = m;
+  const path = sheetName ? sheetNameToPath.get(sheetName.toLowerCase()) : null;
+  if (!path) return [];
+  const xml = await tplZip.file(path)?.async("string") ?? "";
+  if (!xml) return [];
+  const startRow = r1 ? parseInt(r1) : 1;
+  const endRow = r2 ? parseInt(r2) : 9999;
+  const targetCol = colLetter.toUpperCase();
+  const opts: string[] = [];
+  for (const rm of xml.matchAll(/<row\b[^>]*\br="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
+    const rn = parseInt(rm[1]);
+    if (rn < startRow || rn > endRow) continue;
+    for (const cm of rm[2].matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)>([\s\S]*?)<\/c>/g)) {
+      if (cm[1].toUpperCase() !== targetCol) continue;
+      const isShared = /\bt="s"/.test(cm[2]);
+      const vVal = cm[3].match(/<v>(\d+)<\/v>/)?.[1] ?? "";
+      const tVal = cm[3].match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] ?? "";
+      const val = isShared && vVal ? (ssArr[parseInt(vVal)] ?? "") : xmlUnescape(tVal || vVal);
+      if (val.trim()) opts.push(val.trim());
+    }
+  }
+  return opts;
+}
+
+/** Extract plain text from a shared-string <si> element (handles simple + rich text). */
+function extractSsText(siXml: string): string {
+  const runs = [...siXml.matchAll(/<r>[\s\S]*?<t[^>]*>([\s\S]*?)<\/t>[\s\S]*?<\/r>/g)];
+  if (runs.length) return runs.map(m => xmlUnescape(m[1])).join("");
+  const tMatch = siXml.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+  return tMatch ? xmlUnescape(tMatch[1]) : "";
+}
+
+function xmlUnescape(s: string): string {
+  return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'");
 }
 
 // ── Create a fresh workbook — pure XML + JSZip, no ExcelJS ───────────────────
@@ -905,45 +969,6 @@ function detectUpcType(raw: string): "UPC" | "EAN" | "GTIN" | "ASIN" | "" {
   if (digits.length === 13) return "EAN";
   if (digits.length === 14) return "GTIN";
   return "UPC";
-}
-
-/**
- * Resolve a data-validation list formula into its option strings.
- * Handles both inline lists ('"A,B,C"') and range references
- * ('=Lists!$A$1:$A$3', 'Sheet2!$A:$A', or a same-sheet '$A$1:$A$10') by reading
- * the referenced cells from the workbook.
- */
-function resolveDropdownOptions(wb: ExcelJS.Workbook, formula: string): string[] {
-  const f = formula.trim().replace(/^=/, "");
-  // Inline list: "New,Used,Refurbished"
-  if (f.startsWith('"') && f.endsWith('"')) {
-    return f.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean);
-  }
-  // Range reference, optionally sheet-qualified: [Sheet!]A1:A10 (with optional $)
-  const m = /^(?:'?([^'!]+)'?!)?\$?([A-Z]+)\$?(\d+)?(?::\$?([A-Z]+)\$?(\d+)?)?$/i.exec(f);
-  if (!m) return [];
-  const [, sheetName, c1, r1, c2, r2] = m;
-  const ws = sheetName ? wb.getWorksheet(sheetName) : wb.worksheets[0];
-  if (!ws) return [];
-  const colNum = (letters: string) => {
-    let n = 0;
-    for (const ch of letters.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
-    return n;
-  };
-  const startCol = colNum(c1);
-  const endCol = c2 ? colNum(c2) : startCol;
-  const startRow = r1 ? parseInt(r1, 10) : 1;
-  // Whole-column ref (A:A) has no row bound — cap the scan at the sheet's used rows.
-  const endRow = r2 ? parseInt(r2, 10) : (r1 ? startRow : (ws.lastRow?.number ?? 1));
-  const opts: string[] = [];
-  for (let r = Math.min(startRow, endRow); r <= Math.max(startRow, endRow); r++) {
-    for (let c = Math.min(startCol, endCol); c <= Math.max(startCol, endCol); c++) {
-      const v = ws.getRow(r).getCell(c).value;
-      const text = v == null ? "" : typeof v === "object" && "result" in v ? String((v as { result?: unknown }).result ?? "") : String(v);
-      if (text.trim()) opts.push(text.trim());
-    }
-  }
-  return opts;
 }
 
 /**
