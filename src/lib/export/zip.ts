@@ -262,13 +262,22 @@ async function fillTemplateXlsx(
   // ── Locate target worksheet ────────────────────────────────────────────────
   const relsXml = await tplZip.file("xl/_rels/workbook.xml.rels")?.async("string") ?? "";
   const rIdToTarget = new Map<string, string>();
-  for (const m of relsXml.matchAll(/Id="([^"]+)"[^>]+Target="([^"]+)"/g)) {
-    const t = m[2];
-    rIdToTarget.set(m[1], t.startsWith("xl/") ? t : `xl/${t}`);
+  // Order-independent: extract Id= and Target= from each <Relationship> regardless of attribute order
+  for (const m of relsXml.matchAll(/<Relationship\b([^>]+)/gi)) {
+    const attrStr = m[1];
+    const idM = attrStr.match(/\bId="([^"]+)"/i);
+    const tgtM = attrStr.match(/\bTarget="([^"]+)"/i);
+    if (idM && tgtM) {
+      const t = tgtM[1];
+      rIdToTarget.set(idM[1], t.startsWith("xl/") ? t : `xl/${t}`);
+    }
   }
   const wbXml = await tplZip.file("xl/workbook.xml")?.async("string") ?? "";
-  const sheetDefs = [...wbXml.matchAll(/<sheet\b[^>]+name="([^"]*)"[^>]+r:id="([^"]*)"/gi)]
-    .map(m => ({ name: m[1], rId: m[2] }));
+  // Order-independent: extract name= and r:id= from each <sheet> regardless of attribute order
+  const sheetDefs = [...wbXml.matchAll(/<sheet\b([^>]+)/gi)].map(m => ({
+    name: m[1].match(/\bname="([^"]*)"/i)?.[1] ?? "",
+    rId:  m[1].match(/\br:id="([^"]*)"/i)?.[1] ?? "",
+  })).filter(sd => sd.name && sd.rId);
 
   // name→path map for resolving dropdown range references (=Lists!$A$1:$A$10)
   const sheetNameToPath = new Map<string, string>();
@@ -438,7 +447,13 @@ async function fillTemplateXlsx(
 
     const cells = colEntries.map(({ col, letter }) => {
       const raw = String(getProductField(p, col.key) ?? "");
-      const val = dropdowns.has(letter) ? pickDropdownValue(raw, dropdowns.get(letter)!) : raw;
+      // Mathis category paths come from AI in "Dept > Cat > Sub" format but the template
+      // dropdown stores them as "Mathis Home/Dept/Cat/Sub". Normalize before matching so
+      // pickDropdownValue can do an exact or near-exact hit instead of partial word overlap.
+      const dropdownRaw = (dropdowns.has(letter) && raw.includes(" > ") && !raw.includes("/"))
+        ? "Mathis Home/" + raw.split(" > ").map(s => s.trim()).join("/")
+        : raw;
+      const val = dropdowns.has(letter) ? pickDropdownValue(dropdownRaw, dropdowns.get(letter)!) : raw;
       const ref = `${letter}${rn}`;
       const isLargeId = /^\d{10,}$/.test(val);
       const sAttr = getStyle(letter);
