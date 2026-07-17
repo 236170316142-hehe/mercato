@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import type { Product, ExportTemplate } from "@prisma/client";
+import { loadMathisCategoryPaths } from "../ai/mathis-taxonomy";
 
 type Column = { key: string; label: string; required?: boolean };
 
@@ -379,6 +380,23 @@ async function fillTemplateXlsx(
         if (!dropdowns.has(letter)) dropdowns.set(letter, opts);
       }
     }
+  }
+
+  // ── Category-column fallback ───────────────────────────────────────────────
+  // If the category column's range-based dataValidation couldn't be resolved
+  // (e.g. the reference sheet name didn't match or sheet ordering differed),
+  // seed the dropdown from our Mathis taxonomy CSV so pickDropdownValue always
+  // has options to match against.  This guarantees a valid Mathis path ends up
+  // in the cell rather than the raw AI category string.
+  const catEntry = colEntries.find(({ col }) =>
+    normalizeKey(col.key) === "category" || normalizeKey(col.label) === "category"
+  );
+  if (catEntry && !dropdowns.has(catEntry.letter)) {
+    try {
+      const paths = loadMathisCategoryPaths();
+      const mathisPaths = paths.map(p => "Mathis Home/" + p.split(" > ").map(s => s.trim()).join("/"));
+      if (mathisPaths.length) dropdowns.set(catEntry.letter, mathisPaths);
+    } catch { /* CSV unavailable — leave column without forced dropdown */ }
   }
 
   // ── Find first actual data row (skip multi-row headers) ───────────────────
