@@ -6,7 +6,7 @@ import { join } from "path";
  *   Department > Category > Subcategory > Product Type
  * e.g. "Furniture > Living Room > Sofas"
  *      "Furniture > Living Room > Cabinets & Chests > Cabinets"
- *      "Décor > Lighting > Ceiling Fans > Indoor Fans"
+ *      "Decor > Lighting > Ceiling Fans > Indoor Fans"
  *      "Seasonal > Christmas > Christmas Trees"
  *
  * These are the ONLY valid categories for Mathis product assignments.

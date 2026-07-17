@@ -64,15 +64,15 @@ const CATEGORY_HINTS: Array<[RegExp, string]> = [
   [/outdoor|patio|garden/i,
     "Outdoor furniture & accessories: outdoor seating (sofas, chairs, sectionals, benches), outdoor dining, outdoor tables, fire pits, gardening (planters, garden beds, tools), outdoor accessories (rugs, cushions, lighting, grills)."],
   [/mattress|sleep|foundation|pillow/i,
-    "Mattresses & sleep accessories: bed in a box, mattress accessories (bed frames, bed pillows, boxsprings & foundations, duvet inserts, sheets & pillowcases)."],
+    "Mattress & sleep accessories: bed in a box, mattress accessories (bed frames, bed pillows, boxsprings & foundations, duvet inserts, sheets & pillowcases)."],
   [/rug|doormat/i,
     "Rugs & floor coverings: indoor rugs, outdoor rugs, doormats, rug pads, stair treads."],
   [/bedding|bath|towel|sheet|comforter|duvet/i,
     "Bedding & bath: bed linens (comforters, duvet covers, sheets, quilts, blankets & throws), bath linens (towels, robes, bath rugs), bath accessories (mirrors, shower curtains, storage), bath furniture, bath hardware."],
   [/decor|accent|sculpture|vase|candle|mirror|frame/i,
-    "Décor: accents (sculptures, vases, mirrors, picture frames, clocks, candles & holders), flowers & plants (faux/live), lighting (ceiling fans, chandeliers, lamps, sconces, pendants), wall art & décor, pillows & throws, pets, window treatments, fragrances & diffusers."],
+    "Decor: accents (sculptures, vases, mirrors, picture frames, clocks, candles & holders), flowers & plants (faux/live), lighting (ceiling fans, chandeliers, lamps, sconces, pendants), wall art & decor, pillows & throws, pets, window treatments, fragrances & diffusers."],
   [/light|lamp|chandelier|sconce|fan/i,
-    "Lighting (under Décor department): ceiling fans, chandeliers, desk/floor/table lamps, flush mount, pendants, sconces, vanity lights, outdoor lights, novelty lights, wall lights."],
+    "Lighting (under Decor department): ceiling fans, chandeliers, desk/floor/table lamps, flush mount, pendants, sconces, vanity lights, outdoor lights, novelty lights, wall lights."],
   [/kitchen|cookware|bakeware|tabletop/i,
     "Kitchen: cookware & bakeware (pots, pans, bakeware sets), electrics (blenders, coffee makers, air fryers, mixers), kitchen furniture (bakers racks, islands & carts), kitchen tools, tabletop & bar (dinnerware, drinkware, flatware, serveware)."],
   [/office|desk|bookcase/i,
@@ -113,7 +113,7 @@ export async function categorizeProducts(
   }
 
   // Mathis works the same way: the full taxonomy sheet (mathis_categories.csv, built from
-  // the live mathishome.com navigation) drives categorization instead of template names.
+  // the official Mirakl export templates / fwd sheets) drives categorization instead of template names.
   // Top level of each path still matches the Mathis export templates, so export matching works.
   if (isMathis) {
     availableCategories = loadMathisCategoryPaths();
@@ -269,15 +269,15 @@ If nothing fits, use "Uncategorized".`;
   } else if (isMathis && availableCategories?.length) {
     // Full taxonomy from mathis_categories.csv (sourced from the official Mirakl fwd sheets).
     // Paths are 2–4 levels: Department > Category > Subcategory > Product Type
-    // (e.g. "Furniture > Living Room > Sofas", "Décor > Lighting > Ceiling Fans > Indoor Fans").
+    // Claude must match by product-type leaf on this sheet — not general retail logic.
     const taxonomy = formatMathisTaxonomyForPrompt();
     categorySection = strictMode
-      ? `EXACTLY one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2–4 levels: Department > Category > Subcategory > Product Type):
+      ? `EXACTLY one leaf path from this Mathis Brothers taxonomy (copy character-for-character). Match by the product-type leaf on the sheet (e.g. a Daybed → "Baby & Kids > Kids Furniture > Daybeds" because that is the ONLY Daybeds path). Do not reassign based on adult/kids assumptions:
 
 ${taxonomy}
 
 If nothing fits, use "Uncategorized".`
-      : `exactly one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2–4 levels deep, e.g. "Furniture > Living Room > Sofas" or "Décor > Lighting > Ceiling Fans > Indoor Fans" or "Seasonal > Christmas > Christmas Trees"):
+      : `exactly one leaf path from this Mathis Brothers taxonomy (copy character-for-character). Match the product TYPE to the leaf name on this sheet — e.g. Daybed → "Baby & Kids > Kids Furniture > Daybeds" (only Daybeds path); do NOT pick Sofas or Beds instead:
 
 ${taxonomy}
 
@@ -322,52 +322,58 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers
       amazon: "Amazon product categories (Electronics > Cameras, Home & Kitchen > Cookware, Clothing > Men's Shoes, etc.)",
       bestbuy: "Best Buy categories (TV & Home Theater, Computers & Tablets, Cell Phones, Appliances, Gaming, etc.)",
       walmart: "Walmart categories (Electronics, Home, Clothing, Baby, Sports & Outdoors, Food, etc.)",
-      mathis: "Mathis Brothers categories (Baby & Kids, Bedding & Bath, Décor, Furniture, Home Improvement, Kitchen, Mattresses, Organization, Outdoor, Rugs, Seasonal)",
+      mathis: "Mathis Brothers categories (Baby & Kids, Bedding & Bath, Decor, Furniture, Home Improvement, Kitchen, Mattress, Organization, Outdoor, Rugs, Seasonal)",
       sears: "Sears categories (Appliances, Tools, Clothing, Shoes, Electronics, Lawn & Garden, etc.)",
     };
     categorySection = taxonomies[mpLower] ?? `${marketplace} product categories`;
   }
 
   const storeContext = isMathis
-    ? "You are a product categorization expert for Mathis Brothers / Mathis Home. Their catalog is organized in up to 4 levels: Department > Category > Subcategory > Product Type (from the official Mirakl marketplace export templates). Departments include: Baby & Kids, Bedding & Bath, Décor, Furniture, Home Improvement, Kitchen, Mattresses, Organization, Outdoor, Rugs, and Seasonal. Always pick the deepest matching leaf path (prefer 3–4 levels over shallow ones). You MUST only assign categories from the provided taxonomy list."
+    ? "You are a product categorization expert for Mathis Brothers / Mathis Home. You are given the official Mirakl taxonomy sheet (Department > Category > Subcategory > Product Type). Your job is to match each product to the leaf path whose NAME best matches the product type — using ONLY the taxonomy list. Do not invent paths. Do not relocate a product to a different department based on assumptions about adult vs kids, room type, or how a retailer 'usually' organizes furniture."
     : isTemu
     ? "You are a product categorization expert for Temu, a global e-commerce marketplace. You are given Temu's official category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet."
     : isBestBuy
     ? "You are a product categorization expert for Best Buy, a major US consumer electronics and appliance retailer. Best Buy organizes products by Category > Subcategory > Product Type. Match each product to the most specific product type that matches Best Buy's real taxonomy."
     : "You are a product categorization expert for a major retail marketplace.";
 
-  const reasoningInstruction = `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
+  const reasoningInstruction = isMathis
+    ? `For each product, match it using the TAXONOMY only:
+STEP 1 — Identify the product type from the name/description (e.g. "Daybed", "Sofa", "Crib", "Table Lamp").
+STEP 2 — Search the taxonomy list for a leaf (or path segment) with that same product-type name.
+STEP 3 — If exactly one path contains that leaf (e.g. Daybeds only under Baby & Kids), YOU MUST use that path. Do not pick a "similar" adult Furniture path like Sofas.
+STEP 4 — Only if no product-type leaf matches, fall back to the closest listed path — still from the list only.
+Do NOT use outside assumptions (adult daybed → living room sofas, etc.). The taxonomy is the source of truth.`
+    : `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
 
   const mathisSizeRule = isMathis ? `
-MATHIS-SPECIFIC RULES:
-- Mathis is a furniture & home goods retailer. Products should be home-related items (furniture, decor, bedding, kitchenware, etc.).
-- If a product is clearly NOT a home/furniture/decor item (e.g., clothing, electronics, food), output "Uncategorized".
-- For seasonal/holiday items (decorations, lights, linens), use the appropriate holiday under "Seasonal" (Christmas, Halloween, Easter, etc.).
-- For home decor items that aren't holiday-specific, use "Décor" department paths.
-- Lighting products go under "Décor > Lighting" (NOT a separate department).
-- Window treatments go under "Décor > Window Treatments".
-- Always prefer the most specific leaf path available.` : "";
+MATHIS RULES (mandatory — taxonomy over assumptions):
+1. Match by PRODUCT TYPE NAME in the taxonomy first. Example: product is a "Daybed" and the sheet only has "Baby & Kids > Kids Furniture > Daybeds" → assign that path. Never substitute Sofas, Beds, or Living Room because it "looks adult".
+2. Department names on the sheet are organizational labels for Mirakl — they are NOT a signal to re-interpret the product. A daybed under Baby & Kids stays Baby & Kids even if branding/size feels adult.
+3. Never invent a path. Never pick a nearby category that is a different product type.
+4. Prefer the deepest leaf that literally matches the product type.
+5. Use "Uncategorized" only if no listed path's product type matches at all.
+6. Lighting → "Decor > Lighting …". Window treatments → "Decor > Window Treatments …". Holiday decor → "Seasonal > …".` : "";
 
   const rules = availableCategories?.length ? `
 RULES:
 1. Output EXACTLY one category name from the list above (copy it character-for-character) OR "Uncategorized" if truly no fit exists
 2. Never invent category names. Never output "General", "Other", "Furniture", "Unknown", etc.
 3. "Uncategorized" is only for products that genuinely don't belong in ANY listed category
-4. Use all available information: product name, brand, description, vendor category, web context
-5. If the product name includes a size, use it as a strong signal for age/audience${mathisSizeRule}` : "";
+4. Use product name, brand, description, vendor category as signals to identify WHAT the product is — then map that to the taxonomy leaf
+5. Do not override a direct taxonomy product-type match with general retail logic${mathisSizeRule}` : "";
 
   const usesTaxonomySheet = isTemu || isMathis;
 
   const jsonExample = isTemu
     ? `[{"index":1,"category":"Women's Clothing > Tops > T-Shirts","path":"Women's Clothing > Tops > T-Shirts","confidence":0.95},...]`
     : isMathis
-    ? `[{"index":1,"category":"Furniture > Living Room > Sofas","path":"Furniture > Living Room > Sofas","confidence":0.95},...]`
+    ? `[{"index":1,"category":"Baby & Kids > Kids Furniture > Daybeds","path":"Baby & Kids > Kids Furniture > Daybeds","confidence":0.95},...]`
     : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
 
   const pathHint = isTemu
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Women's Clothing > Tops > T-Shirts")`
     : isMathis
-    ? `- category and path: must be the exact leaf path from the taxonomy sheet (2–4 levels, e.g. "Furniture > Living Room > Sofas" or "Décor > Lighting > Ceiling Fans > Indoor Fans")`
+    ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Baby & Kids > Kids Furniture > Daybeds" when the product is a daybed — because that is where Daybeds lives on the sheet)`
     : `- path: full path e.g. "Mathis Brothers > Seasonal"`;
 
   const prompt = `${storeContext}
@@ -398,17 +404,21 @@ ${pathHint}
   const mapResult = (r: { index: number; category: string; path: string; confidence: number }) => {
     let cat = r.category?.trim() ?? "";
     if (allowedSet && !allowedSet.has(cat)) {
-      // Normalize spacing around ">" then try case-insensitive exact match
+      // Normalize spacing around ">" then try case-insensitive / accent-insensitive match
+      const fold = (s: string) =>
+        s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
       const compact = (s: string) => s.replace(/\s*>\s*/g, " > ").replace(/\s+/g, " ").trim();
       const compactCat = compact(cat);
-      const ciMatch = (availableCategories ?? []).find(
-        (a) => a.toLowerCase() === compactCat.toLowerCase(),
-      );
+      const foldedCat = fold(compactCat);
+      const ciMatch = (availableCategories ?? []).find((a) => {
+        const ca = compact(a);
+        return ca.toLowerCase() === compactCat.toLowerCase() || fold(ca) === foldedCat;
+      });
       if (ciMatch) {
         cat = ciMatch;
       } else {
         // Word-overlap fallback — require a stronger score for long Temu paths
-        const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const norm = (s: string) => fold(s).replace(/[^a-z0-9]+/g, " ").trim();
         const normCat = norm(cat);
         let best: string | null = null;
         let bestScore = 0;

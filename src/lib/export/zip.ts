@@ -142,6 +142,10 @@ export async function generateCategoryZip(
 
 // Pick the best-matching template for a category using word-overlap scoring.
 // Falls back to the provided default when no template scores above zero.
+//
+// For taxonomy paths like "Furniture > Living Room > Sofas", the department
+// (first segment) is the primary signal — matching export templates by leaf
+// words (e.g. "Kitchen" inside "Organization > Kitchen > …") caused wrong files.
 export function findBestTemplate<T extends { id: string; name: string; category?: string | null }>(
   category: string,
   templates: T[],
@@ -149,7 +153,14 @@ export function findBestTemplate<T extends { id: string; name: string; category?
 ): T {
   if (templates.length <= 1) return fallback;
 
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Fold accents so "Décor" ↔ "Decor", then strip to alphanumerics.
+  const fold = (s: string) =>
+    s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const norm = (s: string) => fold(s).replace(/[^a-z0-9]+/g, " ").trim();
+
+  // Prefer matching on the department (level-1) of a "A > B > C" path.
+  const department = category.split(/\s*>\s*/)[0]?.trim() || category;
+  const normDept = norm(department);
   const normCat = norm(category);
   const catWords = normCat.split(" ").filter((w) => w.length > 2);
 
@@ -157,18 +168,30 @@ export function findBestTemplate<T extends { id: string; name: string; category?
   let bestScore = 0;
 
   for (const t of templates) {
-    // Score against both the template name and its category field (whichever is set)
     const normName = norm(t.name);
     const normCatField = t.category ? norm(t.category) : normName;
-    const target = normCatField || normName;
+    // Strip trailing digits from template names like "Decor 1" / "Decor 2"
+    const bareName = normName.replace(/\s+\d+$/, "").trim();
+    const target = normCatField || bareName || normName;
     const targetWords = target.split(" ").filter((w) => w.length > 2);
 
     let score = 0;
+
+    // Strong department match (most important for Mathis/Temu taxonomy paths)
+    if (target === normDept || bareName === normDept) score += 20;
+    else if (normDept.startsWith(target) || target.startsWith(normDept)) score += 12;
+    // "Mattress" ↔ "Mattresses", "Decor" ↔ "Decorative" stem-ish: shared prefix ≥5 chars
+    else if (
+      (target.length >= 5 && normDept.startsWith(target.slice(0, 5))) ||
+      (normDept.length >= 5 && target.startsWith(normDept.slice(0, 5)))
+    ) {
+      score += 10;
+    }
+
     for (const word of catWords) if (targetWords.includes(word)) score += 2;
     for (const word of targetWords) if (catWords.includes(word)) score += 1;
     if (target.includes(normCat)) score += 5;
     if (normCat.includes(target)) score += 3;
-    // Exact match bonus
     if (target === normCat) score += 10;
 
     if (score > bestScore) { bestScore = score; best = t; }
