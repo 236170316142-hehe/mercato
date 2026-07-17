@@ -920,21 +920,10 @@ function getProductField(p: Product, key: string): unknown {
     lifestyle_image: fromVendor("lifestyle_image", "lifestyle_image_url", "room_scene", "room_image") || fromLive("image") || "",
     room_scene: fromVendor("room_scene", "room_scene_url", "lifestyle_image", "room_image") || fromLive("image") || "",
     hero_image: p.imageUrl || fromVendor("hero_image", "hero_image_url", "main_image", "silo_image", "image_url") || fromLive("image") || "",
-    // silo_image = Mathis primary image column (white-background product shot)
-    silo_image: p.imageUrl || fromVendor("silo_image", "silo image", "hero_image", "main_image", "main_image_url", "image_url", "image") || fromLive("image") || "",
     additional_image_1: fromVendor("additional_image_1", "alternate_image_1", "image_url2", "image2", "other_image1") ?? "",
     additional_image_2: fromVendor("additional_image_2", "alternate_image_2", "image_url3", "image3", "other_image2") ?? "",
     additional_image_3: fromVendor("additional_image_3", "alternate_image_3", "image_url4", "image4", "other_image3") ?? "",
-    // Mathis numbered product image columns (Product Image 2 url … Product Image 9 url)
     product_image_1_url: p.imageUrl || fromVendor("silo_image", "silo image", "main_image_url", "image_url", "image") || fromLive("image") || "",
-    product_image_2_url: fromVendor("product_image_2_url", "additional_image_1", "image2", "image_url2", "photo2") ?? "",
-    product_image_3_url: fromVendor("product_image_3_url", "additional_image_2", "image3", "image_url3", "photo3") ?? "",
-    product_image_4_url: fromVendor("product_image_4_url", "additional_image_3", "image4", "image_url4", "photo4") ?? "",
-    product_image_5_url: fromVendor("product_image_5_url", "additional_image_4", "image5", "image_url5", "photo5") ?? "",
-    product_image_6_url: fromVendor("product_image_6_url", "additional_image_5", "image6", "image_url6", "photo6") ?? "",
-    product_image_7_url: fromVendor("product_image_7_url", "additional_image_6", "image7", "image_url7", "photo7") ?? "",
-    product_image_8_url: fromVendor("product_image_8_url", "additional_image_7", "image8", "image_url8", "photo8") ?? "",
-    product_image_9_url: fromVendor("product_image_9_url", "additional_image_8", "image9", "image_url9", "photo9") ?? "",
 
     // Fabric / upholstery specific
     seat_material: fromVendor("seat_material", "seat_fabric", "upholstery_material", "fabric", "material") ?? "",
@@ -946,10 +935,6 @@ function getProductField(p: Product, key: string): unknown {
     package_length: fromVendor("package_length", "carton_length", "box_length") ?? "",
     package_width: fromVendor("package_width", "carton_width", "box_width") ?? "",
     package_height: fromVendor("package_height", "carton_height", "box_height") ?? "",
-
-    // Short description — Mathis "Short Description" column (truncated vendor description)
-    short_description: (fromVendor("short_description", "short_desc", "brief_description", "summary") as string)
-      || (descriptionText ? descriptionText.slice(0, 250).replace(/\s+\S*$/, "").trim() : ""),
 
     // Misc Mathis fields
     finish_color: fromVendor("finish_color", "finish", "color", "colour") ?? "",
