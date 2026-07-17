@@ -341,17 +341,34 @@ async function fillTemplateXlsx(
   });
 
   // ── Dropdown options from dataValidations ──────────────────────────────────
+  // Parse ALL dataValidation blocks first, then filter to type="list".
+  // The old regex required type= to precede sqref= in the attribute list —
+  // OOXML doesn't guarantee attribute order so some templates were missed.
   const dropdowns = new Map<string, string[]>(); // column letter → options
-  for (const dv of sheetXml.matchAll(/<dataValidation\b[^>]*\btype="list"[^>]*\bsqref="([^"]+)"[^>]*>([\s\S]*?)<\/dataValidation>/g)) {
-    const letter = /^([A-Z]+)/i.exec(dv[1])?.[1]?.toUpperCase();
-    if (!letter || dropdowns.has(letter)) continue;
-    const formula = dv[2].match(/<formula1>([\s\S]*?)<\/formula1>/)?.[1]?.trim() ?? "";
+  for (const dv of sheetXml.matchAll(/<dataValidation\b([^>]*?)>([\s\S]*?)<\/dataValidation>/g)) {
+    const attrs = dv[1];
+    const body  = dv[2];
+    if (!/\btype="list"/i.test(attrs)) continue;
+    const sqrefVal = attrs.match(/\bsqref="([^"]+)"/i)?.[1];
+    if (!sqrefVal) continue;
+    // sqref can be a space-separated list of ranges; extract every unique column letter
+    const letters = [...new Set([...sqrefVal.matchAll(/([A-Z]+)\d*/gi)].map(m => m[1].toUpperCase()))];
+    if (!letters.length) continue;
+    // XML-unescape formula1 (some exporters write &quot; instead of ")
+    const rawFormula = body.match(/<formula1[^>]*>([\s\S]*?)<\/formula1>/i)?.[1]?.trim() ?? "";
+    const formula = xmlUnescape(rawFormula);
+    let opts: string[] = [];
     if (formula.startsWith('"') && formula.endsWith('"')) {
-      const opts = formula.slice(1, -1).split(",").map(s => s.trim()).filter(Boolean);
-      if (opts.length) dropdowns.set(letter, opts);
+      // Inline list: "Yes,No" or "New,Used,Refurbished"
+      opts = formula.slice(1, -1).split(",").map(s => s.trim()).filter(Boolean);
     } else if (formula) {
-      const opts = await resolveXmlRangeDropdown(tplZip, formula.replace(/^=/, ""), sheetNameToPath, ssArr);
-      if (opts.length) dropdowns.set(letter, opts);
+      // Range reference: Lists!$A$1:$A$10 or =Sheet2!$B:$B
+      opts = await resolveXmlRangeDropdown(tplZip, formula.replace(/^=/, ""), sheetNameToPath, ssArr);
+    }
+    if (opts.length) {
+      for (const letter of letters) {
+        if (!dropdowns.has(letter)) dropdowns.set(letter, opts);
+      }
     }
   }
 
