@@ -216,9 +216,17 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
 
             return (
               <div key={p.id} className="border rounded-xl overflow-hidden">
-                <button
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-accent/50 transition text-left"
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-accent/50 transition text-left cursor-pointer"
                   onClick={() => setExpanded(isOpen ? null : p.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setExpanded(isOpen ? null : p.id);
+                    }
+                  }}
                 >
                   <span className={cn("inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full shrink-0", cfg.color)}>
                     <Icon className="w-3 h-3" />
@@ -256,7 +264,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                     </button>
                   )}
                   {isOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
-                </button>
+                </div>
 
                 {isOpen && (
                   <div className="border-t bg-muted/20 divide-y">
@@ -311,7 +319,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                                 // Prefer the dedicated image/URL fields; fall back to `live`
                                 // (older records where `live` held one URL).
                                 const liveImg = f.liveImage || (isUrl(f.live) && !f.liveUrl ? f.live : "");
-                                const liveUrl = f.liveUrl || (isUrl(f.live) ? f.live : "");
+                                const liveUrl = f.liveUrl;
                                 if (!liveImg && !liveUrl) {
                                   return <p className="font-medium line-clamp-2">{f.live}</p>;
                                 }
