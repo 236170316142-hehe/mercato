@@ -51,36 +51,38 @@ async function searchProductContext(name: string): Promise<string | null> {
 // understanding what the product actually IS.
 
 const CATEGORY_HINTS: Array<[RegExp, string]> = [
-  [/seasonal|holiday/i,
-    "Halloween/holiday WEARABLE items for teens & adults ONLY: adult/teen costumes (ANY character — pirate, witch, ninja, princess, cultural, fantasy, etc.), adult costume accessories (wigs, hats, masks, props, capes). Size signals for ADULT → Seasonal: Adult, Teen, XL, L, M, S when paired with adult context, Plus Size, 12-14, 14-16, 16-18, One Size. Also: holiday home decor, Christmas trees, ornaments, wreaths, lights. NOT for child/toddler/infant costumes → those go to Baby & Kids."],
+  [/seasonal|holiday|christmas|halloween|easter|thanksgiving/i,
+    "Seasonal/holiday home decor & entertaining: Christmas trees, decorations, lights, wreaths, garlands, seasonal tableware & linens, holiday blankets & throws. Subcategories by holiday: Christmas, Easter, Halloween, Thanksgiving, Hanukkah, Fourth of July, Valentines Day, Seasons."],
   [/baby|kid|youth|child|nursery|toddler/i,
-    "CRITICAL — This category covers ALL costumes and wearable items for children and babies, regardless of whether 'Costume' appears in the name. A product like 'Chinese Girl - T4' or 'Dragon - 12-18M' IS a costume for a child. Size codes that always mean Baby & Kids: T1, T2, T3, T4, T5, T6, T7 (toddler sizes), 0-3M, 3-6M, 6-12M, 12-18M, 18-24M, 2T, 3T, 4T (infant/toddler), S (4-6), M (7-8), L (8-10) when listed as a child age range like '(4-6)' or '(7-9)'. If a product has a character name (animal, nationality, occupation, fantasy character) followed by one of these size codes, it is ALWAYS a child costume → Baby & Kids. Also: children's clothing, stuffed animals, kids toys, baby gear, nursery & kids bedroom furniture, kids bedding."],
-  [/living\s*room/i,
-    "Living room furniture ONLY: sofas, sectionals, loveseats, recliners, accent chairs, ottomans, coffee tables, end tables, entertainment centers, TV stands, console tables. NOT costumes, NOT accessories."],
-  [/bedroom/i,
-    "Adult bedroom furniture: beds, headboards, bed frames, dressers, nightstands, armoires, bedroom sets/suites."],
-  [/dining/i,
-    "Dining room: dining tables, dining chairs, bar stools, china cabinets, buffets, sideboards, dining sets."],
-  [/outdoor|patio/i,
-    "Outdoor & patio FURNITURE only: outdoor sofas, lounge chairs, patio dining sets, fire pits, umbrellas, garden benches, outdoor storage. IMPORTANT — this is NOT for costumes, figurines, decorative statues, or any wearable item. A 'Chinese Girl', 'Dragon', 'Princess', or any character name is a COSTUME, not an outdoor product — assign it to Seasonal or Baby & Kids based on the size."],
-  [/mattress|sleep|foundation/i,
-    "Sleep products: mattresses (all types), box springs, mattress toppers/protectors, adjustable bases, bed pillows, mattress pads."],
-  [/rug/i,
-    "Floor coverings: area rugs, runners, accent rugs, outdoor rugs, rug pads."],
-  [/bedding|bath|linen/i,
-    "Bed & bath textiles: comforter sets, duvet covers, sheet sets, pillowcases, blankets, throws, towels, bath accessories."],
-  [/decor|accent/i,
-    "Decorative home accessories: wall art, mirrors, sculptures, vases, candles, picture frames, decorative pillows, clocks, faux plants."],
-  [/lighting|lamp/i,
-    "Light fixtures & lamps: chandeliers, pendant lights, ceiling fans, table lamps, floor lamps, wall sconces, lamp shades."],
-  [/kitchen/i,
-    "Kitchen furniture & storage: kitchen islands, bar stools, kitchen carts, kitchen cabinets, pantry storage."],
-  [/office/i,
-    "Home office furniture: desks, office chairs, bookcases, filing cabinets."],
-  [/storage|organiz|shelv/i,
-    "Storage & organization: shelving units, storage ottomans, bookcases, hall trees, coat racks, closet organizers."],
-  [/accent|entry|entryway/i,
-    "Entryway furniture: accent chairs, console tables, hall trees, entryway benches, coat racks."],
+    "Baby & kids home products: nursery furniture (cribs, changing tables, bassinets), kids bedroom furniture, kids playroom items (toys, play tables, stuffed animals), baby & kids decor, kids bedding, lunchtime essentials."],
+  [/living\s*room|sofa|sectional|recliner|loveseat/i,
+    "Living room furniture: sofas, sectionals, loveseats, recliners, accent chairs, ottomans & poufs, coffee tables, end & side tables, TV stands, fireplaces, futons, sleeper sofas."],
+  [/bedroom|bed|headboard|dresser|nightstand/i,
+    "Bedroom furniture: beds, headboards, dressers & chests, nightstands, armoires & wardrobes, bedroom sets, vanities, Murphy beds, benches."],
+  [/dining|bar\s*stool|buffet|sideboard/i,
+    "Dining room furniture: dining tables, dining chairs, dining sets, bar stools, bar & pub tables, sideboards & buffets, display & china cabinets, kitchen islands & carts."],
+  [/outdoor|patio|garden/i,
+    "Outdoor furniture & accessories: outdoor seating (sofas, chairs, sectionals, benches), outdoor dining, outdoor tables, fire pits, gardening (planters, garden beds, tools), outdoor accessories (rugs, cushions, lighting, grills)."],
+  [/mattress|sleep|foundation|pillow/i,
+    "Mattresses & sleep accessories: bed in a box, mattress accessories (bed frames, bed pillows, boxsprings & foundations, duvet inserts, sheets & pillowcases)."],
+  [/rug|doormat/i,
+    "Rugs & floor coverings: indoor rugs, outdoor rugs, doormats, rug pads, stair treads."],
+  [/bedding|bath|towel|sheet|comforter|duvet/i,
+    "Bedding & bath: bed linens (comforters, duvet covers, sheets, quilts, blankets & throws), bath linens (towels, robes, bath rugs), bath accessories (mirrors, shower curtains, storage), bath furniture, bath hardware."],
+  [/decor|accent|sculpture|vase|candle|mirror|frame/i,
+    "Décor: accents (sculptures, vases, mirrors, picture frames, clocks, candles & holders), flowers & plants (faux/live), lighting (ceiling fans, chandeliers, lamps, sconces, pendants), wall art & décor, pillows & throws, pets, window treatments, fragrances & diffusers."],
+  [/light|lamp|chandelier|sconce|fan/i,
+    "Lighting (under Décor department): ceiling fans, chandeliers, desk/floor/table lamps, flush mount, pendants, sconces, vanity lights, outdoor lights, novelty lights, wall lights."],
+  [/kitchen|cookware|bakeware|tabletop/i,
+    "Kitchen: cookware & bakeware (pots, pans, bakeware sets), electrics (blenders, coffee makers, air fryers, mixers), kitchen furniture (bakers racks, islands & carts), kitchen tools, tabletop & bar (dinnerware, drinkware, flatware, serveware)."],
+  [/office|desk|bookcase/i,
+    "Office furniture (under Furniture): bookcases, desks, file cabinets, office chairs, laptop carts & stands, gaming, office sets."],
+  [/storage|organiz|closet|laundry|pantry/i,
+    "Organization: bathroom, closet, kitchen, garage, laundry & cleaning, office, baby & kids, outdoor, and specialty organization products."],
+  [/entry|hall\s*tree|coat\s*rack|console/i,
+    "Entryway furniture (under Furniture): benches, coat racks, console & sofa tables, hall trees, storage."],
+  [/home\s*improvement|faucet|toilet|sink|door/i,
+    "Home Improvement: bathroom (hardware, plumbing, showers & bathtubs, sinks, toilets), doors & hardware, home gym equipment, kitchen (cabinets, faucets, sinks), outdoor (fencing, porch & deck, shutters)."],
 ];
 
 function buildCategoryGuide(categories: string[]): string {
@@ -265,9 +267,9 @@ ${taxonomy}
 
 If nothing fits, use "Uncategorized".`;
   } else if (isMathis && availableCategories?.length) {
-    // Full taxonomy from mathis_categories.csv — Claude must copy an exact leaf path.
+    // Full taxonomy from mathis_categories.csv (sourced from the official Mirakl fwd sheets).
     // Paths are 2–4 levels: Department > Category > Subcategory > Product Type
-    // (e.g. "Furniture > Living Room Furniture > Sofas", "Mattress > Mattress Type > Memory Foam Mattresses").
+    // (e.g. "Furniture > Living Room > Sofas", "Décor > Lighting > Ceiling Fans > Indoor Fans").
     const taxonomy = formatMathisTaxonomyForPrompt();
     categorySection = strictMode
       ? `EXACTLY one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2–4 levels: Department > Category > Subcategory > Product Type):
@@ -275,7 +277,7 @@ If nothing fits, use "Uncategorized".`;
 ${taxonomy}
 
 If nothing fits, use "Uncategorized".`
-      : `exactly one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2–4 levels deep, e.g. "Furniture > Living Room Furniture > Sofas" or "Furniture > Living Room Furniture > Sofas & Loveseats > Sofas" or "Seasonal > Halloween > Adult Costumes"):
+      : `exactly one leaf path from this Mathis Brothers taxonomy (copy character-for-character; paths are 2–4 levels deep, e.g. "Furniture > Living Room > Sofas" or "Décor > Lighting > Ceiling Fans > Indoor Fans" or "Seasonal > Christmas > Christmas Trees"):
 
 ${taxonomy}
 
@@ -320,14 +322,14 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers
       amazon: "Amazon product categories (Electronics > Cameras, Home & Kitchen > Cookware, Clothing > Men's Shoes, etc.)",
       bestbuy: "Best Buy categories (TV & Home Theater, Computers & Tablets, Cell Phones, Appliances, Gaming, etc.)",
       walmart: "Walmart categories (Electronics, Home, Clothing, Baby, Sports & Outdoors, Food, etc.)",
-      mathis: "Mathis Brothers categories (Living Room, Bedroom, Dining Room, Outdoor, Mattress, Rugs, Bedding & Bath, Baby & Kids, Decor, Lighting, Kitchen, Home Office, Storage, Seasonal)",
+      mathis: "Mathis Brothers categories (Baby & Kids, Bedding & Bath, Décor, Furniture, Home Improvement, Kitchen, Mattresses, Organization, Outdoor, Rugs, Seasonal)",
       sears: "Sears categories (Appliances, Tools, Clothing, Shoes, Electronics, Lawn & Garden, etc.)",
     };
     categorySection = taxonomies[mpLower] ?? `${marketplace} product categories`;
   }
 
   const storeContext = isMathis
-    ? "You are a product categorization expert for Mathis Brothers / Mathis Home. Their catalog is organized in up to 4 levels: Department > Category > Subcategory > Product Type (from mathishome.com). Departments include Furniture, Mattress, Outdoor, Baby & Kids, Rugs, Decor, Lighting, Bedding & Bath, Kitchen, Organization, Home Improvement, and Seasonal. Always pick the deepest matching leaf path (prefer 3–4 levels over shallow ones)."
+    ? "You are a product categorization expert for Mathis Brothers / Mathis Home. Their catalog is organized in up to 4 levels: Department > Category > Subcategory > Product Type (from the official Mirakl marketplace export templates). Departments include: Baby & Kids, Bedding & Bath, Décor, Furniture, Home Improvement, Kitchen, Mattresses, Organization, Outdoor, Rugs, and Seasonal. Always pick the deepest matching leaf path (prefer 3–4 levels over shallow ones). You MUST only assign categories from the provided taxonomy list."
     : isTemu
     ? "You are a product categorization expert for Temu, a global e-commerce marketplace. You are given Temu's official category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet."
     : isBestBuy
@@ -337,24 +339,14 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers
   const reasoningInstruction = `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
 
   const mathisSizeRule = isMathis ? `
-WEARABLE / COSTUME RULES (Mathis, mandatory) — decide in TWO steps:
-
-STEP 1 — Is this actually a costume or costume/dress-up item?
-A costume is a themed outfit or accessory for Halloween, cosplay, theatrical, or dress-up play (pirate, witch, princess, superhero, animal, historical/fantasy character, etc.).
-- REAL clothing, footwear, and genuine cultural/religious/ceremonial garments are NOT costumes. Examples that are NOT costumes: a kippah/yarmulke (real Jewish headwear), a hijab, a turban worn as real attire, a regular suit, dress, shirt, jacket, hat, or shoes meant to actually wear.
-- If the item is NOT a costume AND does not fit any furniture/home/decor/seasonal-decor path on the sheet, output "Uncategorized". Mathis is a furniture & home retailer — it does NOT sell everyday apparel, so real clothing has no home here and must be "Uncategorized". Do NOT force real apparel into a costume path.
-
-STEP 2 — Only if STEP 1 says it IS a costume item, use the size/audience signal to pick the path:
-- Full costume (themed outfit), child size → "Baby & Kids > Kids' Costumes > Child Costumes"
-  Child size codes: (4-6)/(4-7)/(6-8)/(7-9)/(7-10)/(8-10)/(10-12), or the words Kids/Child/Boys/Girls/Youth
-- Full costume, infant/toddler size → "Baby & Kids > Kids' Costumes > Infant & Toddler Costumes"
-  Infant/toddler codes: T1–T7, 0-3M/3-6M/6-12M/12-18M/18-24M, 2T/3T/4T, or the words Infant/Toddler/Baby
-- Full costume, adult size or no size → "Seasonal > Halloween > Adult Costumes"
-- Full costume, teen size ((12-14)/(14-16)/(16-18)/Teen) → "Seasonal > Halloween > Teen Costumes"
-- Costume ACCESSORY (a single piece worn WITH a costume: hat, crown, tiara, wig, mask, cape, gloves, prop, jewelry, belt, sash) — regardless of child or adult size → "Seasonal > Halloween > Costume Accessories". Wigs and masks specifically → "Seasonal > Halloween > Wigs & Masks".
-- Outdoor / Furniture paths are for home/patio products only — NEVER assign a costume or wearable item there.
-
-Note: A hat, crown, or top hat alone is an ACCESSORY, not a full costume — do not send it to a Kids'/Child Costumes path.` : "";
+MATHIS-SPECIFIC RULES:
+- Mathis is a furniture & home goods retailer. Products should be home-related items (furniture, decor, bedding, kitchenware, etc.).
+- If a product is clearly NOT a home/furniture/decor item (e.g., clothing, electronics, food), output "Uncategorized".
+- For seasonal/holiday items (decorations, lights, linens), use the appropriate holiday under "Seasonal" (Christmas, Halloween, Easter, etc.).
+- For home decor items that aren't holiday-specific, use "Décor" department paths.
+- Lighting products go under "Décor > Lighting" (NOT a separate department).
+- Window treatments go under "Décor > Window Treatments".
+- Always prefer the most specific leaf path available.` : "";
 
   const rules = availableCategories?.length ? `
 RULES:
@@ -369,13 +361,13 @@ RULES:
   const jsonExample = isTemu
     ? `[{"index":1,"category":"Women's Clothing > Tops > T-Shirts","path":"Women's Clothing > Tops > T-Shirts","confidence":0.95},...]`
     : isMathis
-    ? `[{"index":1,"category":"Furniture > Living Room Furniture > Sofas","path":"Furniture > Living Room Furniture > Sofas","confidence":0.95},...]`
+    ? `[{"index":1,"category":"Furniture > Living Room > Sofas","path":"Furniture > Living Room > Sofas","confidence":0.95},...]`
     : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
 
   const pathHint = isTemu
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Women's Clothing > Tops > T-Shirts")`
     : isMathis
-    ? `- category and path: must be the exact leaf path from the taxonomy sheet (2–4 levels, e.g. "Furniture > Living Room Furniture > Sofas" or "Seasonal > Halloween > Adult Costumes")`
+    ? `- category and path: must be the exact leaf path from the taxonomy sheet (2–4 levels, e.g. "Furniture > Living Room > Sofas" or "Décor > Lighting > Ceiling Fans > Indoor Fans")`
     : `- path: full path e.g. "Mathis Brothers > Seasonal"`;
 
   const prompt = `${storeContext}
