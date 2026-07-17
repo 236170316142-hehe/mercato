@@ -114,8 +114,8 @@ export async function generateCategoryZip(
   const byTemplate = new Map<string, { template: TemplateRow; products: Product[] }>();
   for (const p of eligible) {
     const cat = p.marketplaceCategory;
-    if (!cat || cat === "Uncategorized") continue;
-    const tpl = findBestTemplate(cat, templates, fallback);
+    // Route uncategorized products to the fallback template rather than dropping them
+    const tpl = (!cat || cat === "Uncategorized") ? fallback : findBestTemplate(cat, templates, fallback);
     if (!byTemplate.has(tpl.id)) byTemplate.set(tpl.id, { template: tpl, products: [] });
     byTemplate.get(tpl.id)!.products.push(p);
   }
@@ -129,7 +129,7 @@ export async function generateCategoryZip(
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(tplProducts, columns));
     } else if (template.fileData) {
-      const buffer = await fillTemplateXlsx(tplProducts, columns, template.fileData as Buffer);
+      const buffer = await fillTemplateXlsx(tplProducts, columns, template.fileData as Buffer, marketplace);
       zip.file(`${fileName}.xlsx`, buffer);
     } else {
       const buffer = await createXlsxFromScratch(tplProducts, columns, template.name);
@@ -196,7 +196,7 @@ export async function generateSingleTemplateExport(
     zip.file(`${fileName}.csv`, generateCsv(eligible, columns));
   } else if (fileData) {
     // Preserve original template formatting, dropdowns, validations
-    const buffer = await fillTemplateXlsx(eligible, columns, fileData);
+    const buffer = await fillTemplateXlsx(eligible, columns, fileData, marketplace);
     zip.file(`${fileName}.xlsx`, buffer);
   } else {
     const buffer = await createXlsxFromScratch(eligible, columns, template.name);
@@ -228,7 +228,7 @@ export async function generateExportZip(
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(filtered, columns));
     } else if (fileData) {
-      const buffer = await fillTemplateXlsx(filtered, columns, fileData);
+      const buffer = await fillTemplateXlsx(filtered, columns, fileData, marketplace);
       zip.file(`${fileName}.xlsx`, buffer);
     } else {
       const buffer = await createXlsxFromScratch(filtered, columns, template.name);
@@ -257,6 +257,7 @@ async function fillTemplateXlsx(
   products: Product[],
   columns: Column[],
   fileData: Buffer,
+  marketplace = "",
 ): Promise<Buffer> {
   const tplZip = await JSZip.loadAsync(fileData);
 
@@ -382,21 +383,23 @@ async function fillTemplateXlsx(
     }
   }
 
-  // ── Category-column fallback ───────────────────────────────────────────────
-  // If the category column's range-based dataValidation couldn't be resolved
-  // (e.g. the reference sheet name didn't match or sheet ordering differed),
-  // seed the dropdown from our Mathis taxonomy CSV so pickDropdownValue always
-  // has options to match against.  This guarantees a valid Mathis path ends up
-  // in the cell rather than the raw AI category string.
-  const catEntry = colEntries.find(({ col }) =>
-    normalizeKey(col.key) === "category" || normalizeKey(col.label) === "category"
-  );
-  if (catEntry && !dropdowns.has(catEntry.letter)) {
-    try {
-      const paths = loadMathisCategoryPaths();
-      const mathisPaths = paths.map(p => "Mathis Home/" + p.split(" > ").map(s => s.trim()).join("/"));
-      if (mathisPaths.length) dropdowns.set(catEntry.letter, mathisPaths);
-    } catch { /* CSV unavailable — leave column without forced dropdown */ }
+  // ── Category-column fallback (Mathis only) ────────────────────────────────
+  // When the template's range-based category dropdown can't be resolved (sheet
+  // name mismatch, encoding issue, etc.) seed it from the Mathis taxonomy CSV.
+  // Only applies to Mathis exports — other marketplaces write category as plain
+  // text and don't need a forced dropdown option list.
+  const isMathis = marketplace.toLowerCase() === "mathis";
+  if (isMathis) {
+    const catEntry = colEntries.find(({ col }) =>
+      normalizeKey(col.key) === "category" || normalizeKey(col.label) === "category"
+    );
+    if (catEntry && !dropdowns.has(catEntry.letter)) {
+      try {
+        const paths = loadMathisCategoryPaths();
+        const mathisPaths = paths.map(p => "Mathis Home/" + p.split(" > ").map(s => s.trim()).join("/"));
+        if (mathisPaths.length) dropdowns.set(catEntry.letter, mathisPaths);
+      } catch { /* CSV unavailable — leave column without forced dropdown */ }
+    }
   }
 
   // ── Find first actual data row (skip multi-row headers) ───────────────────
@@ -465,11 +468,14 @@ async function fillTemplateXlsx(
 
     const cells = colEntries.map(({ col, letter }) => {
       const raw = String(getProductField(p, col.key) ?? "");
-      // Mathis category paths come from AI in "Dept > Cat > Sub" format but the template
-      // dropdown stores them as "Mathis Home/Dept/Cat/Sub". Normalize before matching so
-      // pickDropdownValue can do an exact or near-exact hit instead of partial word overlap.
+      // Category paths from AI use " > " separator ("Dept > Cat > Sub").
+      // Template dropdowns often use "/" separator ("Mathis Home/Dept/Cat/Sub" for Mathis,
+      // or just "Dept/Cat/Sub" for other marketplaces). Normalise to "/" before matching
+      // so pickDropdownValue can do exact or near-exact hits instead of word overlap only.
       const dropdownRaw = (dropdowns.has(letter) && raw.includes(" > ") && !raw.includes("/"))
-        ? "Mathis Home/" + raw.split(" > ").map(s => s.trim()).join("/")
+        ? (isMathis
+            ? "Mathis Home/" + raw.split(" > ").map(s => s.trim()).join("/")
+            : raw.split(" > ").map(s => s.trim()).join("/"))
         : raw;
       const val = dropdowns.has(letter) ? pickDropdownValue(dropdownRaw, dropdowns.get(letter)!) : raw;
       const ref = `${letter}${rn}`;
@@ -1019,6 +1025,56 @@ function getProductField(p: Product, key: string): unknown {
     number_of_drawers: fromVendor("number_of_drawers", "drawers", "num_drawers", "drawer_count") ?? "",
     number_of_shelves: fromVendor("number_of_shelves", "shelves", "num_shelves", "shelf_count") ?? "",
     number_of_doors: fromVendor("number_of_doors", "doors", "num_doors", "door_count") ?? "",
+
+    // ── Walmart / Best Buy / multi-marketplace fields ────────────────────────
+    // Manufacturer Part Number — universal across Walmart, Best Buy, Amazon
+    mpn: fromVendor("mpn", "mfr_part_number", "manufacturer_part_number", "model_number", "model_no", "part_number") ?? "",
+    manufacturer_part_number: fromVendor("manufacturer_part_number", "mpn", "mfr_part_number", "part_number", "model_number") ?? "",
+    mfr_part_number: fromVendor("mpn", "mfr_part_number", "manufacturer_part_number", "model_number") ?? "",
+    model_number: fromVendor("model_number", "model_no", "mpn", "model", "part_number") ?? "",
+    model_name: fromVendor("model_name", "model", "model_number") ?? "",
+
+    // Walmart-specific operational fields (safe defaults for new listings)
+    fulfillment_type: fromVendor("fulfillment_type", "fulfillment", "shipping_type") ?? "3P",
+    is_bundle: fromVendor("is_bundle", "bundle", "is_set") ?? "No",
+    is_adult_product: fromVendor("is_adult", "is_adult_product", "adult") ?? "No",
+    is_gift_wrap_available: fromVendor("gift_wrap", "is_gift_wrap_available") ?? "No",
+    is_gift_message_available: fromVendor("gift_message", "is_gift_message_available") ?? "No",
+    tax_code: fromVendor("tax_code", "tax_category", "tax_class") ?? "",
+    site_start_date: fromVendor("site_start_date", "start_date", "launch_date") ?? "",
+    site_end_date: fromVendor("site_end_date", "end_date") ?? "",
+    ship_node: fromVendor("ship_node", "warehouse", "location") ?? "",
+    multi_pack_quantity: fromVendor("multi_pack_quantity", "pack_size", "pack", "pieces_per_pack") ?? "1",
+    minimum_order_quantity: fromVendor("minimum_order_quantity", "min_order_qty", "min_qty", "moq") ?? "1",
+
+    // Compliance / regulatory (Mathis Prop-65, general marketplace compliance)
+    prop_65: fromVendor("prop_65", "prop65", "california_prop_65", "proposition_65") ?? "",
+    prop_65_chemical: fromVendor("prop_65_chemical", "chemical_name", "prop65_chemical") ?? "",
+    made_in_usa: fromVendor("made_in_usa", "made_in_u_s_a", "us_made", "domestic") ?? "",
+    flammability: fromVendor("flammability", "flammability_standard", "fire_rating") ?? "",
+    certifications: fromVendor("certifications", "certification", "safety_certification") ?? "",
+
+    // Best Buy / electronics-specific
+    wireless: fromVendor("wireless", "is_wireless", "wifi", "bluetooth") ?? "",
+    battery_life: fromVendor("battery_life", "battery_hours", "runtime") ?? "",
+    connectivity: fromVendor("connectivity", "connection_type", "interface") ?? "",
+    resolution: fromVendor("resolution", "display_resolution", "screen_resolution") ?? "",
+    screen_size: fromVendor("screen_size", "display_size", "screen_diagonal") ?? "",
+    storage_capacity: fromVendor("storage_capacity", "storage", "hard_drive", "memory") ?? "",
+    processor: fromVendor("processor", "cpu", "processor_type", "chip") ?? "",
+    operating_system: fromVendor("operating_system", "os") ?? "",
+
+    // Temu / apparel / lifestyle
+    pattern: fromVendor("pattern", "pattern_type", "print") ?? "",
+    occasion: fromVendor("occasion", "use_occasion", "application") ?? "",
+    season: fromVendor("season", "seasons") ?? "",
+    room_type: fromVendor("room_type", "room", "room_style") ?? "",
+    shape: fromVendor("shape", "product_shape") ?? "",
+    closure_type: fromVendor("closure_type", "closure", "fastening") ?? "",
+    care_instructions: fromVendor("care_instructions", "care", "washing_instructions", "cleaning") ?? "",
+    number_of_items: fromVendor("number_of_items", "items_per_set", "pieces", "number_of_pieces") ?? "",
+    voltage: fromVendor("voltage", "operating_voltage", "power_supply") ?? "",
+    wattage: fromVendor("wattage", "power_watts", "watts") ?? "",
   };
 
   if (nk in coreMap) return coreMap[nk];
