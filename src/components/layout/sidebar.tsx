@@ -97,7 +97,10 @@ export function Sidebar({ user }: Props) {
             <p className="text-xs text-muted-foreground truncate">{user.email}</p>
           </div>
           <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={async () => {
+              await signOut({ redirect: false });
+              window.location.href = "/login";
+            }}
             className="opacity-0 group-hover:opacity-100 transition text-muted-foreground hover:text-destructive"
             title="Sign out"
           >

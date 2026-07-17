@@ -83,7 +83,10 @@ export function AppHeader({ user }: { user: User }) {
               </div>
               <div className="p-1">
                 <button
-                  onClick={() => signOut({ callbackUrl: "/login" })}
+                  onClick={async () => {
+                    await signOut({ redirect: false });
+                    window.location.href = "/login";
+                  }}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-destructive hover:bg-destructive/10 transition"
                 >
                   <LogOut className="w-3.5 h-3.5" />
