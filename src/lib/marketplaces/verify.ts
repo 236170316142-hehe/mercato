@@ -214,7 +214,12 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       if (!lp) { asinResults.set(p.id, notFound(p.id)); continue; }
       // ASIN is the most definitive product identity — always trust it.
       // Don't reject based on title similarity: vendor files often use abbreviations.
-      const result = compareToLive(p, lp.title as string, lp.brand as string ?? null, null, lp as Record<string, unknown>);
+      // Build the Amazon product page URL from the ASIN (not the image URL)
+      const liveDataForCompare = {
+        ...lp,
+        productUrl: lp.asin ? `https://www.amazon.com/dp/${lp.asin as string}` : "",
+      };
+      const result = compareToLive(p, lp.title as string, lp.brand as string ?? null, null, liveDataForCompare as Record<string, unknown>);
       // Downgrade mismatch → warning for ASIN-confirmed products (title abbreviation ≠ wrong product)
       if (result.status === "mismatch") {
         result.status = "warning";
@@ -1015,14 +1020,14 @@ export function pickBestCandidate(p: Product, candidates: any[]): any {
 export function extractPackQty(title: string): number {
   const t = title.toLowerCase();
   const patterns: RegExp[] = [
-    /pack[- ]of[- ](\d+)/,               // "pack of 6", "pack-of-6"
+    /pack[- ]?of[- ]?(\d+)/,             // "pack of 6", "pack-of-6", "pack of5"
     /(\d+)[- ]?pack\b/,                  // "6-pack", "6 pack", "6pack"
-    /set[- ]of[- ](\d+)/,                // "set of 3"
+    /set[- ]?of[- ]?(\d+)/,              // "set of 3", "set of3"
     /(\d+)[- ]?(?:pieces?|pcs?)\b/,      // "6 pieces", "6 pcs", "6pc"
     /(\d+)[- ]?(?:count|ct)\b/,          // "6 count", "6ct"
     /(\d+)[- ]?pk\b/,                    // "6pk", "6-pk"
-    /box[- ]of[- ](\d+)/,                // "box of 12"
-    /bundle[- ]of[- ](\d+)/,             // "bundle of 4"
+    /box[- ]?of[- ]?(\d+)/,              // "box of 12", "box of12"
+    /bundle[- ]?of[- ]?(\d+)/,           // "bundle of 4", "bundle of4"
     /(\d+)[- ]units?\b/,                 // "6 units"
     /qty[: ]+(\d+)/,                     // "qty: 6"
     /\((\d+)\s*(?:pack|count|ct|pk|pcs?|pieces?)\)/, // "(6 pack)", "(12 ct)"
