@@ -2,14 +2,15 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 /**
- * Full Mathis path from mathishome.com navigation, up to 4 levels:
+ * Full Mathis category path from the official Mirakl export templates (fwd sheets), up to 4 levels:
  *   Department > Category > Subcategory > Product Type
- * e.g. "Furniture > Living Room Furniture > Sofas"
- *      "Furniture > Living Room Furniture > Sofas & Loveseats > Sofas"
- *      "Mattress > Mattress Type > Memory Foam Mattresses"
- *      "Seasonal > Halloween > Adult Costumes"
+ * e.g. "Furniture > Living Room > Sofas"
+ *      "Furniture > Living Room > Cabinets & Chests > Cabinets"
+ *      "Décor > Lighting > Ceiling Fans > Indoor Fans"
+ *      "Seasonal > Christmas > Christmas Trees"
  *
- * Department (level 1) matches Mathis export template names (Furniture, Mattress, Outdoor, …).
+ * These are the ONLY valid categories for Mathis product assignments.
+ * Department (level 1) corresponds to the Mathis export template file names.
  */
 export type MathisCategoryPath = string;
 
