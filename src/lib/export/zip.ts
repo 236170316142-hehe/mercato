@@ -372,21 +372,43 @@ async function fillTemplateXlsx(
     }
   }
 
-  // ── Build output rows using the template's own pre-formatted rows ──────────
-  // Index existing data rows from the template (rowNum → rowXml).
-  // The template's data-entry rows carry per-cell styles (pink fill, borders, etc.).
-  // We reuse those rows' cell s= attributes so exported data looks identical to
-  // manually-entered data — the only thing we change is the cell value.
-  const templateDataRows = new Map<number, string>();
+  // ── Find first actual data row (skip multi-row headers) ───────────────────
+  // Mathis templates have two green header rows:
+  //   Row 1 = human-readable labels  (Category, Shop SKU, …)
+  //   Row 2 = internal field codes   (category, shopSKU, DIMH, …)  ← MUST be preserved
+  //   Row 3+ = pink data-entry rows  ← where product data goes
+  // Detect all consecutive "header-styled" rows after headerRowNum and skip them.
+  const headerStyles = new Set<string>();
+  for (const cm of headerRowXml.matchAll(/\bs="(\d+)"/g)) headerStyles.add(cm[1]);
+
+  let firstDataRowNum = headerRowNum + 1;
   for (const rm of rowMatches) {
     const rn = parseInt(rm[1]);
-    if (rn > headerRowNum) templateDataRows.set(rn, rm[0]);
+    if (rn <= headerRowNum) continue;
+    // Count how many cells in this row carry a header-type style vs. a different style
+    const cellStylesInRow = [...rm[0].matchAll(/\bs="(\d+)"/g)].map(m => m[1]);
+    const nonHeaderCells = cellStylesInRow.filter(s => !headerStyles.has(s)).length;
+    if (cellStylesInRow.length > 0 && nonHeaderCells === 0) {
+      // Every cell has a header style → this is a subheader / field-code row, keep it
+      firstDataRowNum = rn + 1;
+    } else {
+      // First row with different (data) styling — this is where products go
+      firstDataRowNum = rn;
+      break;
+    }
   }
 
-  // Fallback style per column from the first template data row (used when we
-  // need to create rows beyond the template's pre-formatted area).
+  // ── Build output rows using the template's own pre-formatted rows ──────────
+  // Index all rows starting from firstDataRowNum; these carry the pink cell styles.
+  const allDataRows = new Map<number, string>();
+  for (const rm of rowMatches) {
+    const rn = parseInt(rm[1]);
+    if (rn >= firstDataRowNum) allDataRows.set(rn, rm[0]);
+  }
+
+  // Borrow pink style from the first actual data row for rows beyond the template.
   const borrowedStyle = new Map<string, string>(); // letter → s-index
-  for (const cm of (templateDataRows.get(headerRowNum + 1) ?? "").matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
+  for (const cm of (allDataRows.get(firstDataRowNum) ?? "").matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
     const s = cm[2].match(/\bs="(\d+)"/)?.[1];
     if (s) borrowedStyle.set(cm[1], s);
   }
@@ -395,10 +417,10 @@ async function fillTemplateXlsx(
 
   for (let i = 0; i < products.length; i++) {
     const p = products[i];
-    const rn = headerRowNum + 1 + i;
-    const tplRow = templateDataRows.get(rn);
+    const rn = firstDataRowNum + i;
+    const tplRow = allDataRows.get(rn);
 
-    // Per-cell style from the corresponding template row; fall back to borrowed style.
+    // Per-cell style from the template's pre-formatted row at this position.
     const cellStyles = new Map<string, string>();
     if (tplRow) {
       for (const cm of tplRow.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
@@ -411,7 +433,7 @@ async function fillTemplateXlsx(
       return s ? ` s="${s}"` : "";
     };
 
-    // Row-level attributes (height, spans, etc.) preserved from the template row.
+    // Preserve row-level attributes (height, spans, etc.) from the template.
     const rowAttrs = tplRow ? (tplRow.match(/<row\b([^>]*)>/)?.[1] ?? ` r="${rn}"`) : ` r="${rn}"`;
 
     const cells = colEntries.map(({ col, letter }) => {
@@ -429,11 +451,11 @@ async function fillTemplateXlsx(
     outputRows.push(`<row${rowAttrs}>${cells}</row>`);
   }
 
-  // Remaining template rows beyond product count — clear values but preserve
-  // row structure and cell styles (empty pink input area stays intact).
-  const maxTplRow = templateDataRows.size > 0 ? Math.max(...templateDataRows.keys()) : headerRowNum;
-  for (let rn = headerRowNum + 1 + products.length; rn <= maxTplRow; rn++) {
-    const tplRow = templateDataRows.get(rn);
+  // Remaining pre-formatted rows beyond the product count — clear values but
+  // keep row structure and pink cell styles (empty input area stays styled).
+  const maxTplRow = allDataRows.size > 0 ? Math.max(...allDataRows.keys()) : firstDataRowNum;
+  for (let rn = firstDataRowNum + products.length; rn <= maxTplRow; rn++) {
+    const tplRow = allDataRows.get(rn);
     if (!tplRow) continue;
     const cleared = tplRow
       .replace(/<v>[\s\S]*?<\/v>/g, "")
@@ -444,8 +466,8 @@ async function fillTemplateXlsx(
     outputRows.push(cleared);
   }
 
-  // Assemble sheetData: header rows + output rows
-  const keptRows = rowMatches.filter(rm => parseInt(rm[1]) <= headerRowNum).map(rm => rm[0]).join("");
+  // Assemble sheetData: ALL rows before firstDataRowNum (both header rows) + output rows
+  const keptRows = rowMatches.filter(rm => parseInt(rm[1]) < firstDataRowNum).map(rm => rm[0]).join("");
   sheetXml = sheetXml.replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${keptRows}${outputRows.join("")}</sheetData>`);
 
   // ── Write modified files back into the ZIP ─────────────────────────────────
