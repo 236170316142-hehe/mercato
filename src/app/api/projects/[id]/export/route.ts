@@ -70,8 +70,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // The HTTP response returns the jobId above; client polls GET until done.
   void (async () => {
     try {
-      // Never load fileData (large BYTEA blob) — all export paths use createXlsxFromScratch
-      // which only needs column definitions. fillTemplateXlsx / ExcelJS blocks the event loop.
       const useAutoMatch = autoMatch || !!templateId;
       const useTemplateIds = !autoMatch && !templateId && templateIds.length > 0;
 

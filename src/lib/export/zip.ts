@@ -106,33 +106,32 @@ export async function generateCategoryZip(
 
   const eligible = eligibleProducts(products, marketplace);
 
-  // Group by category; skip products with no category or AI-flagged "Uncategorized"
-  const groups = new Map<string, Product[]>();
+  // Group products by their best-matching template (not by sub-category string).
+  // This produces one output file per template: all products whose marketplaceCategory
+  // best matches "Baby & Kids" land in one file regardless of how specific their
+  // sub-category is ("Baby & Kids > Costumes", "Baby & Kids > Nursery > Cribs", etc.).
+  const byTemplate = new Map<string, { template: TemplateRow; products: Product[] }>();
   for (const p of eligible) {
     const cat = p.marketplaceCategory;
     if (!cat || cat === "Uncategorized") continue;
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat)!.push(p);
+    const tpl = findBestTemplate(cat, templates, fallback);
+    if (!byTemplate.has(tpl.id)) byTemplate.set(tpl.id, { template: tpl, products: [] });
+    byTemplate.get(tpl.id)!.products.push(p);
   }
 
-  // Process categories sequentially with event-loop yields between each file.
-  // Uses fillTemplateXlsx (JSZip XML, ~3–5× file size) when the matched template
-  // has fileData so original formatting/dropdowns are preserved.
-  // Falls back to createXlsxFromScratch when no fileData is attached.
-  for (const [category, categoryProducts] of groups) {
+  for (const { template, products: tplProducts } of byTemplate.values()) {
     await new Promise<void>((r) => setImmediate(r)); // yield so HTTP polls can be served
 
-    const template = findBestTemplate(category, templates, fallback);
     const columns = template.columns as Column[];
-    const fileName = sanitize(category);
+    const fileName = sanitize(template.name);
 
     if (template.fileFormat === "csv") {
-      zip.file(`${fileName}.csv`, generateCsv(categoryProducts, columns));
+      zip.file(`${fileName}.csv`, generateCsv(tplProducts, columns));
     } else if (template.fileData) {
-      const buffer = await fillTemplateXlsx(categoryProducts, columns, template.fileData as Buffer);
+      const buffer = await fillTemplateXlsx(tplProducts, columns, template.fileData as Buffer);
       zip.file(`${fileName}.xlsx`, buffer);
     } else {
-      const buffer = await createXlsxFromScratch(categoryProducts, columns, category);
+      const buffer = await createXlsxFromScratch(tplProducts, columns, template.name);
       zip.file(`${fileName}.xlsx`, buffer);
     }
   }
