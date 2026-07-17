@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
+import { toDisplayBarcode } from "@/lib/barcode";
 
 type FieldResult = { field: string; label: string; stored: string; live: string; severity: string; note?: string };
 
@@ -71,7 +72,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     return [
       numId(p.vendorSku),
-      numId(normalizeUpc(p.upc) ?? p.upc),
+      numId(toDisplayBarcode(p.upc) ?? p.upc),
       numId(p.asin),
       ...textCells,
     ].join(",");
@@ -91,16 +92,3 @@ function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function normalizeUpc(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  let s = String(raw).trim();
-  if (/^\d[\d.]*[eE][+\-]?\d+$/.test(s)) {
-    const n = Number(s);
-    if (!isNaN(n) && n > 0) s = Math.round(n).toString();
-  }
-  s = s.replace(/[^0-9]/g, "");
-  if (!s || s.length < 8) return null;
-  if (s.length < 12) s = s.padStart(12, "0");
-  if (s.length > 14) s = s.slice(-14);
-  return s;
-}

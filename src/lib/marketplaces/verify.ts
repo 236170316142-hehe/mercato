@@ -1,4 +1,5 @@
 import type { Product } from "@prisma/client";
+import { ASIN_RE, barcodeVariants, toDisplayBarcode } from "@/lib/barcode";
 
 export type VerifyResult = {
   productId: string;
@@ -101,6 +102,7 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
 
   // Same hard/soft field logic as compareToLive: soft fields (images, description,
   // dimensions) showing "warning" must not alone push overall status to "warning".
+  // Image *mismatch* from AI still escalates via hasMismatch.
   const HARD_FIELDS = new Set(["title", "brand", "model"]);
   targets.forEach((t, i) => {
     const v = verdicts[i];
@@ -136,39 +138,6 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     .map((p) => ({ productId: p.id, status: "discontinued" as const, fields: [], liveData: {} }));
   const activeProducts = products.filter((p) => !isDiscontinuedInVendorData(p.vendorData));
 
-  // Only trust ASINs that look like real Amazon ASINs (B + 9 alphanumeric chars).
-  // Numeric-looking values like "43664.043078" are product codes, not ASINs — treat
-  // them as having no ASIN so they fall through to UPC / keyword search.
-  const ASIN_RE = /^B[0-9A-Z]{9}$/i;
-
-  // Normalize UPC from any vendor format:
-  //  • Scientific notation from Excel: "8.19E+11" → "819000000000"
-  //  • Floats with decimals: "819000000000.0" → "819000000000"
-  //  • Short UPCs: pad to 12 digits (UPC-A standard)
-  //  • Returns null if the result isn't 8–14 digits
-  const normalizeUpc = (raw: string | null | undefined): string | null => {
-    if (!raw) return null;
-    let s = String(raw).trim();
-    if (/^\d[\d.]*[eE][+\-]?\d+$/.test(s)) {
-      const n = Number(s);
-      if (!isNaN(n) && n > 0) s = Math.round(n).toString();
-    }
-    s = s.replace(/[^0-9]/g, "");
-    if (!s) return null;
-    if (s.length < 8) return null; // too short to be a real barcode
-    if (s.length < 12) s = s.padStart(12, "0"); // pad UPC-A
-    if (s.length > 14) s = s.slice(-14);
-    return s;
-  };
-
-  // Derive all barcode variants to try: UPC-12 + EAN-13 (prepend "0")
-  const upcVariants = (raw: string | null | undefined): string[] => {
-    const n = normalizeUpc(raw);
-    if (!n) return [];
-    if (n.length === 12) return [n, "0" + n]; // UPC-A + EAN-13
-    return [n];
-  };
-
   // Extract a barcode from vendorData when p.upc is null or invalid.
   // Vendor files often have UPC/EAN/barcode in columns with non-standard headers
   // that the importer didn't map to the upc field.
@@ -179,12 +148,12 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     const barcodeKeys = /\b(upc|ean|gtin|barcode|isbn|item[\s_-]*code|product[\s_-]*code)\b/i;
     for (const [k, v] of Object.entries(vd)) {
       if (!barcodeKeys.test(k)) continue;
-      const norm = normalizeUpc(String(v ?? ""));
+      const norm = toDisplayBarcode(String(v ?? ""));
       if (norm) return norm;
     }
     // Priority 2: any column whose value looks like a barcode (8-14 digits after normalization)
     for (const v of Object.values(vd)) {
-      const norm = normalizeUpc(String(v ?? ""));
+      const norm = toDisplayBarcode(String(v ?? ""));
       if (norm && norm.length >= 12) return norm;
     }
     return null;
@@ -192,7 +161,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
 
   // Resolve the best UPC for each product: stored p.upc → normalize → fallback vendorData scan
   const resolvedUpc = (p: Product): string | null =>
-    normalizeUpc(p.upc) ?? extractVendorUpc(p);
+    toDisplayBarcode(p.upc) ?? extractVendorUpc(p);
 
   const withAsin     = activeProducts.filter((p) => p.asin && ASIN_RE.test(p.asin));
   const asinInvalid  = activeProducts.filter((p) => p.asin && !ASIN_RE.test(p.asin));
@@ -220,8 +189,10 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
         productUrl: lp.asin ? `https://www.amazon.com/dp/${lp.asin as string}` : "",
       };
       const result = compareToLive(p, lp.title as string, lp.brand as string ?? null, null, liveDataForCompare as Record<string, unknown>);
-      // Downgrade mismatch → warning for ASIN-confirmed products (title abbreviation ≠ wrong product)
-      if (result.status === "mismatch") {
+      // Downgrade mismatch → warning for ASIN-confirmed products (title abbreviation ≠ wrong product),
+      // but keep pack-quantity mismatches hard — ASIN may still be a multipack listing.
+      const packMismatch = extractPackQty(p.name) !== extractPackQty(String(lp.title ?? ""));
+      if (result.status === "mismatch" && !packMismatch) {
         result.status = "warning";
         result.fields = result.fields.map((f) =>
           f.severity === "mismatch" ? { ...f, severity: "warning" as const } : f
@@ -240,7 +211,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
   if (withUpcOnly.length) {
     const codeToProduct = new Map<string, Product>();
     for (const p of withUpcOnly) {
-      for (const v of upcVariants(resolvedUpc(p))) codeToProduct.set(v, p);
+      for (const v of barcodeVariants(resolvedUpc(p))) codeToProduct.set(v, p);
     }
     const allCodes = [...new Set(codeToProduct.keys())];
 
@@ -268,7 +239,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       // Collect candidates across all variants (UPC-12 + EAN-13)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let candidates: (typeof liveNorm[number])[] = [];
-      for (const v of upcVariants(resolvedUpc(p))) {
+      for (const v of barcodeVariants(resolvedUpc(p))) {
         for (const c of (codeToLiveList.get(v) ?? [])) candidates.push(c);
       }
 
@@ -276,7 +247,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       // eanList/upcList (common for some catalog entries), or the batch lookup
       // silently failed for this code. Do a targeted single-product rescue lookup.
       if (!candidates.length) {
-        const rescueCodes = upcVariants(resolvedUpc(p));
+        const rescueCodes = barcodeVariants(resolvedUpc(p));
         if (rescueCodes.length) {
           try {
             const rescueRaw = await getProductsByCode(1, rescueCodes, { stats: 1 });
@@ -292,9 +263,19 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
         continue;
       }
 
+      // Pack qty is critical: if catalog is a single unit, never accept "Pack of N" /
+      // "Case of N" ASINs — even when they share the UPC (common Amazon multipack reuse).
+      // Prefer pack-compatible candidates; if none, fall through to keyword search so we
+      // can find the single-unit listing (often under a different UPC).
+      const packCompatible = filterPackCompatible(p.name, candidates);
+      if (!packCompatible.length) {
+        upcNotFound.push(p);
+        continue;
+      }
+
       // Pick the best ASIN using multi-signal scoring (not just title).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const best: any = pickBestCandidate(p, candidates);
+      const best: any = pickBestCandidate(p, packCompatible);
 
       // A UPC barcode IS the product identity — do NOT reject based on title similarity.
       // Vendor files often use heavy abbreviations ("PWR STRP 360PRO") that share zero words
@@ -304,9 +285,10 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       const resolved = resolvedUpc(p);
       const result = compareToLive(p, best.title as string, (best.brand as string) ?? null, null, best as Record<string, unknown>);
       if (resolved && !p.upc) result.resolvedUpc = resolved;
-      // UPC-confirmed product: downgrade any mismatch → warning so vendor abbreviation
-      // differences don't block the export. The UPC is the authoritative identity check.
-      if (result.status === "mismatch") {
+      // UPC-confirmed: soft-downgrade abbreviation mismatches → warning.
+      // Pack-qty mismatches stay hard (should be rare after filterPackCompatible).
+      const packMismatch = extractPackQty(p.name) !== extractPackQty(String(best.title ?? ""));
+      if (result.status === "mismatch" && !packMismatch) {
         result.status = "warning";
         result.fields = result.fields.map((f) =>
           f.severity === "mismatch" ? { ...f, severity: "warning" as const } : f
@@ -399,21 +381,36 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
               apiCache.set(cacheKey, normed);
             }
             if (!normed.length) return null;
-            // Exact model/MPN match wins outright, regardless of title similarity
+
+            // Prefer candidates whose pack qty matches the catalog title (single ≠ Pack of N).
+            const packMatched = filterPackCompatible(productName, normed);
+            const pool = packMatched.length ? packMatched : normed;
+
+            // Exact model/MPN match wins — but ONLY among pack-compatible candidates.
+            // Never let a multipack win just because the model number matches; if only
+            // multipacks match the model, we skip the early return and let the pack
+            // guard below reject them so we keep searching for the single-unit listing.
             if (vendorModel) {
               const vm = modelNorm(vendorModel);
-              for (const n of normed) {
+              for (const n of packMatched) {
                 const candModels = [n.model, n.partNumber]
                   .filter((m: unknown): m is string => typeof m === "string" && !!m.trim())
                   .map(modelNorm);
                 if (candModels.includes(vm)) return { best: n, bestSim: 1 };
               }
             }
-            let best = normed[0];
+            let best = pool[0];
             let bestSim = titleSim(productName, best.title);
-            for (const n of normed.slice(1)) {
+            for (const n of pool.slice(1)) {
               const s = titleSim(productName, n.title);
               if (s > bestSim) { best = n; bestSim = s; }
+            }
+            // If we had to fall back to pack-mismatched candidates, require a stronger title match
+            // and still reject explicit multipacks when the catalog is a single unit.
+            if (!packMatched.length) {
+              const vendorQty = extractPackQty(productName);
+              const liveQty = extractPackQty(String(best.title ?? ""));
+              if (vendorQty !== liveQty) return null;
             }
             return bestSim >= minSim ? { best, bestSim } : null;
           };
@@ -682,12 +679,19 @@ function compareToLive(
   // (N > 1), or vice-versa, that is a definitive mismatch regardless of word similarity.
   const vendorQty = extractPackQty(p.name);
   const liveQty = extractPackQty(liveTitle);
-  if (vendorQty !== liveQty) titleSeverity = "mismatch";
+  let titleNote: string | undefined;
+  if (vendorQty !== liveQty) {
+    titleSeverity = "mismatch";
+    titleNote = vendorQty === 1
+      ? `Catalog is a single unit, but Amazon title is a multipack (qty ${liveQty})`
+      : `Pack quantity mismatch: catalog qty ${vendorQty} vs Amazon qty ${liveQty}`;
+  }
   fields.push({
     field: "title", label: "Title",
     stored: p.name, live: liveTitle,
     match: titleSeverity === "ok",
     severity: titleSeverity,
+    ...(titleNote ? { note: titleNote } : {}),
   });
 
   // Brand — standard matching + cross-check with product titles.
@@ -839,9 +843,9 @@ function compareToLive(
   // (informational). A warning on a soft field alone is surfaced in the report
   // for manual review but does NOT change the overall status to "warning".
   // Hard: title, brand, model  →  any warning/mismatch here = escalates status
-  // Soft: images, description, dimensions  →  shown in report, but won't alone
-  //       cause "warning" overall (too many false positives from short vendor
-  //       descriptions and visual-only image checks)
+  // Soft: images, description, dimensions  →  shown in report; image *mismatch*
+  //       (from AI) still escalates via hasMismatch below.
+  // Pack-qty title mismatches are always hard (never soft-downgraded).
   const HARD_FIELDS = new Set(["title", "brand", "model"]);
   const hasMismatch = fields.some((f) => f.severity === "mismatch");
   const hasHardWarning = fields.some((f) => f.severity === "warning" && HARD_FIELDS.has(f.field));
@@ -900,10 +904,17 @@ function parseDims(s: string): [number, number, number] | null {
 
 // ── Multi-signal ASIN candidate picker ───────────────────────────────────────
 // When Keepa returns multiple ASINs for a single UPC, score each candidate
-// across 7 signals and return the highest-scoring one.
+// across signals and return the highest-scoring one.
+// Pack quantity is a hard pre-filter when any same-qty candidates exist.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function pickBestCandidate(p: Product, candidates: any[]): any {
+  if (!candidates.length) return null;
   if (candidates.length === 1) return candidates[0];
+
+  // Prefer pack-compatible titles when available (caller should already filter,
+  // but keep this as a safety net).
+  const packMatched = filterPackCompatible(p.name, candidates);
+  const pool = packMatched.length ? packMatched : candidates;
 
   // Extract vendor price for price-range comparison
   const vdRaw = (p.vendorData as Record<string, unknown> | null) ?? {};
@@ -928,74 +939,66 @@ export function pickBestCandidate(p: Product, candidates: any[]): any {
     return null;
   })();
 
+  const vendorQty = extractPackQty(p.name);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const score = (c: any): number => {
     let s = 0;
+    const liveTitle = String(c.title ?? "");
+    const liveQty = extractPackQty(liveTitle);
 
-    // 0. Model number match — weight 50
-    // A matching model/MPN is nearly a guaranteed correct listing, so it outweighs
-    // every other single signal. Match against the candidate's model AND partNumber
-    // fields; fall back to checking whether the model appears verbatim in the title.
+    // Pack qty is hard: huge penalty so multipacks never beat single-unit peers.
+    if (vendorQty !== liveQty) {
+      s -= 100;
+    } else if (vendorQty > 1) {
+      s += 40; // explicit pack match — strong bonus
+    }
+
+    // 0. Title similarity — critical (weight 50)
+    const ts = titleSim(p.name, liveTitle);
+    s += ts * 50;
+
+    // 1. Model number match — weight 40 (below pack + title; never overrides pack)
     if (vendorModel) {
       const vm = modelNorm(vendorModel);
       const candModels = [c.model, c.partNumber]
         .filter((m): m is string => typeof m === "string" && !!m.trim())
         .map(modelNorm);
-      if (candModels.includes(vm)) s += 50;
-      else if (vm.length >= 4 && modelNorm(c.title as string ?? "").includes(vm)) s += 30;
+      if (candModels.includes(vm)) s += 40;
+      else if (vm.length >= 4 && modelNorm(liveTitle).includes(vm)) s += 20;
     }
 
-    // 1. Title similarity — weight 35
-    const ts = titleSim(p.name, c.title as string ?? "");
-    s += ts * 35;
-
-    // 2. Brand match — weight 25
-    // Exact brand match scores full; partial (one contains other) scores half
+    // 2. Brand match — weight 20
     const vendorBrand = (p.brand ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
     const liveBrand = (c.brand as string ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
     if (vendorBrand && liveBrand) {
-      if (vendorBrand === liveBrand) s += 25;
-      else if (vendorBrand.includes(liveBrand) || liveBrand.includes(vendorBrand)) s += 12;
+      if (vendorBrand === liveBrand) s += 20;
+      else if (vendorBrand.includes(liveBrand) || liveBrand.includes(vendorBrand)) s += 10;
     }
 
-    // 3. Price proximity — weight 20
-    // Score based on how close the live price is to the vendor price.
-    // A price within 20% = full score; >100% off = 0.
+    // 3. Price proximity — weight 15
     if (vendorPrice != null && vendorPrice > 0 && c.price != null) {
       const livePrice = (c.price as number) / 100; // Keepa stores cents
       if (livePrice > 0) {
         const ratio = Math.min(vendorPrice, livePrice) / Math.max(vendorPrice, livePrice);
-        s += ratio * 20; // 1.0 if identical, 0.5 if one is 2x the other
+        s += ratio * 15;
       }
     }
 
-    // 4. Category match — weight 15
-    // Compare vendor category hint against Amazon category tree or title
+    // 4. Category match — weight 10
     if (vendorCategory) {
       const catWords = vendorCategory.split(/[\s,>/]+/).filter((w) => w.length > 3);
       const liveContext = [
-        c.title as string ?? "",
+        liveTitle,
         c.categoryTree as string ?? "",
         c.rootCategory as string ?? "",
+        c.category as string ?? "",
       ].join(" ").toLowerCase();
       const catHits = catWords.filter((w) => liveContext.includes(w)).length;
-      if (catWords.length > 0) s += (catHits / catWords.length) * 15;
+      if (catWords.length > 0) s += (catHits / catWords.length) * 10;
     }
 
-    // 5. Pack / quantity match — weight 20
-    // Same rule as verification: a title with no pack mention = single unit (qty 1).
-    // Prefer ASINs whose Amazon title implies the same quantity as the vendor title;
-    // penalize candidates with a different pack size (vendor qty 1 vs "Pack of 6").
-    const vendorQty = extractPackQty(p.name);
-    const liveQty   = extractPackQty(c.title as string ?? "");
-    if (vendorQty === liveQty) {
-      if (vendorQty > 1) s += 20; // explicit pack match — big bonus
-      // both single-unit: no bonus (that's the default, not a signal)
-    } else {
-      s -= 15; // different pack size — penalty
-    }
-
-    // 6. Availability / sales rank — weight 5
+    // 5. Availability / sales rank — weight 5 (prefer better-ranked singles)
     const rank = c.salesRank as number ?? -1;
     if (rank > 0 && rank < 1_000_000) s += 5;
     else if (rank > 0 && rank < 5_000_000) s += 2;
@@ -1003,13 +1006,20 @@ export function pickBestCandidate(p: Product, candidates: any[]): any {
     return s;
   };
 
-  let best = candidates[0];
-  let bestScore = score(candidates[0]);
-  for (const c of candidates.slice(1)) {
+  let best = pool[0];
+  let bestScore = score(pool[0]);
+  for (const c of pool.slice(1)) {
     const cs = score(c);
     if (cs > bestScore) { bestScore = cs; best = c; }
   }
   return best;
+}
+
+/** Keep only candidates whose pack/case qty matches the catalog title. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function filterPackCompatible(vendorTitle: string, candidates: any[]): any[] {
+  const vendorQty = extractPackQty(vendorTitle);
+  return candidates.filter((c) => extractPackQty(String(c?.title ?? "")) === vendorQty);
 }
 
 // ── Pack-quantity helpers ─────────────────────────────────────────────────────
@@ -1021,16 +1031,20 @@ export function extractPackQty(title: string): number {
   const t = title.toLowerCase();
   const patterns: RegExp[] = [
     /pack[- ]?of[- ]?(\d+)/,             // "pack of 6", "pack-of-6", "pack of5"
+    /\(\s*pack[- ]?of[- ]?(\d+)\s*\)/,   // "(Pack of 5)"
     /(\d+)[- ]?pack\b/,                  // "6-pack", "6 pack", "6pack"
+    /(?:wholesale\s+)?case[- ]?of[- ]?(\d+)/, // "case of 10", "Wholesale CASE of 10"
+    /(\d+)[- ]?case\b/,                  // "10-case", "10 case"
     /set[- ]?of[- ]?(\d+)/,              // "set of 3", "set of3"
     /(\d+)[- ]?(?:pieces?|pcs?)\b/,      // "6 pieces", "6 pcs", "6pc"
     /(\d+)[- ]?(?:count|ct)\b/,          // "6 count", "6ct"
     /(\d+)[- ]?pk\b/,                    // "6pk", "6-pk"
     /box[- ]?of[- ]?(\d+)/,              // "box of 12", "box of12"
     /bundle[- ]?of[- ]?(\d+)/,           // "bundle of 4", "bundle of4"
+    /multipack[- ]?of[- ]?(\d+)/,        // "multipack of 3"
     /(\d+)[- ]units?\b/,                 // "6 units"
     /qty[: ]+(\d+)/,                     // "qty: 6"
-    /\((\d+)\s*(?:pack|count|ct|pk|pcs?|pieces?)\)/, // "(6 pack)", "(12 ct)"
+    /\((\d+)\s*(?:pack|count|ct|pk|pcs?|pieces?|case)\)/, // "(6 pack)", "(12 ct)", "(5 case)"
   ];
   for (const re of patterns) {
     const m = t.match(re);
