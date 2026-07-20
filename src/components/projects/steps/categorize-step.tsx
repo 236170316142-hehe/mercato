@@ -23,6 +23,7 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
 }) {
   const isMathis = marketplace === "mathis";
   const isTemu = marketplace === "temu";
+  const isBestBuy = marketplace === "bestbuy";
   const isWalmart = marketplace === "walmart";
   const hasResults = products.some((p) => p.marketplaceCategory);
   const total = products.length;
@@ -61,8 +62,8 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
           <p className="text-sm text-muted-foreground mt-0.5">
             {isMathis
               ? "AI matches each product to an exact Mathis path (up to 4 levels)"
-              : isTemu
-              ? "AI matches each product to an exact path from the Temu category sheet"
+              : isTemu || isBestBuy
+              ? "AI matches each product to an exact path from the shared category sheet"
               : `AI assigns each product to the correct ${marketplace} category`}
           </p>
         </div>
@@ -150,8 +151,8 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
           <p className="text-sm text-muted-foreground max-w-sm">
             {isMathis
               ? "AI will match each product to the Mathis Home taxonomy (Department > Category > Subcategory > Product Type, up to 4 levels). Products that don't fit any path will be flagged."
-              : isTemu
-              ? "AI will send each product plus the Temu category sheet to Claude and assign the most specific Category > Subcategory > Sub-Subcategory path."
+              : isTemu || isBestBuy
+              ? "AI will send each product plus the shared category sheet to Claude and assign the most specific Category > Subcategory > Sub-Subcategory path."
               : `AI will analyze each product and assign it to the correct category in the ${marketplace} taxonomy.`}
           </p>
         </div>

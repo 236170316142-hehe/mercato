@@ -69,10 +69,16 @@ function extractVendorContext(vendorData: unknown): string | null {
   return parts.length ? parts.join(", ") : null;
 }
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { user, response } = await authGuard();
   if (response) return response;
   const { id } = await params;
+
+  // `force: true` re-categorizes every product from scratch. Default (false) reuses
+  // each product's existing category and only (re)processes ones that are still
+  // Uncategorized / never categorized — so repeat runs give stable, repeatable results.
+  const body = await req.json().catch(() => ({}));
+  const force: boolean = body?.force === true;
 
   const project = await prisma.project.findUnique({
     where: { id },
@@ -93,27 +99,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  // Best Buy: constrain AI to uploaded template names so each product lands in
-  // a category that has a matching export template.
-  // Temu & Mathis: always use their CSV taxonomy sheets inside categorizeProducts
-  // (temu_categories.csv / mathis_categories.csv) — not template names. The top level
-  // of each assigned path still fuzzy-matches export templates at export time.
-  // All other marketplaces use their standard taxonomy freely.
+  // Temu & Best Buy share temu_categories.csv; Mathis uses mathis_categories.csv.
+  // These CSV taxonomy sheets drive categorization inside categorizeProducts (not template names).
+  // The top level of each assigned path still fuzzy-matches export templates at export time.
   const mpLower = project.marketplace.toLowerCase();
-  const isBestBuy = mpLower === "bestbuy";
-  let availableCategories: string[] = [];
-  if (isBestBuy) {
-    const marketplaceTemplates = await prisma.exportTemplate.findMany({
-      where: {
-        marketplace: { equals: project.marketplace, mode: "insensitive" },
-        OR: [{ userId: user!.id }, { userId: null }],
-      },
-      select: { name: true, category: true },
-    });
-    availableCategories = [
-      ...new Set(marketplaceTemplates.map((t) => t.category || t.name).filter(Boolean)),
-    ] as string[];
-  }
 
   await prisma.project.update({ where: { id }, data: { status: "categorizing" } });
 
@@ -128,63 +117,78 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       vendorContext: extractVendorContext(p.vendorData),
     }));
 
-    // SKU-only sheets (common for Mathis): resolve codes like TOVF-TOVL54566 → real
-    // product titles via web search before asking Claude to categorize.
-    const skuOnly = productInputs.filter((p) => looksLikeSkuName(p.name));
+    // Reuse existing categories for repeatable re-runs: unless `force`, only send
+    // products that don't yet have a confident category (null or "Uncategorized").
+    // Already-categorized products are left untouched, so their result never changes.
+    const existingCatById = new Map(project.products.map((p) => [p.id, p.marketplaceCategory]));
+    const needsCategorization = (id: string) => {
+      if (force) return true;
+      const cat = existingCatById.get(id);
+      return !cat || cat === "Uncategorized";
+    };
+    productInputs = productInputs.filter((p) => needsCategorization(p.id));
+
     let enrichedCount = 0;
-    if (skuOnly.length > 0) {
-      const { products: enriched, enrichments } = await enrichSkuOnlyProducts(productInputs);
-      productInputs = enriched;
-      enrichedCount = enrichments.length;
-      if (enrichments.length > 0) {
-        await Promise.all(
-          enrichments.map((e) =>
-            prisma.product.update({
-              where: { id: e.productId },
-              data: {
-                name: e.name,
-                brand: e.brand,
-                description: e.description,
-              },
-            }),
-          ),
-        );
+
+    if (productInputs.length > 0) {
+      // SKU-only sheets (common for Mathis): resolve codes like TOVF-TOVL54566 → real
+      // product titles via web search before asking Claude to categorize.
+      const skuOnly = productInputs.filter((p) => looksLikeSkuName(p.name));
+      if (skuOnly.length > 0) {
+        const { products: enriched, enrichments } = await enrichSkuOnlyProducts(productInputs);
+        productInputs = enriched;
+        enrichedCount = enrichments.length;
+        if (enrichments.length > 0) {
+          await Promise.all(
+            enrichments.map((e) =>
+              prisma.product.update({
+                where: { id: e.productId },
+                data: {
+                  name: e.name,
+                  brand: e.brand,
+                  description: e.description,
+                },
+              }),
+            ),
+          );
+        }
       }
+
+      const results = await categorizeProducts(project.marketplace, productInputs);
+
+      await Promise.all(
+        results.map((r) =>
+          prisma.product.update({
+            where: { id: r.productId },
+            data: {
+              marketplaceCategory: r.category,
+              categoryPath: r.path,
+              categoryConfidence: r.confidence,
+              categorizedAt: new Date(),
+            },
+          })
+        )
+      );
+
+      // Fold new results into the existing-category map so the response counts
+      // reflect the full project (kept + newly categorized).
+      for (const r of results) existingCatById.set(r.productId, r.category);
     }
-
-    const results = await categorizeProducts(
-      project.marketplace,
-      productInputs,
-      availableCategories.length ? availableCategories : undefined,
-    );
-
-    await Promise.all(
-      results.map((r) =>
-        prisma.product.update({
-          where: { id: r.productId },
-          data: {
-            marketplaceCategory: r.category,
-            categoryPath: r.path,
-            categoryConfidence: r.confidence,
-            categorizedAt: new Date(),
-          },
-        })
-      )
-    );
 
     await prisma.project.update({ where: { id }, data: { status: "categorized" } });
 
-    const matched = results.filter((r) => r.category && r.category !== "Uncategorized").length;
-    const unmatched = results.length - matched;
+    const allCats = [...existingCatById.values()];
+    const matched = allCats.filter((c) => c && c !== "Uncategorized").length;
+    const unmatched = allCats.length - matched;
 
     return NextResponse.json({
-      categorized: results.length,
+      categorized: allCats.length,
       matched,
       unmatched,
+      reprocessed: productInputs.length,
       enrichedFromSku: enrichedCount,
-      categories: availableCategories.length
-        ? availableCategories
-        : mpLower === "temu"
+      categories:
+        mpLower === "temu" || mpLower === "bestbuy"
           ? ["(temu_categories.csv taxonomy)"]
           : mpLower === "mathis"
             ? ["(mathis_categories.csv taxonomy)"]
