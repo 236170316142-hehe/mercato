@@ -127,7 +127,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const usesCategoryExport = isTemu || isBestBuy || isWalmart;
 
       let zipBuffer: Buffer;
-      if (usesCategoryExport && allTemplates.length) {
+      if (useTemplateIds && allTemplates.length) {
+        // User explicitly selected a template → all products in one file using that template.
+        // This takes priority over category-split so Walmart (and any marketplace) can use
+        // a manually chosen template instead of auto-matching by category.
+        const tpl = allTemplates[0];
+        const templateFileData = tpl?.fileData ? Buffer.from(tpl.fileData as unknown as ArrayBuffer) : null;
+        zipBuffer = await generateSingleTemplateExport(project.products, tpl, projectMeta.marketplace, templateFileData) as Buffer;
+      } else if (usesCategoryExport && allTemplates.length) {
         // With uploaded templates: match each category to the closest template
         // and export in that template's column format — one file per matched category
         zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
@@ -137,12 +144,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       } else if (!allTemplates.length) {
         // Non-Mathis with no templates → flat export (one file, standard columns)
         zipBuffer = await generateFlatExport(project.products, projectMeta.marketplace) as Buffer;
-      } else if (useTemplateIds) {
-        // Non-Mathis: user picked a specific template → all products in one file.
-        // fileData is already loaded in allTemplates (included in templateSelect above).
-        const tpl = allTemplates[0];
-        const templateFileData = tpl?.fileData ? Buffer.from(tpl.fileData as unknown as ArrayBuffer) : null;
-        zipBuffer = await generateSingleTemplateExport(project.products, tpl, projectMeta.marketplace, templateFileData) as Buffer;
       } else if (useAutoMatch) {
         zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
       } else {

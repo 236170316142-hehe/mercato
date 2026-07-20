@@ -1107,9 +1107,45 @@ function getProductField(p: Product, key: string): unknown {
     number_of_items: fromVendor("number_of_items", "items_per_set", "pieces", "number_of_pieces") ?? "",
     voltage: fromVendor("voltage", "operating_voltage", "power_supply") ?? "",
     wattage: fromVendor("wattage", "power_watts", "watts") ?? "",
+
+    // ── Walmart template column aliases ─────────────────────────────────────
+    // "ProductId1" / "Product Id 1" → external product ID value (UPC/GTIN)
+    product_id_1: p.upc ?? fromVendor("upc", "ean", "gtin", "barcode") ?? "",
+    product_id_type_1: (() => {
+      const b = String(p.upc ?? fromVendor("upc", "ean", "barcode") ?? "");
+      return b ? detectUpcType(b) : "UPC";
+    })(),
+    // "ProductCategory" / "Product Category" → AI-assigned category
+    product_category: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",
+    // "Short Title" — Walmart limits item titles to 75 chars in some feeds
+    short_title: (p.name || (fromLive("title") as string) || "").slice(0, 75),
+    // Compliance / geo restrictions — usually empty for standard listings
+    state_restrictions: fromVendor("state_restrictions", "staterestrictions") ?? "",
+    states: fromVendor("states", "restricted_states", "state_list") ?? "",
+    zip_codes: fromVendor("zip_codes", "zipcodes", "zip_code_list") ?? "",
+    // Product attribute pairs (Walmart uses these for spec bullets)
+    product_attribute_1_name: fromVendor("product_attribute_1_name", "attribute_1_name", "attr1_name", "attribute_name_1") ?? "",
+    product_attribute_1_value: fromVendor("product_attribute_1_value", "attribute_1_value", "attr1_value", "attribute_value_1") ?? "",
+    product_attribute_2_name: fromVendor("product_attribute_2_name", "attribute_2_name", "attr2_name", "attribute_name_2") ?? "",
+    product_attribute_2_value: fromVendor("product_attribute_2_value", "attribute_2_value", "attr2_value", "attribute_value_2") ?? "",
+    product_attribute_3_name: fromVendor("product_attribute_3_name", "attribute_3_name", "attr3_name") ?? "",
+    product_attribute_3_value: fromVendor("product_attribute_3_value", "attribute_3_value", "attr3_value") ?? "",
+    // Additional / offer attributes
+    additional_attribute_1_name: fromVendor("additional_attribute_1_name", "additional_1_name", "add_attr_1_name") ?? "",
+    additional_attribute_1_value: fromVendor("additional_attribute_1_value", "additional_1_value", "add_attr_1_value") ?? "",
+    additional_attribute_2_name: fromVendor("additional_attribute_2_name", "additional_2_name") ?? "",
+    additional_attribute_2_value: fromVendor("additional_attribute_2_value", "additional_2_value") ?? "",
+    offer_attribute_name: fromVendor("offer_attribute_name", "offer_attr_name") ?? "",
+    offer_attribute_value: fromVendor("offer_attribute_value", "offer_attr_value") ?? "",
+    // Generic "Value" column that appears in some Walmart offer sheets
+    value: fromVendor("value", "offer_attribute_value", "attribute_value") ?? "",
   };
 
-  if (nk in coreMap) return coreMap[nk];
+  // Build normalized lookup (coreMap keys use underscores; column labels may not)
+  // e.g. "shipping_weight" → "shippingweight" so "ShippingWeight" column finds it.
+  const coreNorm = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(coreMap)) coreNorm.set(normalizeKey(k), v);
+  if (coreNorm.has(nk)) return coreNorm.get(nk);
 
   if (vd && vdNorm) {
     // Exact key match
