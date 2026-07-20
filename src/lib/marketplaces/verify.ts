@@ -118,9 +118,10 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
     })),
   );
 
-  // Same hard/soft field logic as compareToLive: soft fields (images, description,
-  // dimensions) showing "warning" must not alone push overall status to "warning".
-  // Image *mismatch* from AI still escalates via hasMismatch.
+  // Hard fields: only title / brand / model mismatches escalate overall status to "mismatch".
+  // Images are a soft field — an AI color-variant difference (e.g. stainless vs black)
+  // shows as "mismatch" on the images row for manual review, but the overall product
+  // status only rises to "warning" so genuine matching products aren't falsely flagged.
   const HARD_FIELDS = new Set(["title", "brand", "model"]);
   targets.forEach((t, i) => {
     const v = verdicts[i];
@@ -139,9 +140,12 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
         : `Needs manual review — ${v.reason}`;
 
     // Recompute overall status with HARD_FIELDS awareness.
-    const hasMismatch = t.result.fields.some((f) => f.severity === "mismatch");
+    // Only hard-field mismatches (title/brand/model) → "mismatch".
+    // Soft-field mismatches (images, description, dimensions) → "warning" at most.
+    const hasHardMismatch = t.result.fields.some((f) => f.severity === "mismatch" && HARD_FIELDS.has(f.field));
+    const hasSoftMismatch = t.result.fields.some((f) => f.severity === "mismatch" && !HARD_FIELDS.has(f.field));
     const hasHardWarning = t.result.fields.some((f) => f.severity === "warning" && HARD_FIELDS.has(f.field));
-    t.result.status = hasMismatch ? "mismatch" : hasHardWarning ? "warning" : "ok";
+    t.result.status = hasHardMismatch ? "mismatch" : (hasSoftMismatch || hasHardWarning) ? "warning" : "ok";
   });
 }
 
