@@ -40,13 +40,30 @@ function getKey(): string {
   return key;
 }
 
+/**
+ * Cumulative tokens Keepa has reported consuming, process-wide.
+ *
+ * Read this via {@link tokensSpentSince} rather than diffing `tokensLeft`: the
+ * balance refills continuously (refillRate/min), so a start-minus-end
+ * subtraction under-reports usage on any run long enough to refill.
+ */
+let totalConsumed = 0;
+
+/** Snapshot for measuring spend across a span of work. */
+export function tokensSpentMark(): number { return totalConsumed; }
+
+/** Tokens actually consumed since a {@link tokensSpentMark} snapshot. */
+export function tokensSpentSince(mark: number): number { return totalConsumed - mark; }
+
 function captureTokens(json: Record<string, unknown>) {
   if (typeof json?.tokensLeft === "number") {
+    const consumed = json.tokensConsumed as number | undefined;
+    if (typeof consumed === "number" && consumed > 0) totalConsumed += consumed;
     lastToken = {
       tokensLeft: json.tokensLeft as number,
       refillIn: (json.refillIn as number) ?? 0,
       refillRate: (json.refillRate as number) ?? 0,
-      tokensConsumed: json.tokensConsumed as number | undefined,
+      tokensConsumed: consumed,
       timestamp: Date.now(),
     };
   }
@@ -113,9 +130,13 @@ export async function getProducts(
     const settled = await Promise.allSettled(group.map(fetchBatch));
     let errored = false;
     for (const s of settled) {
+      // Keep every successful batch: a sibling's failure says nothing about
+      // the results already in hand.
       if (s.status === "fulfilled") out.push(...s.value);
-      else errored = true;
+      else { errored = true; console.error("[keepa] asin batch failed:", (s.reason as Error)?.message); }
     }
+    // Stop scheduling more work after a failure — likely a systemic problem
+    // (auth, rate limit, outage) and further batches would just burn tokens.
     if (errored) break;
     const left = getLastTokenInfo()?.tokensLeft;
     if (left != null && left < 100) break;
@@ -123,26 +144,46 @@ export async function getProducts(
   return out;
 }
 
+/**
+ * Look up products by UPC/EAN barcode.
+ *
+ * Returns the products found **and** the codes whose batch never completed
+ * (network error, Keepa error, or an early stop on low tokens). A caller cannot
+ * otherwise tell "Keepa has no product for this code" apart from "we never got
+ * to ask" — both look like an absent result. That distinction matters: the
+ * former is a fact worth remembering, the latter is a transient failure that
+ * must not be cached or treated as a definitive not-found.
+ */
 export async function getProductsByCode(
   domain: number,
   codes: string[],
   opts?: { stats?: number; rating?: boolean },
-): Promise<KeepaProduct[]> {
-  if (!codes.length) return [];
+): Promise<{ products: KeepaProduct[]; failedCodes: string[] }> {
+  if (!codes.length) return { products: [], failedCodes: [] };
   const batches: string[][] = [];
   for (let i = 0; i < codes.length; i += 100) batches.push(codes.slice(i, i + 100));
   const out: KeepaProduct[] = [];
-  for (const batch of batches) {
+  const failed: string[] = [];
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
     const params: Record<string, string | number> = { domain, code: batch.join(","), stats: opts?.stats ?? 180 };
     if (opts?.rating !== false) params.rating = 1;
     try {
       const json = await call("product", params);
       if (Array.isArray(json.products)) out.push(...(json.products as KeepaProduct[]));
-    } catch { /* skip failed batch */ }
+    } catch (e) {
+      console.error(`[keepa] code batch failed (${batch.length} codes):`, (e as Error).message);
+      failed.push(...batch);
+    }
     const left = getLastTokenInfo()?.tokensLeft;
-    if (left != null && left < 100) break;
+    if (left != null && left < 100) {
+      // Out of tokens: the remaining batches were never attempted, so their
+      // codes are unresolved rather than absent.
+      for (const rest of batches.slice(i + 1)) failed.push(...rest);
+      break;
+    }
   }
-  return out;
+  return { products: out, failedCodes: failed };
 }
 
 export async function keywordSearch(domain: number, term: string): Promise<{ asinList: string[]; products?: KeepaProduct[] }> {

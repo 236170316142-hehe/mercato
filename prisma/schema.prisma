@@ -105,6 +105,51 @@ model Product {
   updatedAt DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([upc])
+  @@index([asin])
+}
+
+// ── Keepa cache (Amazon only) ─────────────────────────────────────────────────
+// Keepa bills per product token, so every lookup we can answer locally is money
+// saved. Two tables because the two halves age very differently: a barcode→ASIN
+// binding is effectively permanent, while product data goes stale.
+
+/// Barcode → ASIN resolution, keyed by canonical GTIN-14 (see lib/barcode.ts).
+///
+/// This is the expensive half. A code that misses the batch lookup currently
+/// costs a rescue call plus up to ~10 keyword-search calls, so remembering the
+/// answer — including "there is no answer" — is where most of the savings are.
+model KeepaCodeLookup {
+  code      String // canonical GTIN-14
+  domain    Int // Keepa domain id (1 = amazon.com)
+  asins     String[] // empty = confirmed absent from Amazon (negative cache)
+  /// How the mapping was resolved. Keyword matches are fuzzy guesses rather
+  /// than authoritative barcode hits, so they expire sooner.
+  source    String // batch | rescue | keyword
+  fetchedAt DateTime @default(now())
+
+  @@id([code, domain])
+  @@index([fetchedAt])
+}
+
+/// ASIN → raw Keepa product payload.
+///
+/// Stores the raw KeepaProduct, not the normalized shape: normalizeProduct() is
+/// a pure function, so keeping it outside the cache boundary means normalization
+/// logic can change without invalidating stored rows.
+model KeepaProductCache {
+  asin      String
+  domain    Int
+  raw       Json // full KeepaProduct as returned by the API
+  /// Split out because it ages differently from the rest of the payload: price
+  /// feeds candidate scoring and export files, so a stale value picks the wrong
+  /// ASIN. Identity fields (title/brand/dimensions) effectively never change.
+  priceAt   DateTime @default(now())
+  fetchedAt DateTime @default(now())
+
+  @@id([asin, domain])
+  @@index([fetchedAt])
 }
 
 // ── Templates ─────────────────────────────────────────────────────────────────

@@ -1,5 +1,12 @@
 import type { Product } from "@prisma/client";
-import { ASIN_RE, barcodeVariants, toDisplayBarcode } from "@/lib/barcode";
+import { ASIN_RE, barcodeVariants, toDisplayBarcode, toGtin14 } from "@/lib/barcode";
+import {
+  getCachedCodeLookups, getCachedProducts, cacheCodeLookup, cacheCodeLookups,
+  cacheProducts, newCacheStats, logCacheStats,
+} from "@/lib/keepa/cache";
+
+/** Keepa domain for amazon.com. Verification is US-only today. */
+const KEEPA_DOMAIN = 1;
 
 export type VerifyResult = {
   productId: string;
@@ -45,7 +52,18 @@ export async function verifyProducts(
   switch (marketplace) {
     case "amazon_us":
     case "amazon":
-      results = await verifyAmazon(products);
+      try {
+        results = await verifyAmazon(products);
+      } catch (e) {
+        // Surface what the failed attempt cost — a crashed run still spent
+        // tokens, and that number is otherwise lost with the exception.
+        const { getLastTokenInfo } = await import("@/lib/keepa/client");
+        console.error(
+          `[keepa-tokens] verify failed after partial spend; ` +
+            `${getLastTokenInfo()?.tokensLeft ?? "?"} tokens remaining`,
+        );
+        throw e;
+      }
       break;
     case "walmart":
       results = await verifyWalmart(products);
@@ -131,6 +149,38 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
 
 async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
   const { getProducts, getProductsByCode, keywordSearch, getLastTokenInfo, normalizeMany } = await import("@/lib/keepa");
+  const { refreshKeepaTokens: refreshTokens, tokensSpentMark, tokensSpentSince } =
+    await import("@/lib/keepa/client");
+  const stats = newCacheStats();
+
+  // Token accounting for this batch. Refresh first so the starting balance is
+  // real rather than whatever the last call happened to leave behind.
+  const startInfo = await refreshTokens();
+  const spendMark = tokensSpentMark();
+  console.log(
+    `[keepa-tokens] start: ${startInfo?.tokensLeft ?? "?"} available` +
+      `${startInfo?.refillRate ? ` (refill ${startInfo.refillRate}/min)` : ""}` +
+      `, ${products.length} product${products.length === 1 ? "" : "s"} to verify`,
+  );
+
+  /**
+   * Report what this batch actually cost. Always logs, including the zero case
+   * — "0 tokens used" is the signal that the cache did its job, so staying
+   * silent on a fully-cached run would hide the number worth seeing.
+   */
+  let usageLogged = false;
+  const logTokenUsage = () => {
+    if (usageLogged) return; // the finally-guard must not double-report
+    usageLogged = true;
+    const used = tokensSpentSince(spendMark);
+    const left = getLastTokenInfo()?.tokensLeft;
+    const perProduct = products.length ? (used / products.length).toFixed(1) : "0";
+    console.log(
+      `[keepa-tokens] used ${used} token${used === 1 ? "" : "s"} for ${products.length} ` +
+        `product${products.length === 1 ? "" : "s"} (${perProduct}/product), ` +
+        `${left ?? "?"} remaining`,
+    );
+  };
 
   // Products the vendor file explicitly marks as discontinued — skip Keepa entirely.
   const discontinuedResults: VerifyResult[] = products
@@ -173,7 +223,18 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
   const asinResults = new Map<string, VerifyResult>();
   if (withAsin.length) {
     const asins = withAsin.map((p) => p.asin) as string[];
-    const raw = await getProducts(1, asins, { stats: 1, rating: true });
+    // Serve what we already have; only pay Keepa for the rest.
+    const cached = await getCachedProducts(KEEPA_DOMAIN, asins);
+    const missing = asins.filter((a) => !cached.has(a));
+    stats.productHits += cached.size;
+    stats.productMisses += missing.length;
+
+    const fetched = missing.length
+      ? await getProducts(KEEPA_DOMAIN, missing, { stats: 1, rating: true })
+      : [];
+    if (fetched.length) await cacheProducts(KEEPA_DOMAIN, fetched);
+
+    const raw = [...cached.values(), ...fetched];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const live = normalizeMany(raw, 1) as any[];
     // Don't throw on empty — Keepa may simply not carry these ASINs. Mark as not_found and continue.
@@ -215,7 +276,41 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     }
     const allCodes = [...new Set(codeToProduct.keys())];
 
-    const rawProducts = await getProductsByCode(1, allCodes, { stats: 1 });
+    // Resolve what the cache already knows. Codes with a remembered answer —
+    // including a remembered absence — never reach Keepa.
+    const cachedLookups = await getCachedCodeLookups(KEEPA_DOMAIN, allCodes);
+    const cachedAsins = [...new Set([...cachedLookups.values()].flat())];
+    const cachedProducts = await getCachedProducts(KEEPA_DOMAIN, cachedAsins);
+
+    // A cached mapping is usable when every ASIN it names also has a cached
+    // payload — otherwise we'd have an ASIN with no data behind it.
+    const resolvedByCache = new Set<string>();
+    // Codes cached as "Amazon doesn't carry this". Tracked separately from
+    // resolved-with-data because `[].every()` is vacuously true, which would
+    // otherwise class a negative as a satisfied lookup.
+    const cachedAbsent = new Set<string>();
+    for (const [code, asins] of cachedLookups) {
+      if (!asins.length) cachedAbsent.add(code);
+      else if (asins.every((a) => cachedProducts.has(a))) resolvedByCache.add(code);
+    }
+    const toFetch = allCodes.filter((c) => {
+      const g = toGtin14(c);
+      if (!g) return true;
+      return !resolvedByCache.has(g) && !cachedAbsent.has(g);
+    });
+    stats.codeHits += allCodes.length - toFetch.length;
+    stats.codeMisses += toFetch.length;
+    stats.productHits += cachedProducts.size;
+
+    const { products: fetchedProducts, failedCodes } = toFetch.length
+      ? await getProductsByCode(KEEPA_DOMAIN, toFetch, { stats: 1 })
+      : { products: [], failedCodes: [] as string[] };
+    if (fetchedProducts.length) await cacheProducts(KEEPA_DOMAIN, fetchedProducts);
+
+    // Codes whose batch never completed aren't "not found" — they're unasked.
+    // Distinguishing them keeps a transient outage from being recorded as fact.
+    const unresolved = new Set(failedCodes);
+    const rawProducts = [...cachedProducts.values(), ...fetchedProducts];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const liveNorm = normalizeMany(rawProducts, 1) as any[];
 
@@ -235,25 +330,91 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       }
     });
 
+    // Cached mappings resolve by ASIN, since a cached payload may not echo the
+    // barcode back the way a fresh response does.
+    for (const code of resolvedByCache) {
+      for (const asin of cachedLookups.get(code) ?? []) {
+        const idx = rawProducts.findIndex((r) => r.asin === asin);
+        const norm = idx >= 0 ? liveNorm[idx] : null;
+        if (!norm) continue;
+        if (!codeToLiveList.has(code)) codeToLiveList.set(code, []);
+        codeToLiveList.get(code)!.push(norm);
+      }
+    }
+
+    // Record what the fetched batch taught us, so the next upload skips it.
+    const learned = new Map<string, string[]>();
+    for (const code of toFetch) {
+      if (unresolved.has(code)) continue; // never asked — not a fact
+      const g = toGtin14(code);
+      if (!g) continue;
+      const hits = (codeToLiveList.get(code) ?? [])
+        .map((c) => c?.asin as string | undefined)
+        .filter((a): a is string => !!a);
+      // An empty list here is a genuine "Keepa has no product for this code".
+      learned.set(g, [...new Set([...(learned.get(g) ?? []), ...hits])]);
+    }
+    if (learned.size) {
+      await cacheCodeLookups(
+        KEEPA_DOMAIN,
+        [...learned].map(([code, asins]) => ({ code, asins, source: "batch" as const })),
+      );
+    }
+
     for (const p of withUpcOnly) {
       // Collect candidates across all variants (UPC-12 + EAN-13)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let candidates: (typeof liveNorm[number])[] = [];
       for (const v of barcodeVariants(resolvedUpc(p))) {
         for (const c of (codeToLiveList.get(v) ?? [])) candidates.push(c);
+        // Cache-resolved codes are keyed by GTIN-14, not by the raw variant.
+        const g = toGtin14(v);
+        if (g && g !== v) for (const c of (codeToLiveList.get(g) ?? [])) candidates.push(c);
+      }
+
+      // The batch never completed for this product's codes — we don't know
+      // whether Amazon carries it. Report "skipped" rather than letting it fall
+      // into keyword search, which would guess an ASIN from a network error.
+      if (!candidates.length && barcodeVariants(resolvedUpc(p)).some((c) => unresolved.has(c))) {
+        upcResults.set(p.id, { productId: p.id, status: "skipped", fields: [], liveData: {} });
+        continue;
+      }
+
+      // Cached "Amazon doesn't carry this barcode" — the answer is already
+      // known, so skip both the rescue call and the keyword cascade.
+      if (!candidates.length) {
+        const g = toGtin14(resolvedUpc(p));
+        if (g && cachedAbsent.has(g)) {
+          upcResults.set(p.id, notFound(p.id));
+          continue;
+        }
       }
 
       // Code map miss — Keepa may have returned the product but not populated
-      // eanList/upcList (common for some catalog entries), or the batch lookup
-      // silently failed for this code. Do a targeted single-product rescue lookup.
+      // eanList/upcList (common for some catalog entries). Do a targeted
+      // single-product rescue lookup.
       if (!candidates.length) {
         const rescueCodes = barcodeVariants(resolvedUpc(p));
         if (rescueCodes.length) {
           try {
-            const rescueRaw = await getProductsByCode(1, rescueCodes, { stats: 1 });
+            const { products: rescueRaw, failedCodes: rescueFailed } =
+              await getProductsByCode(KEEPA_DOMAIN, rescueCodes, { stats: 1 });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const rescueNorm = normalizeMany(rescueRaw, 1) as any[];
             candidates = rescueNorm.filter(Boolean);
+            if (rescueRaw.length) await cacheProducts(KEEPA_DOMAIN, rescueRaw);
+            // Only record when Keepa actually answered — a failed rescue says
+            // nothing about whether the product exists.
+            if (!rescueFailed.length) {
+              const g = toGtin14(resolvedUpc(p));
+              if (g) {
+                await cacheCodeLookup(
+                  KEEPA_DOMAIN, g,
+                  candidates.map((c) => c?.asin as string).filter(Boolean),
+                  "rescue",
+                );
+              }
+            }
           } catch { /* fall through to upcNotFound */ }
         }
       }
@@ -318,13 +479,39 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
   //  (a) products with no ASIN or UPC at all
   //  (b) products whose UPC Keepa couldn't match (upcNotFound fallback)
   const nameResults = new Map<string, VerifyResult>();
-  const keywordPool = [...withNameOnly, ...upcNotFound];
+
+  // A cached empty result means the full cascade already ran for this barcode
+  // and found nothing. Re-running it would spend ~8 searches to reach the same
+  // verdict, so answer from cache and keep them out of the pool entirely.
+  const cascadeCodes = upcNotFound
+    .map((p) => toGtin14(resolvedUpc(p)))
+    .filter((g): g is string => !!g);
+  const knownAbsent = cascadeCodes.length
+    ? await getCachedCodeLookups(KEEPA_DOMAIN, cascadeCodes)
+    : new Map<string, string[]>();
+  const stillUnknown = upcNotFound.filter((p) => {
+    const g = toGtin14(resolvedUpc(p));
+    if (g && knownAbsent.get(g)?.length === 0) {
+      nameResults.set(p.id, notFound(p.id));
+      stats.codeHits++;
+      return false;
+    }
+    return true;
+  });
+
+  const keywordPool = [...withNameOnly, ...stillUnknown];
   if (keywordPool.length) {
     const { refreshKeepaTokens } = await import("@/lib/keepa/client");
     const tokenInfo = await refreshKeepaTokens();
     if (tokenInfo != null && tokenInfo.tokensLeft < 200) {
       // Tokens too low — skip keyword searches rather than crashing the whole batch
+      console.warn(
+        `[keepa-tokens] only ${tokenInfo.tokensLeft} left (need 200) — ` +
+          `skipping keyword search for ${keywordPool.length} product${keywordPool.length === 1 ? "" : "s"}`,
+      );
       for (const p of keywordPool) nameResults.set(p.id, { productId: p.id, status: "skipped", fields: [], liveData: {} });
+      logCacheStats(stats);
+      logTokenUsage();
       return [...discontinuedResults, ...activeProducts.map((p) =>
         asinResults.get(p.id) ?? upcResults.get(p.id) ?? nameResults.get(p.id)
         ?? { productId: p.id, status: "skipped" as const, fields: [] as FieldResult[], liveData: {} }
@@ -493,6 +680,15 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
 
           if (!match) {
             for (const p of group) nameResults.set(p.id, notFound(p.id));
+            // The full strategy cascade ran and found nothing. That verdict cost
+            // ~8 searches to reach, so remember it — otherwise every re-upload of
+            // the same file pays for the same cascade to reach the same answer.
+            // (The catch below is deliberately not cached: an error means we
+            // never got a verdict.)
+            for (const p of group) {
+              const g = toGtin14(resolvedUpc(p));
+              if (g) await cacheCodeLookup(KEEPA_DOMAIN, g, [], "keyword");
+            }
             return;
           }
 
@@ -502,6 +698,16 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
               p, best.title, best.brand ?? null, null,
               best as unknown as Record<string, unknown>,
             ));
+          }
+          // Remember the keyword resolution against each product's barcode.
+          // This is the most valuable cache entry there is: one hit here skips
+          // the whole ~20-call strategy cascade next time. Marked "keyword" so
+          // it expires sooner — a fuzzy title match is a guess, not a barcode.
+          if (best.asin) {
+            for (const p of group) {
+              const g = toGtin14(resolvedUpc(p));
+              if (g) await cacheCodeLookup(KEEPA_DOMAIN, g, [best.asin as string], "keyword");
+            }
           }
         } catch {
           for (const p of group) nameResults.set(p.id, notFound(p.id));
@@ -518,6 +724,8 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
     asinResults.get(p.id) ?? upcResults.get(p.id) ?? nameResults.get(p.id)
     ?? { productId: p.id, status: "skipped" as const, fields: [] as FieldResult[], liveData: {} }
   );
+  logCacheStats(stats);
+  logTokenUsage();
   return [...discontinuedResults, ...activeResults];
 }
 
