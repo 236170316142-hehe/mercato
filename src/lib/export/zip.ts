@@ -107,32 +107,35 @@ export async function generateCategoryZip(
 
   const eligible = eligibleProducts(products, marketplace);
 
-  // Group products by their best-matching template (not by sub-category string).
-  // This produces one output file per template: all products whose marketplaceCategory
-  // best matches "Baby & Kids" land in one file regardless of how specific their
-  // sub-category is ("Baby & Kids > Costumes", "Baby & Kids > Nursery > Cribs", etc.).
-  const byTemplate = new Map<string, { template: TemplateRow; products: Product[] }>();
+  // Group by category first so we always produce ONE FILE PER CATEGORY.
+  // Even when all categories resolve to the same fallback template, each category
+  // gets its own named file (e.g. "Baby & Kids.xlsx", "Seasonal.xlsx") instead
+  // of everything collapsing into a single template-named file.
+  const byCategory = new Map<string, { template: TemplateRow; catLabel: string; products: Product[] }>();
   for (const p of eligible) {
     const cat = p.marketplaceCategory;
-    // Route uncategorized products to the fallback template rather than dropping them
-    const tpl = (!cat || cat === "Uncategorized") ? fallback : findBestTemplate(cat, templates, fallback);
-    if (!byTemplate.has(tpl.id)) byTemplate.set(tpl.id, { template: tpl, products: [] });
-    byTemplate.get(tpl.id)!.products.push(p);
+    const isUncategorized = !cat || cat === "Uncategorized";
+    const catKey = isUncategorized ? `__uncategorized__` : cat;
+    const tpl = isUncategorized ? fallback : findBestTemplate(cat!, templates, fallback);
+    if (!byCategory.has(catKey)) byCategory.set(catKey, { template: tpl, catLabel: isUncategorized ? "" : cat!, products: [] });
+    byCategory.get(catKey)!.products.push(p);
   }
 
-  for (const { template, products: tplProducts } of byTemplate.values()) {
+  for (const [catKey, { template, catLabel, products: catProducts }] of byCategory.entries()) {
     await new Promise<void>((r) => setImmediate(r)); // yield so HTTP polls can be served
 
     const columns = template.columns as Column[];
-    const fileName = sanitize(template.name);
+    // Name the file after the category (e.g. "Baby & Kids.xlsx"), falling back to
+    // the template name for uncategorized products.
+    const fileName = catKey === "__uncategorized__" ? sanitize(template.name) : sanitize(catLabel);
 
     if (template.fileFormat === "csv") {
-      zip.file(`${fileName}.csv`, generateCsv(tplProducts, columns));
+      zip.file(`${fileName}.csv`, generateCsv(catProducts, columns));
     } else if (template.fileData) {
-      const buffer = await fillTemplateXlsx(tplProducts, columns, template.fileData as Buffer, marketplace);
+      const buffer = await fillTemplateXlsx(catProducts, columns, template.fileData as Buffer, marketplace);
       zip.file(`${fileName}.xlsx`, buffer);
     } else {
-      const buffer = await createXlsxFromScratch(tplProducts, columns, template.name);
+      const buffer = await createXlsxFromScratch(catProducts, columns, catLabel || template.name);
       zip.file(`${fileName}.xlsx`, buffer);
     }
   }
@@ -851,23 +854,27 @@ function getProductField(p: Product, key: string): unknown {
     status: fromVendor("status", "item_status", "product_status", "active") ?? "on_sale",
     active: "Y",
 
-    // Brand / Manufacturer
+    // Brand / Manufacturer / Trademark
     // Live data is authoritative: marketplace brand ("iStep") beats vendor company code ("APS").
     // Walmart uses brandName, Amazon/Keepa uses brand — check both.
-    brand: (fromLive("brand") as string) || (fromLive("brandName") as string) || p.brand || (fromVendor("brand", "brand_name", "manufacturer", "maker") as string) || "",
+    brand: (fromLive("brand") as string) || (fromLive("brandName") as string) || p.brand || (fromVendor("brand", "brand_name", "manufacturer", "maker", "trademark") as string) || "",
     brand_name: (fromLive("brand") as string) || (fromLive("brandName") as string) || p.brand || (fromVendor("brand", "brand_name", "manufacturer") as string) || "",
     manufacturer: (fromLive("brand") as string) || (fromLive("brandName") as string) || p.brand || (fromVendor("manufacturer", "brand", "maker") as string) || "",
+    // Temu uses "Trademark" for the brand column
+    trademark: (fromLive("brand") as string) || (fromLive("brandName") as string) || p.brand || (fromVendor("trademark", "brand", "brand_name", "manufacturer") as string) || "",
 
     // Description / Details — never empty (falls back to product name)
     description: descriptionText,
     product_description: descriptionText,
     details: descriptionText,
     long_description: descriptionText,
-    bullet_point1: fromVendor("bullet_point1", "bullet1", "feature1", "key_feature_1") ?? p.name ?? "",
-    bullet_point2: fromVendor("bullet_point2", "bullet2", "feature2", "key_feature_2") ?? "",
-    bullet_point3: fromVendor("bullet_point3", "bullet3", "feature3", "key_feature_3") ?? "",
-    bullet_point4: fromVendor("bullet_point4", "bullet4", "feature4") ?? "",
-    bullet_point5: fromVendor("bullet_point5", "bullet5", "feature5") ?? "",
+    // Bullet points — cover numbered ("Bullet Point 1") and unnumbered ("Bullet Points") variants
+    bullet_point1: fromVendor("bullet_point1", "bullet_point_1", "bullet1", "feature1", "key_feature_1") ?? p.name ?? "",
+    bullet_point2: fromVendor("bullet_point2", "bullet_point_2", "bullet2", "feature2", "key_feature_2") ?? "",
+    bullet_point3: fromVendor("bullet_point3", "bullet_point_3", "bullet3", "feature3", "key_feature_3") ?? "",
+    bullet_point4: fromVendor("bullet_point4", "bullet_point_4", "bullet4", "feature4") ?? "",
+    bullet_point5: fromVendor("bullet_point5", "bullet_point_5", "bullet5", "feature5") ?? "",
+    bullet_points: fromVendor("bullet_points", "bullet_point1", "bullet1", "feature1") ?? p.name ?? "",
 
     // Price
     price,
@@ -920,15 +927,15 @@ function getProductField(p: Product, key: string): unknown {
     product_image_9_url: fromVendor("product_image_9_url", "image_url9", "image_url_9", "image9", "alternate_image8") ?? "",
     product_image_10_url: fromVendor("product_image_10_url", "image_url10", "image_url_10", "image10", "alternate_image9") ?? "",
 
-    // Category — always filled from AI categorisation
-    category: p.marketplaceCategory ?? "",
-    category_name: p.marketplaceCategory ?? "",
-    feed_product_type: p.marketplaceCategory ?? "",
-    item_type: p.marketplaceCategory ?? "",
-    item_type_name: p.categoryPath ?? p.marketplaceCategory ?? "",
-    category_path: p.categoryPath ?? p.marketplaceCategory ?? "",
+    // Category — filled from AI categorisation; blank for "Uncategorized" so no junk text in the cell
+    category: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",
+    category_name: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",
+    feed_product_type: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",
+    item_type: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",
+    item_type_name: p.categoryPath ?? ((p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : ""),
+    category_path: p.categoryPath ?? ((p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : ""),
     browse_node: p.categoryPath ?? "",
-    product_type: p.marketplaceCategory ?? "",
+    product_type: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",
 
     // Temu-specific technique fields — pass through vendor data if present
     customization_processing_technique: fromVendor("customization_processing_technique", "processing_technique", "technique") ?? "",
