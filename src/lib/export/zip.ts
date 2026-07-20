@@ -852,9 +852,11 @@ function getProductField(p: Product, key: string): unknown {
     active: "Y",
 
     // Brand / Manufacturer
-    brand: p.brand || (fromVendor("brand", "brand_name", "manufacturer", "maker") as string) || fromLive("brand") || "",
-    brand_name: p.brand || (fromVendor("brand", "brand_name", "manufacturer") as string) || fromLive("brand") || "",
-    manufacturer: p.brand || (fromVendor("manufacturer", "brand", "maker") as string) || fromLive("brand") || "",
+    // Live data is authoritative: marketplace brand ("iStep") beats vendor company code ("APS").
+    // Walmart uses brandName, Amazon/Keepa uses brand — check both.
+    brand: (fromLive("brand") as string) || (fromLive("brandName") as string) || p.brand || (fromVendor("brand", "brand_name", "manufacturer", "maker") as string) || "",
+    brand_name: (fromLive("brand") as string) || (fromLive("brandName") as string) || p.brand || (fromVendor("brand", "brand_name", "manufacturer") as string) || "",
+    manufacturer: (fromLive("brand") as string) || (fromLive("brandName") as string) || p.brand || (fromVendor("manufacturer", "brand", "maker") as string) || "",
 
     // Description / Details — never empty (falls back to product name)
     description: descriptionText,
@@ -1180,7 +1182,7 @@ function detectUpcType(raw: string): "UPC" | "EAN" | "GTIN" | "ASIN" | "" {
  */
 function pickDropdownValue(raw: string, options: string[]): string {
   if (!raw || !options.length) return raw;
-  const collapse = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const collapse = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 
   const collapsedRaw = collapse(raw);

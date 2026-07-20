@@ -249,10 +249,12 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             <AlertTriangle className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-semibold text-orange-800">
-                {uncategorizedCount} product{uncategorizedCount !== 1 ? "s" : ""} will be excluded from the export
+                {uncategorizedCount} product{uncategorizedCount !== 1 ? "s" : ""} {hasTemplates ? "will be added to the default template" : "will be excluded from the export"}
               </p>
               <p className="text-xs text-orange-700 mt-1">
-                These products were marked "Uncategorized" and don't match any available template. Only {exportableCount} product{exportableCount !== 1 ? "s" : ""} will be included in the ZIP.
+                {hasTemplates
+                  ? `These products were marked "Uncategorized" and will be placed in the first available template. ${exportableCount} categorized product${exportableCount !== 1 ? "s" : ""} will be matched to their specific templates.`
+                  : `These products were marked "Uncategorized" and don't match any available category. Only ${exportableCount} product${exportableCount !== 1 ? "s" : ""} will be included in the ZIP.`}
               </p>
             </div>
           </div>

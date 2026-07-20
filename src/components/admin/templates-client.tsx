@@ -13,6 +13,7 @@ type Template = {
   fileFormat: string;
   columns: unknown;
   createdAt: Date | string;
+  userId: string | null;
 };
 
 const MARKETPLACES = ["amazon_us", "amazon", "walmart", "bestbuy", "temu", "mathis", "sears"];
@@ -29,7 +30,7 @@ function parseColumns(raw: unknown): ColumnDef[] {
 
 type AddMode = "file" | "manual";
 
-export function AdminTemplatesClient({ templates: initial }: { templates: Template[] }) {
+export function AdminTemplatesClient({ templates: initial, isAdmin = false }: { templates: Template[]; isAdmin?: boolean }) {
   const confirm = useConfirm();
   const [templates, setTemplates] = useState(initial);
   const [showAdd, setShowAdd] = useState(false);
@@ -381,6 +382,8 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
                 const cols = parseColumns(tpl.columns);
                 const isOpen = expanded === tpl.id;
                 const isEditing = editingId === tpl.id;
+                const isAdminTemplate = tpl.userId === null;
+                const canModify = isAdmin || !isAdminTemplate;
                 return (
                   <div key={tpl.id}>
                     {isEditing ? (
@@ -427,7 +430,12 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
                     ) : (
                       <div className="flex items-center gap-3 px-4 py-3">
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium text-sm">{tpl.name}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{tpl.name}</span>
+                            {isAdminTemplate && (
+                              <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-purple-100 text-purple-700">Admin</span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                             {tpl.category && (
                               <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{tpl.category}</span>
@@ -442,15 +450,19 @@ export function AdminTemplatesClient({ templates: initial }: { templates: Templa
                           className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition">
                           {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                         </button>
-                        <button onClick={() => startEdit(tpl)}
-                          className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition"
-                          title="Edit name, marketplace or category">
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleDelete(tpl.id)}
-                          className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {canModify && (
+                          <button onClick={() => startEdit(tpl)}
+                            className="p-1.5 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition"
+                            title="Edit name, marketplace or category">
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                        )}
+                        {canModify && (
+                          <button onClick={() => handleDelete(tpl.id)}
+                            className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     )}
                     {isOpen && !isEditing && (

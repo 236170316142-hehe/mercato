@@ -15,7 +15,7 @@ export default async function AdminTemplatesPage() {
         <h1 className="text-2xl font-bold">Export Templates</h1>
         <p className="text-muted-foreground text-sm mt-1">Manage marketplace export templates and column mappings</p>
       </div>
-      <AdminTemplatesClient templates={templates} />
+      <AdminTemplatesClient templates={templates} isAdmin={true} />
     </div>
   );
 }

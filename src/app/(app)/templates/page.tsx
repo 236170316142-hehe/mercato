@@ -19,7 +19,7 @@ export default async function TemplatesPage() {
           Upload your marketplace template files — columns are auto-detected and used for export
         </p>
       </div>
-      <AdminTemplatesClient templates={templates} />
+      <AdminTemplatesClient templates={templates} isAdmin={(user as { role?: string }).role === "admin"} />
     </div>
   );
 }
