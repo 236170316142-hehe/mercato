@@ -319,8 +319,14 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                                 // Prefer the dedicated image/URL fields; fall back to `live`
                                 // (older records where `live` held one URL).
                                 const liveImg = f.liveImage || (isUrl(f.live) && !f.liveUrl ? f.live : "");
-                                const liveUrl = f.liveUrl;
-                                if (!liveImg && !liveUrl) {
+                                // Prefer stored product page URL; for Amazon, fall back to ASIN → dp URL
+                                // so older verify results still link to the listing.
+                                const isAmazon = marketplace === "amazon" || marketplace === "amazon_us";
+                                const productUrl =
+                                  f.liveUrl ||
+                                  (isAmazon && p.asin ? `https://www.amazon.com/dp/${p.asin}` : "") ||
+                                  "";
+                                if (!liveImg && !productUrl) {
                                   return <p className="font-medium line-clamp-2">{f.live}</p>;
                                 }
                                 return (
@@ -334,11 +340,11 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                                         onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                                       />
                                     )}
-                                    {liveUrl ? (
-                                      <a href={liveUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline truncate max-w-[160px]">
+                                    {productUrl ? (
+                                      <a href={productUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline truncate max-w-[160px]">
                                         View Product
                                       </a>
-                                    ) : (
+                                    ) : liveImg ? (
                                       <button
                                         type="button"
                                         onClick={() => setPreviewImage(liveImg)}
@@ -346,7 +352,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                                       >
                                         View Image
                                       </button>
-                                    )}
+                                    ) : null}
                                   </div>
                                 );
                               })()
@@ -385,7 +391,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
         </div>
       )}
 
-      {/* Image preview modal — opens when a thumbnail or "View Image" is clicked */}
+      {/* Image preview modal — opens when a thumbnail is clicked */}
       {previewImage && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"

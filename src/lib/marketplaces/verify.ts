@@ -738,10 +738,16 @@ function compareToLive(
   // "ok" only when no vendor image (nothing to compare); "warning" when both exist (needs visual review);
   // "warning" when vendor has image but live has none.
   const imgSeverity: "ok" | "warning" = !hasVendorImage ? "ok" : "warning";
-  // For the report `live` value: prefer a product page URL (Walmart) over raw image
-  // URL — more useful in the exported report. The UI uses the dedicated liveImage /
+  // For the report `live` value: prefer a product page URL over raw image URL —
+  // more useful in the exported report. The UI uses the dedicated liveImage /
   // liveUrl fields below to render a thumbnail plus a "View Product" link.
-  const liveProductUrl = (liveData.productUrl as string | undefined) || "";
+  // Prefer explicit productUrl, then Keepa's amazonUrl, then build from ASIN.
+  const asin = typeof liveData.asin === "string" ? liveData.asin.trim() : "";
+  const liveProductUrl =
+    (typeof liveData.productUrl === "string" && liveData.productUrl) ||
+    (typeof liveData.amazonUrl === "string" && liveData.amazonUrl) ||
+    (asin ? `https://www.amazon.com/dp/${asin}` : "") ||
+    "";
   const liveImgOrUrl = liveProductUrl || liveImages[0] || "N/A";
   fields.push({
     field: "images", label: "Images",
