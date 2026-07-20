@@ -1,11 +1,12 @@
 "use client";
 
-import { Tag, Loader2, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
+import { Tag, Loader2, CheckCircle2, AlertTriangle, XCircle, Download } from "lucide-react";
 
 type Product = {
   id: string;
   name: string;
   brand: string | null;
+  vendorSku: string | null;
   marketplaceCategory: string | null;
   categoryPath: string | null;
   categorizedAt: Date | null;
@@ -30,6 +31,28 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
   const categorized = products.filter((p) => p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized");
   const pending = products.filter((p) => !p.marketplaceCategory);
 
+  function downloadCsv() {
+    const rows = [
+      ["SKU", "Product Name", "Brand", "Category", "Category Path", "Status"],
+      ...products.map((p) => [
+        p.vendorSku ?? p.id,
+        p.name,
+        p.brand ?? "",
+        p.marketplaceCategory ?? "",
+        p.categoryPath ?? "",
+        p.marketplaceCategory === "Uncategorized" ? "No match" : p.marketplaceCategory ? "Done" : "Pending",
+      ]),
+    ];
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${marketplace}_categories.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
@@ -51,6 +74,15 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
               className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
             >
               Skip →
+            </button>
+          )}
+          {hasResults && (
+            <button
+              onClick={downloadCsv}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition"
+            >
+              <Download className="w-4 h-4" />
+              Download CSV
             </button>
           )}
           {hasResults && (

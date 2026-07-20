@@ -11,11 +11,8 @@ export type ImageCompareResult = {
 };
 
 // ── Image download ────────────────────────────────────────────────────────────
-// We fetch the bytes ourselves (rather than passing URLs to the API) so that
-// vendor-hosted images behind odd CDNs still work, and so a dead URL degrades
-// gracefully to "unsure" instead of failing the whole verify batch.
 
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // Anthropic vision limit is 5MB per image
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const SUPPORTED_MIME = /^image\/(jpeg|png|gif|webp)$/i;
 
 async function fetchImage(url: string): Promise<{ data: Uint8Array; mimeType: string } | null> {
@@ -35,15 +32,8 @@ async function fetchImage(url: string): Promise<{ data: Uint8Array; mimeType: st
   }
 }
 
-// ── Visual comparison ─────────────────────────────────────────────────────────
+// ── Single pair comparison ─────────────────────────────────────────────────────
 
-/**
- * Compare a vendor catalog image against a live marketplace image and decide
- * whether they show the same product.
- *
- * Returns "unsure" (→ manual review) when the API key is missing, an image
- * can't be downloaded, or the model can't tell — never throws.
- */
 export async function compareProductImages(
   vendorImageUrl: string,
   liveImageUrl: string,
@@ -83,8 +73,8 @@ export async function compareProductImages(
                 `Answer on the first line with exactly one word: MATCH, MISMATCH, or UNSURE. ` +
                 `On the second line give a one-sentence reason.`,
             },
-            { type: "image", image: vendorImg.data, mediaType: vendorImg.mimeType },
-            { type: "image", image: liveImg.data, mediaType: liveImg.mimeType },
+            { type: "image", image: vendorImg.data, mediaType: vendorImg.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp" },
+            { type: "image", image: liveImg.data, mediaType: liveImg.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp" },
           ],
         },
       ],
@@ -103,6 +93,30 @@ export async function compareProductImages(
 }
 
 /**
+ * Compare vendor image against ALL available marketplace images (up to maxAngles).
+ * Returns "match" as soon as any angle matches — improves accuracy when the primary
+ * marketplace image shows a different variant/angle than the vendor image.
+ */
+export async function compareVendorAgainstAllImages(
+  vendorImageUrl: string,
+  liveImageUrls: string[],
+  productName: string,
+  maxAngles = 5,
+): Promise<ImageCompareResult> {
+  const urls = liveImageUrls.filter((u) => u && u.startsWith("http")).slice(0, maxAngles);
+  if (!urls.length) return { verdict: "unsure", reason: "No marketplace images available" };
+
+  let lastResult: ImageCompareResult = { verdict: "unsure", reason: "No images could be compared" };
+  for (const liveUrl of urls) {
+    const result = await compareProductImages(vendorImageUrl, liveUrl, productName);
+    lastResult = result;
+    if (result.verdict === "match") return result; // stop at first match
+  }
+  // All angles checked — return the last result (mismatch or unsure)
+  return lastResult;
+}
+
+/**
  * Run compareProductImages over many pairs with bounded concurrency.
  * Items resolve in input order; individual failures resolve to "unsure".
  */
@@ -115,6 +129,24 @@ export async function compareProductImagesBatch(
     const batch = items.slice(i, i + concurrency);
     const settled = await Promise.all(
       batch.map((it) => compareProductImages(it.vendorImageUrl, it.liveImageUrl, it.productName)),
+    );
+    settled.forEach((r, j) => { results[i + j] = r; });
+  }
+  return results;
+}
+
+/**
+ * Batch version of compareVendorAgainstAllImages.
+ */
+export async function compareVendorAgainstAllImagesBatch(
+  items: Array<{ vendorImageUrl: string; liveImageUrls: string[]; productName: string }>,
+  concurrency = 3,
+): Promise<ImageCompareResult[]> {
+  const results: ImageCompareResult[] = new Array(items.length);
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    const settled = await Promise.all(
+      batch.map((it) => compareVendorAgainstAllImages(it.vendorImageUrl, it.liveImageUrls, it.productName)),
     );
     settled.forEach((r, j) => { results[i + j] = r; });
   }

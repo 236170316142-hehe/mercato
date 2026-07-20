@@ -96,24 +96,24 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
   const isUrl = (v: string | undefined): v is string => !!v && v.startsWith("http");
   const nameById = new Map(products.map((p) => [p.id, p.name]));
 
-  type Target = { result: VerifyResult; field: FieldResult; liveImageUrl: string };
+  type Target = { result: VerifyResult; field: FieldResult; liveImageUrls: string[] };
   const targets: Target[] = [];
   for (const r of results) {
     const field = r.fields.find((f) => f.field === "images");
     if (!field || !isUrl(field.stored)) continue;
-    // Use the actual image URL from liveData — field.live may be a product page URL (Walmart)
+    // Collect ALL marketplace images — compare vendor against each angle for best match
     const liveImages = Array.isArray(r.liveData.images) ? r.liveData.images as string[] : [];
-    const liveImageUrl = liveImages.find(isUrl);
-    if (!liveImageUrl) continue;
-    targets.push({ result: r, field, liveImageUrl });
+    const liveImageUrls = liveImages.filter(isUrl);
+    if (!liveImageUrls.length) continue;
+    targets.push({ result: r, field, liveImageUrls });
   }
   if (!targets.length) return;
 
-  const { compareProductImagesBatch } = await import("@/lib/ai/compare-images");
-  const verdicts = await compareProductImagesBatch(
+  const { compareVendorAgainstAllImagesBatch } = await import("@/lib/ai/compare-images");
+  const verdicts = await compareVendorAgainstAllImagesBatch(
     targets.map((t) => ({
       vendorImageUrl: t.field.stored,
-      liveImageUrl: t.liveImageUrl,
+      liveImageUrls: t.liveImageUrls,
       productName: nameById.get(t.result.productId) ?? "",
     })),
   );
@@ -886,14 +886,19 @@ function compareToLive(
   for (const w of wv) if (wl.has(w)) recallHits++;
   const recall = wv.size > 0 ? recallHits / wv.size : 0;
 
+  // Walmart titles are much more verbose than vendor titles (vendor: "Kinder's BBQ 5.5oz",
+  // Walmart: "Kinder's Buttery Steakhouse® Seasoning, 5.5 oz."). High recall (vendor words
+  // found in live title) is a strong match signal even when Jaccard is low due to extra words.
   let titleSeverity: "ok" | "warning" | "mismatch" =
-    sim >= 0.4 || recall >= 0.6 ? "ok"     // Jaccard ok OR 60%+ vendor words found in live title
-    : sim >= 0.2 || recall >= 0.4 ? "warning"
+    sim >= 0.35 || recall >= 0.55 ? "ok"
+    : sim >= 0.15 || recall >= 0.35 ? "warning"
     : "mismatch";
   // Pack-quantity check: if vendor title has no quantity (= 1) and live title says "Pack of N"
   // (N > 1), or vice-versa, that is a definitive mismatch regardless of word similarity.
-  const vendorQty = extractPackQty(p.name);
-  const liveQty = extractPackQty(liveTitle);
+  const vendorDesc = String((p.vendorData as Record<string,unknown> | null)?.description ?? p.description ?? "");
+  const liveDesc = String(liveData.description ?? liveData.shortDescription ?? liveData.longDescription ?? "");
+  const vendorQty = extractPackQty(p.name, vendorDesc);
+  const liveQty = extractPackQty(liveTitle, liveDesc);
   let titleNote: string | undefined;
   if (vendorQty !== liveQty) {
     titleSeverity = "mismatch";
@@ -908,6 +913,20 @@ function compareToLive(
     severity: titleSeverity,
     ...(titleNote ? { note: titleNote } : {}),
   });
+
+  // UPC field — surface in the verification report so users can see whether UPC was matched
+  const vendorUpc = p.upc ?? String((p.vendorData as Record<string,unknown> | null)?.upc ?? "");
+  const liveUpc = String(liveData.upc ?? liveData.itemUpc ?? "");
+  if (vendorUpc) {
+    const upcMatch = liveUpc ? vendorUpc.replace(/\D/g, "").endsWith(liveUpc.replace(/\D/g, "")) ||
+      liveUpc.replace(/\D/g, "").endsWith(vendorUpc.replace(/\D/g, "")) : false;
+    fields.push({
+      field: "upc", label: "UPC",
+      stored: vendorUpc, live: liveUpc || "N/A",
+      match: upcMatch || !liveUpc,
+      severity: (!liveUpc || upcMatch) ? "ok" : "warning",
+    });
+  }
 
   // Brand — standard matching + cross-check with product titles.
   // Vendors often store the parent-company name ("APS") while the marketplace
@@ -978,20 +997,19 @@ function compareToLive(
   // Skip comparison when the vendor description is too short or looks like
   // placeholder/restricted text — these produce false warnings because they
   // have near-zero word overlap with any real marketplace description.
-  const liveDesc = [
-    typeof liveData.description === "string" ? liveData.description : "",
+  const liveDescFull = [
+    liveDesc,
     ...(Array.isArray(liveData.features) ? liveData.features as string[] : []),
   ].filter(Boolean).join(" ");
-  const vendorDesc = p.description ?? "";
   const vendorDescWords = vendorDesc.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(w => w.length > 3);
   // Placeholder detection: too short (<8 meaningful words) OR common filler phrases
   const isPlaceholderDesc = vendorDescWords.length < 8
     || /\b(restricted|confidential|proprietary|call for|n\/a|see image|coming soon|tbd|contact us)\b/i.test(vendorDesc);
-  const descSim = !isPlaceholderDesc && vendorDesc && liveDesc ? wordOverlap(vendorDesc, liveDesc) : null;
+  const descSim = !isPlaceholderDesc && vendorDesc && liveDescFull ? wordOverlap(vendorDesc, liveDescFull) : null;
   fields.push({
     field: "description", label: "Description",
     stored: vendorDesc || "N/A",
-    live: liveDesc ? liveDesc.slice(0, 200) + (liveDesc.length > 200 ? "…" : "") : "N/A",
+    live: liveDescFull ? liveDescFull.slice(0, 200) + (liveDescFull.length > 200 ? "…" : "") : "N/A",
     match: descSim == null || descSim >= 0.1,
     severity: descSim == null ? "ok" : descSim >= 0.1 ? "ok" : "warning",
   });
@@ -1248,33 +1266,33 @@ export function filterPackCompatible(vendorTitle: string, candidates: any[]): an
 // No mention → treated as 1 (single unit). Used to flag qty mismatches between
 // the vendor title and the live marketplace title (Pack of 6 ≠ Pack of 1).
 
-export function extractPackQty(title: string): number {
-  const t = title.toLowerCase();
-  const patterns: RegExp[] = [
-    /pack[- ]?of[- ]?(\d+)/,             // "pack of 6", "pack-of-6", "pack of5"
-    /\(\s*pack[- ]?of[- ]?(\d+)\s*\)/,   // "(Pack of 5)"
-    /(\d+)[- ]?pack\b/,                  // "6-pack", "6 pack", "6pack"
-    /(?:wholesale\s+)?case[- ]?of[- ]?(\d+)/, // "case of 10", "Wholesale CASE of 10"
-    /(\d+)[- ]?case\b/,                  // "10-case", "10 case"
-    /set[- ]?of[- ]?(\d+)/,              // "set of 3", "set of3"
-    /(\d+)[- ]?(?:pieces?|pcs?)\b/,      // "6 pieces", "6 pcs", "6pc"
-    /(\d+)[- ]?(?:count|ct)\b/,          // "6 count", "6ct"
-    /(\d+)[- ]?pk\b/,                    // "6pk", "6-pk"
-    /box[- ]?of[- ]?(\d+)/,              // "box of 12", "box of12"
-    /bundle[- ]?of[- ]?(\d+)/,           // "bundle of 4", "bundle of4"
-    /multipack[- ]?of[- ]?(\d+)/,        // "multipack of 3"
-    /(\d+)[- ]units?\b/,                 // "6 units"
-    /qty[: ]+(\d+)/,                     // "qty: 6"
-    /\((\d+)\s*(?:pack|count|ct|pk|pcs?|pieces?|case)\)/, // "(6 pack)", "(12 ct)", "(5 case)"
-  ];
-  for (const re of patterns) {
-    const m = t.match(re);
-    if (m) {
-      const qty = parseInt(m[1], 10);
-      if (qty > 0 && qty <= 500) return qty;
+export function extractPackQty(title: string, description = ""): number {
+  // Check title first, then description as fallback
+  for (const src of [title, description].filter(Boolean)) {
+    const t = src.toLowerCase();
+    const patterns: RegExp[] = [
+      /pack[- ]?of[- ]?(\d+)/,             // "pack of 6", "pack-of-6", "pack of5"
+      /\(\s*pack[- ]?of[- ]?(\d+)\s*\)/,   // "(Pack of 5)"
+      /(\d+)[- ]?pack\b/,                  // "6-pack", "6 pack", "6pack"
+      /(?:wholesale\s+)?case[- ]?of[- ]?(\d+)/, // "case of 10", "Wholesale CASE of 10"
+      /(\d+)[- ]?case\b/,                  // "10-case", "10 case"
+      /set[- ]?of[- ]?(\d+)/,              // "set of 3", "set of3"
+      /(\d+)[- ]?(?:pieces?|pcs?)\b/,      // "6 pieces", "6 pcs", "6pc"
+      /(\d+)[- ]?(?:count|ct)\b/,          // "6 count", "6ct"
+      /(\d+)[- ]?pk\b/,                    // "6pk", "6-pk"
+      /box[- ]?of[- ]?(\d+)/,              // "box of 12", "box of12"
+      /bundle[- ]?of[- ]?(\d+)/,           // "bundle of 4", "bundle of4"
+      /multipack[- ]?of[- ]?(\d+)/,        // "multipack of 3"
+      /(\d+)[- ]units?\b/,                 // "6 units"
+      /qty[: ]+(\d+)/,                     // "qty: 6"
+      /\((\d+)\s*(?:pack|count|ct|pk|pcs?|pieces?|case)\)/, // "(6 pack)", "(12 ct)", "(5 case)"
+    ];
+    for (const re of patterns) {
+      const m = t.match(re);
+      if (m) return parseInt(m[1]!, 10);
     }
   }
-  return 1; // default: single unit
+  return 1;
 }
 
 // ── Model-number helpers ──────────────────────────────────────────────────────
