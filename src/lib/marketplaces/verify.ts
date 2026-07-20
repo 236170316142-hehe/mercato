@@ -253,7 +253,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
         ...lp,
         productUrl: lp.asin ? `https://www.amazon.com/dp/${lp.asin as string}` : "",
       };
-      const result = compareToLive(p, lp.title as string, lp.brand as string ?? null, null, liveDataForCompare as Record<string, unknown>);
+      const result = compareToLive(p, lp.title as string, lp.brand as string ?? null, null, liveDataForCompare as Record<string, unknown>, "Amazon");
       // Downgrade mismatch → warning for ASIN-confirmed products (title abbreviation ≠ wrong product),
       // but keep pack-quantity mismatches hard — ASIN may still be a multipack listing.
       const packMismatch = extractPackQty(p.name) !== extractPackQty(String(lp.title ?? ""));
@@ -448,7 +448,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
       // is definitive — trust it unconditionally and let compareToLive report the title diff
       // as a warning rather than silently returning not_found.
       const resolved = resolvedUpc(p);
-      const result = compareToLive(p, best.title as string, (best.brand as string) ?? null, null, best as Record<string, unknown>);
+      const result = compareToLive(p, best.title as string, (best.brand as string) ?? null, null, best as Record<string, unknown>, "Amazon");
       if (resolved && !p.upc) result.resolvedUpc = resolved;
       // UPC-confirmed: soft-downgrade abbreviation mismatches → warning.
       // Pack-qty mismatches stay hard (should be rare after filterPackCompatible).
@@ -701,6 +701,7 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
             nameResults.set(p.id, compareToLive(
               p, best.title, best.brand ?? null, null,
               best as unknown as Record<string, unknown>,
+              "Amazon",
             ));
           }
           // Remember the keyword resolution against each product's barcode.
@@ -787,6 +788,7 @@ async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
         item.brandName ?? null,
         priceInCents,
         liveDataForCompare as unknown as Record<string, unknown>,
+        "Walmart",
       );
     }));
 
@@ -818,7 +820,7 @@ async function verifyBestBuy(products: Product[]): Promise<VerifyResult[]> {
       const data = await res.json();
       const item = data.products?.[0];
       if (!item) return notFound(p.id);
-      return compareToLive(p, item.name, item.brand, item.salePrice ? Math.round(item.salePrice * 100) : null, item);
+      return compareToLive(p, item.name, item.brand, item.salePrice ? Math.round(item.salePrice * 100) : null, item, "Best Buy");
     }));
     for (const s of settled) results.push(s.status === "fulfilled" ? s.value : notFound(batch[results.length % CONCURRENCY]?.id ?? ""));
   }
@@ -844,7 +846,7 @@ async function verifySerpApi(marketplace: string, products: Product[]): Promise<
       const priceNum = typeof item.price === "string"
         ? Math.round(parseFloat(item.price.replace(/[^0-9.]/g, "")) * 100)
         : null;
-      return compareToLive(p, item.title, item.source ?? null, priceNum, item);
+      return compareToLive(p, item.title, item.source ?? null, priceNum, item, marketplace);
     })
   );
 }
@@ -866,6 +868,7 @@ function compareToLive(
   liveBrand: string | null,
   _livePriceCents: number | null,
   liveData: Record<string, unknown>,
+  marketplace = "Marketplace",
 ): VerifyResult {
   const fields: FieldResult[] = [];
 
@@ -895,8 +898,8 @@ function compareToLive(
   if (vendorQty !== liveQty) {
     titleSeverity = "mismatch";
     titleNote = vendorQty === 1
-      ? `Catalog is a single unit, but Amazon title is a multipack (qty ${liveQty})`
-      : `Pack quantity mismatch: catalog qty ${vendorQty} vs Amazon qty ${liveQty}`;
+      ? `Catalog is a single unit, but ${marketplace} title is a multipack (qty ${liveQty})`
+      : `Pack quantity mismatch: catalog qty ${vendorQty} vs ${marketplace} qty ${liveQty}`;
   }
   fields.push({
     field: "title", label: "Title",
