@@ -106,9 +106,9 @@ export async function categorizeProducts(
   const isBestBuyTop = mpLower === "bestbuy";
   const isTemuTop = mpLower === "temu";
 
-  // Temu always uses the official taxonomy from temu_categories.csv (not export template names).
+  // Temu + Best Buy share temu_categories.csv so the same products get the same category paths.
   // Claude is given the full sheet + product details and must pick an exact leaf path.
-  if (isTemuTop) {
+  if (isTemuTop || isBestBuyTop) {
     availableCategories = loadTemuCategoryPaths();
   }
 
@@ -119,12 +119,12 @@ export async function categorizeProducts(
     availableCategories = loadMathisCategoryPaths();
   }
 
-  // Constrained mode = AI must pick from a fixed list (Best Buy templates; Temu/Mathis CSV taxonomy)
+  // Constrained mode = AI must pick from a fixed list (Temu/Best Buy/Mathis CSV taxonomy)
   const isConstrained = (isMathis || isBestBuyTop || isTemuTop) && !!availableCategories?.length;
 
   // Smaller batches for constrained-category marketplaces so the AI reasons carefully per product.
-  // Temu/Mathis have ~420 leaf paths — keep batches small so the taxonomy fits with product context.
-  const BATCH = (isTemuTop || isMathis) ? 5 : isConstrained ? 8 : 20;
+  // Temu/Mathis/Best Buy use full taxonomy sheets — keep batches small so the taxonomy fits with product context.
+  const BATCH = (isTemuTop || isMathis || isBestBuyTop) ? 5 : isConstrained ? 8 : 20;
   const PARALLEL = isConstrained ? 2 : 3;
 
   const model = availableCategories?.length
@@ -252,20 +252,29 @@ async function categorizeBatchWithContext(
   }).join("\n");
 
   let categorySection: string;
-  if (isTemu && availableCategories?.length) {
-    // Full taxonomy from temu_categories.csv — Claude must copy an exact leaf path
+  // Temu and Best Buy share the same category sheet (temu_categories.csv).
+  if ((isTemu || isBestBuy) && availableCategories?.length) {
     const taxonomy = formatTemuTaxonomyForPrompt();
+    // Force the model to ALWAYS pick the closest leaf for physical products.
+    // "Uncategorized" is reserved for truly non-catalog items, so borderline
+    // products (hats, costumes, cultural/novelty apparel) resolve consistently
+    // instead of flipping between a category and "No match" across runs.
+    const closestMatchRule = `
+DECISION RULES (deterministic — follow exactly, in order):
+1. Every physical retail product on this sheet MUST be assigned to its closest matching leaf path. Do NOT return "Uncategorized" for a normal sellable product.
+2. Pick the SINGLE most specific leaf whose product type matches. If several fit, choose the one that matches the product's core noun (e.g. a "hat/cap/tarboosh/fez/top hat" → a "Hats & Caps" leaf; a "kipah/kippah/yarmulke" → the closest headwear/accessory leaf).
+3. Costume, party, cultural, religious, or dress-up apparel for children → the closest "Kids' Costumes" or kids clothing leaf. For adults → the closest costume/clothing leaf.
+4. If two leaves are equally plausible, ALWAYS choose the one that comes first alphabetically by full path — never leave it to chance.
+5. Use "Uncategorized" ONLY for non-catalog items (raw food, services, gift cards, digital-only) — essentially never for physical goods.`;
     categorySection = strictMode
-      ? `EXACTLY one leaf path from this Temu taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory"):
+      ? `EXACTLY one leaf path from this category taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory"):
 
 ${taxonomy}
-
-If nothing fits, use "Uncategorized".`
-      : `exactly one leaf path from this Temu taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory", e.g. "Women's Clothing > Tops > T-Shirts"):
+${closestMatchRule}`
+      : `exactly one leaf path from this category taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory", e.g. "Women's Clothing > Tops > T-Shirts"):
 
 ${taxonomy}
-
-If nothing fits, use "Uncategorized".`;
+${closestMatchRule}`;
   } else if (isMathis && availableCategories?.length) {
     // Full taxonomy from mathis_categories.csv (sourced from the official Mirakl fwd sheets).
     // Paths are 2–4 levels: Department > Category > Subcategory > Product Type
@@ -287,36 +296,6 @@ If nothing fits, use "Uncategorized".`;
     categorySection = strictMode
       ? `EXACTLY one of these categories (copy the name character-for-character):\n${availableCategories.map((c) => `- ${c}`).join("\n")}`
       : `exactly one of these categories:\n${availableCategories.map((c) => `- ${c}`).join("\n")}\n\nCategory guide:\n${guide}`;
-  } else if (isBestBuy) {
-    categorySection = `the most specific matching Best Buy category path (Category > Subcategory > Product Type) from Best Buy's real taxonomy:
-
-TV & Home Theater: TVs > LED & QLED TVs | TVs > OLED TVs | TVs > 8K TVs | TVs > Smart TVs | Projectors > Home Theater Projectors | Projectors > Business Projectors | Sound Bars | Home Theater Systems > Home Theater in a Box | Home Theater Systems > AV Receivers | TV Mounts & Accessories > TV Mounts | TV Mounts & Accessories > TV Stands | TV Mounts & Accessories > HDMI Cables
-
-Computers & Tablets: Laptops > Windows Laptops | Laptops > MacBooks | Laptops > Chromebooks | Laptops > 2-in-1 Laptops | Laptops > Gaming Laptops | Desktop Computers > All-in-One Desktops | Desktop Computers > Windows Desktops | Desktop Computers > Mac Desktops | Tablets > iPad | Tablets > Android Tablets | Tablets > Windows Tablets | Monitors > Gaming Monitors | Monitors > 4K Monitors | Monitors > Ultrawide Monitors | Printers > All-in-One Printers | Printers > Laser Printers | Computer Accessories > External Hard Drives | Computer Accessories > USB Hubs | Computer Accessories > Webcams | Computer Accessories > Keyboards | Computer Accessories > Mice | Computer Storage > SSDs | Computer Storage > USB Flash Drives | Computer Components > RAM | Computer Components > Graphics Cards | Computer Components > CPUs
-
-Cell Phones & Wearables: Cell Phones > Apple iPhone | Cell Phones > Samsung Galaxy | Cell Phones > Google Pixel | Cell Phones > Android Phones | Cell Phone Accessories > Phone Cases | Cell Phone Accessories > Screen Protectors | Cell Phone Accessories > Wireless Chargers | Cell Phone Accessories > Charging Cables | Cell Phone Accessories > Phone Holders | Wearable Technology > Apple Watch | Wearable Technology > Samsung Galaxy Watch | Wearable Technology > Fitness Trackers | Wearable Technology > Smart Glasses | Prepaid Phones
-
-Cameras & Camcorders: Digital Cameras > DSLR Cameras | Digital Cameras > Mirrorless Cameras | Digital Cameras > Point & Shoot Cameras | Camcorders > HD Camcorders | Camcorders > 4K Camcorders | Action Cameras > GoPro | Drones > Camera Drones | Drones > Racing Drones | Camera Lenses | Camera Accessories > Camera Bags & Cases | Camera Accessories > Memory Cards | Camera Accessories > Tripods & Monopods | Camera Accessories > Batteries & Chargers | Photo Printing
-
-Audio: Headphones > Over-Ear Headphones | Headphones > On-Ear Headphones | Headphones > Noise-Canceling Headphones | Earbuds > True Wireless Earbuds | Earbuds > Wired Earbuds | Portable Speakers > Bluetooth Speakers | Portable Speakers > Waterproof Speakers | Home Audio > Bookshelf Speakers | Home Audio > Floor Standing Speakers | Home Audio > Subwoofers | Turntables & Record Players | Musical Instruments > Guitars | Musical Instruments > Keyboards & Pianos | Musical Instruments > DJ Equipment | Voice Recorders
-
-Video Games: Video Games > PlayStation Games | Video Games > Xbox Games | Video Games > Nintendo Switch Games | Video Games > PC Games | Gaming Consoles > PlayStation 5 | Gaming Consoles > Xbox Series X|S | Gaming Consoles > Nintendo Switch | PC Gaming > Gaming Desktops | PC Gaming > Gaming Laptops | Gaming Accessories > Controllers | Gaming Accessories > Gaming Headsets | Gaming Accessories > Gaming Keyboards | Gaming Accessories > Gaming Mice | Gaming Accessories > Gaming Chairs | VR Headsets
-
-Appliances: Refrigerators > French Door Refrigerators | Refrigerators > Side-by-Side Refrigerators | Refrigerators > Bottom Freezer Refrigerators | Refrigerators > Top Freezer Refrigerators | Refrigerators > Counter-Depth Refrigerators | Washing Machines > Front Load Washers | Washing Machines > Top Load Washers | Dryers > Gas Dryers | Dryers > Electric Dryers | Dishwashers > Built-In Dishwashers | Dishwashers > Portable Dishwashers | Ranges & Ovens > Gas Ranges | Ranges & Ovens > Electric Ranges | Ranges & Ovens > Induction Ranges | Ranges & Ovens > Wall Ovens | Microwaves > Over-the-Range Microwaves | Microwaves > Countertop Microwaves | Freezers > Chest Freezers | Freezers > Upright Freezers | Cooktops > Gas Cooktops | Cooktops > Electric Cooktops | Range Hoods | Appliance Accessories
-
-Smart Home: Smart Speakers & Displays > Amazon Echo | Smart Speakers & Displays > Google Nest | Smart Speakers & Displays > Apple HomePod | Smart Lighting > Smart Bulbs | Smart Lighting > Smart Light Strips | Smart Thermostats > Nest Thermostats | Smart Thermostats > Ecobee | Smart Security > Indoor Security Cameras | Smart Security > Outdoor Security Cameras | Smart Security > Video Doorbells | Smart Security > Smart Locks | Smart Plugs & Power Strips | Smart Home Hubs & Controllers | Smart Displays
-
-Health, Fitness & Beauty: Fitness Equipment > Treadmills | Fitness Equipment > Exercise Bikes | Fitness Equipment > Ellipticals | Fitness Equipment > Rowing Machines | Fitness Equipment > Weight Benches | Fitness Accessories > Resistance Bands | Fitness Accessories > Yoga Mats | Fitness Accessories > Dumbbells & Weights | Electric Shavers & Trimmers > Men's Electric Shavers | Electric Shavers & Trimmers > Women's Epilators | Hair Care > Hair Dryers | Hair Care > Hair Straighteners & Curlers | Hair Care > Electric Toothbrushes | Personal Care > Massagers | Personal Care > Blood Pressure Monitors | Personal Care > Heating Pads | Medical Monitoring > Glucose Monitors | Medical Monitoring > Pulse Oximeters
-
-Car Electronics & GPS: Car Stereos > Single-DIN Car Stereos | Car Stereos > Double-DIN Car Stereos | Car Speakers > Coaxial Speakers | Car Speakers > Component Speakers | Car Amplifiers | GPS & Navigation > Portable GPS | GPS & Navigation > Dash Cams | Car Video > Backup Cameras | Car Video > In-Car DVD Players | Car Security > Remote Starters | Car Security > Car Alarms | Radar Detectors | Car Accessories > Car Chargers | Car Accessories > Car Mounts
-
-Networking: Routers > Wi-Fi 6 Routers | Routers > Mesh Wi-Fi Systems | Routers > Gaming Routers | Modems & Gateways | Wi-Fi Range Extenders | Network Switches | Network Attached Storage (NAS) | Network Adapters | Ethernet Cables | Powerline Adapters
-
-Movies & Music: Blu-ray & DVD Players | 4K Ultra HD Blu-ray Players | Media Streaming Devices > Roku | Media Streaming Devices > Amazon Fire TV | Media Streaming Devices > Apple TV | Blu-ray Movies | 4K Ultra HD Movies | CDs & Vinyl
-
-Office & School Supplies: Office Electronics > All-in-One Printers | Office Electronics > Scanners | Office Electronics > Label Makers | Office Electronics > Calculators | Office Furniture > Desks | Office Furniture > Office Chairs | Office Supplies > Paper & Notebooks | Office Supplies > Pens & Markers | Shredders | Whiteboards
-
-Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers & Tablets > Laptops > Gaming Laptops")`;
   } else {
     const taxonomies: Record<string, string> = {
       amazon: "Amazon product categories (Electronics > Cameras, Home & Kitchen > Cookware, Clothing > Men's Shoes, etc.)",
@@ -330,10 +309,8 @@ Output the category as: "Category > Subcategory > Product Type" (e.g. "Computers
 
   const storeContext = isMathis
     ? "You are a product categorization expert for Mathis Brothers / Mathis Home. You are given the official Mirakl taxonomy sheet (Department > Category > Subcategory > Product Type). Your job is to match each product to the leaf path whose NAME best matches the product type — using ONLY the taxonomy list. Do not invent paths. Do not relocate a product to a different department based on assumptions about adult vs kids, room type, or how a retailer 'usually' organizes furniture."
-    : isTemu
-    ? "You are a product categorization expert for Temu, a global e-commerce marketplace. You are given Temu's official category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet."
-    : isBestBuy
-    ? "You are a product categorization expert for Best Buy, a major US consumer electronics and appliance retailer. Best Buy organizes products by Category > Subcategory > Product Type. Match each product to the most specific product type that matches Best Buy's real taxonomy."
+    : (isTemu || isBestBuy)
+    ? "You are a product categorization expert. You are given a shared category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet. Do not invent paths."
     : "You are a product categorization expert for a major retail marketplace.";
 
   const reasoningInstruction = isMathis
@@ -362,15 +339,15 @@ RULES:
 4. Use product name, brand, description, vendor category as signals to identify WHAT the product is — then map that to the taxonomy leaf
 5. Do not override a direct taxonomy product-type match with general retail logic${mathisSizeRule}` : "";
 
-  const usesTaxonomySheet = isTemu || isMathis;
+  const usesTaxonomySheet = isTemu || isMathis || isBestBuy;
 
-  const jsonExample = isTemu
+  const jsonExample = (isTemu || isBestBuy)
     ? `[{"index":1,"category":"Women's Clothing > Tops > T-Shirts","path":"Women's Clothing > Tops > T-Shirts","confidence":0.95},...]`
     : isMathis
     ? `[{"index":1,"category":"Baby & Kids > Kids Furniture > Daybeds","path":"Baby & Kids > Kids Furniture > Daybeds","confidence":0.95},...]`
     : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
 
-  const pathHint = isTemu
+  const pathHint = (isTemu || isBestBuy)
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Women's Clothing > Tops > T-Shirts")`
     : isMathis
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Baby & Kids > Kids Furniture > Daybeds" when the product is a daybed — because that is where Daybeds lives on the sheet)`
@@ -395,6 +372,9 @@ ${pathHint}
   const { text } = await generateText({
     model: anthropic(model),
     prompt,
+    // temperature 0 → deterministic output so the same product + sheet always
+    // yields the same category (keeps Temu and Best Buy results consistent).
+    temperature: 0,
     maxOutputTokens: usesTaxonomySheet ? 2500 : 2000,
   });
 
