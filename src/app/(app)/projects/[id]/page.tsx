@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
+import { recoverStaleProjects } from "@/lib/projects/recover-stale";
 import { ProjectDetail } from "@/components/projects/project-detail";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await params;
+
+  await recoverStaleProjects({ id });
 
   const project = await prisma.project.findUnique({
     where: { id },

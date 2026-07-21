@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
+import { recoverStaleProjects } from "@/lib/projects/recover-stale";
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { user, response } = await authGuard();
@@ -19,6 +20,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { user, response } = await authGuard();
   if (response) return response;
   const { id } = await params;
+
+  await recoverStaleProjects({ id });
 
   const project = await prisma.project.findUnique({
     where: { id },

@@ -10,6 +10,7 @@ export type ProductInput = {
   name: string;
   brand: string | null;
   description: string | null;
+  sku?: string | null;            // vendor SKU — resolution key for SKU-only sheets
   vendorCategory?: string | null;
   vendorContext?: string | null;  // additional vendor fields: age_group, gender, season, etc.
 };

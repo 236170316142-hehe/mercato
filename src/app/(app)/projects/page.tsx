@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
+import { recoverStaleProjects } from "@/lib/projects/recover-stale";
 import { ProjectsView } from "@/components/projects/projects-view";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,8 @@ const MARKETPLACE_LABELS: Record<string, string> = {
 
 export default async function ProjectsPage() {
   const user = await requireUser();
+
+  await recoverStaleProjects({ userId: user.id });
 
   const projects = await prisma.project.findMany({
     where: { userId: user.id },
