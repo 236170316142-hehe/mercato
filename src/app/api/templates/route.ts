@@ -21,12 +21,22 @@ export async function GET(req: NextRequest) {
     return lower === "amazon_us" || lower === "amazon" ? ["amazon_us", "amazon"] : [lower];
   };
 
-  // Return user's own templates + global (admin) templates (userId = null).
+  // Also pick up templates owned by admin users — some may have userId=adminId instead of null
+  // if they were uploaded before the userId=null convention was enforced.
+  const adminUsers = await prisma.user.findMany({ where: { role: "admin" }, select: { id: true } });
+  const adminIds = adminUsers.map((u) => u.id);
+  const adminIdSet = new Set(adminIds);
+
+  // Return user's own templates + global/admin templates.
   // Exclude fileData (BYTEA blob) — only column definitions are needed for listing and export.
-  const templates = await prisma.exportTemplate.findMany({
+  const rawTemplates = await prisma.exportTemplate.findMany({
     where: {
       ...(marketplace ? { marketplace: { in: marketplaceFamily(marketplace), mode: "insensitive" } } : {}),
-      OR: [{ userId: user!.id }, { userId: null }],
+      OR: [
+        { userId: user!.id },
+        { userId: null },
+        ...(adminIds.length > 0 ? [{ userId: { in: adminIds } }] : []),
+      ],
     },
     select: {
       id: true, name: true, marketplace: true, category: true,
@@ -34,6 +44,12 @@ export async function GET(req: NextRequest) {
     },
     orderBy: { createdAt: "desc" },
   });
+
+  // Normalize: treat admin-owned templates as userId=null so the Admin badge shows on the client.
+  const templates = rawTemplates.map((t) => ({
+    ...t,
+    userId: t.userId === null || adminIdSet.has(t.userId ?? "") ? null : t.userId,
+  }));
 
   return NextResponse.json({ templates });
 }

@@ -78,6 +78,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const mpLower = mp.toLowerCase();
       const mpFamily = mpLower === "amazon_us" || mpLower === "amazon" ? ["amazon_us", "amazon"] : [mpLower];
 
+      // Include templates owned by admin users (some may have userId=adminId instead of null).
+      const adminUserIds = (await prisma.user.findMany({ where: { role: "admin" }, select: { id: true } }))
+        .map((u) => u.id);
+      const adminOr = adminUserIds.length > 0 ? [{ userId: { in: adminUserIds } }] : [];
+      const templateOwnerOr = [{ userId: user!.id }, { userId: null }, ...adminOr];
+
       // Include fileData so category-zip exports can use fillTemplateXlsx and preserve
       // original template formatting, column widths, styles, and dropdown validations.
       const templateSelect = { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true, fileData: true };
@@ -85,11 +91,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         prisma.project.findUnique({ where: { id }, include: { products: true } }),
         useAutoMatch
           ? prisma.exportTemplate.findMany({
-              where: { marketplace: { in: mpFamily, mode: "insensitive" }, OR: [{ userId: user!.id }, { userId: null }] },
+              where: { marketplace: { in: mpFamily, mode: "insensitive" }, OR: templateOwnerOr },
               select: templateSelect,
             }) as Promise<TemplateRow[]>
           : prisma.exportTemplate.findMany({
-              where: { id: { in: templateIds }, OR: [{ userId: user!.id }, { userId: null }] },
+              where: { id: { in: templateIds }, OR: templateOwnerOr },
               select: templateSelect,
             }) as Promise<TemplateRow[]>,
       ]);

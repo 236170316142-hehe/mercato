@@ -5,11 +5,28 @@ import { AdminTemplatesClient } from "@/components/admin/templates-client";
 export default async function TemplatesPage() {
   const user = await requireUser();
 
-  // Load this user's templates + global (admin-created) templates
-  const templates = await prisma.exportTemplate.findMany({
-    where: { OR: [{ userId: user.id }, { userId: null }] },
+  // Fetch admin user IDs so their templates also appear as global defaults.
+  // Some may have userId=adminId instead of null if uploaded before the null convention.
+  const adminUsers = await prisma.user.findMany({ where: { role: "admin" }, select: { id: true } });
+  const adminIds = adminUsers.map((u) => u.id);
+  const adminIdSet = new Set(adminIds);
+
+  const rawTemplates = await prisma.exportTemplate.findMany({
+    where: {
+      OR: [
+        { userId: user.id },
+        { userId: null },
+        ...(adminIds.length > 0 ? [{ userId: { in: adminIds } }] : []),
+      ],
+    },
     orderBy: { createdAt: "desc" },
   });
+
+  // Treat admin-owned templates as userId=null for display (shows Admin badge, hides edit/delete).
+  const templates = rawTemplates.map((t) => ({
+    ...t,
+    userId: t.userId === null || adminIdSet.has(t.userId ?? "") ? null : t.userId,
+  }));
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
