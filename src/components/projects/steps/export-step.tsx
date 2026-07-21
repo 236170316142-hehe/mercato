@@ -11,6 +11,7 @@ type Template = {
   marketplace: string;
   category: string | null;
   fileFormat: string;
+  userId: string | null;
 };
 
 type Product = {
@@ -317,6 +318,9 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
                         <span className="flex items-center gap-1 text-xs text-blue-600 font-medium shrink-0">
                           <Shuffle className="w-3 h-3" />
                           {matched.name}
+                          {matched.userId === null && (
+                            <span className="text-xs bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-medium ml-1">Admin</span>
+                          )}
                         </span>
                       )}
                       <span className="text-xs text-muted-foreground shrink-0">
@@ -352,7 +356,8 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
             <div>
               <h3 className="text-sm font-medium mb-2">Choose export template</h3>
               <p className="text-xs text-muted-foreground mb-3">
-                All {products.length} products will be exported into one file using the selected template&apos;s columns.
+                All {products.length} product{products.length !== 1 ? "s" : ""} will be exported into one file.
+                {templates.some((t) => t.userId === null) && " Admin templates are available by default — no upload needed."}
               </p>
               <div className="border rounded-xl divide-y overflow-hidden">
                 {templates.map((t) => (
@@ -373,6 +378,9 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
                     />
                     <FileSpreadsheet className="w-4 h-4 text-muted-foreground shrink-0" />
                     <span className="text-sm flex-1 font-medium">{t.name}</span>
+                    {t.userId === null && (
+                      <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">Admin</span>
+                    )}
                     {t.category && (
                       <span className="text-xs bg-muted px-2 py-0.5 rounded text-muted-foreground">{t.category}</span>
                     )}
