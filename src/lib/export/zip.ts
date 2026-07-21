@@ -518,44 +518,74 @@ async function fillTemplateXlsx(
     const rn = firstDataRowNum + i;
     const tplRow = allDataRows.get(rn);
 
-    // Per-cell style from the template's pre-formatted row at this position.
-    const cellStyles = new Map<string, string>();
-    if (tplRow) {
-      for (const cm of tplRow.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
-        const s = cm[2].match(/\bs="(\d+)"/)?.[1];
-        if (s) cellStyles.set(cm[1], s);
-      }
-    }
-    const getStyle = (letter: string): string => {
-      const s = cellStyles.get(letter) ?? borrowedStyle.get(letter);
-      return s ? ` s="${s}"` : "";
-    };
-
-    // Preserve row-level attributes (height, spans, etc.) from the template.
-    const rowAttrs = tplRow ? (tplRow.match(/<row\b([^>]*)>/)?.[1] ?? ` r="${rn}"`) : ` r="${rn}"`;
-
-    const cells = colEntries.map(({ col, letter }) => {
+    // Compute value for a column (handles dropdown path normalisation)
+    const colVal = (col: Column, letter: string): string => {
       const raw = String(getProductField(p, col.key) ?? "");
-      // Category paths from AI use " > " separator ("Dept > Cat > Sub").
-      // Template dropdowns often use "/" separator ("Mathis Home/Dept/Cat/Sub" for Mathis,
-      // or just "Dept/Cat/Sub" for other marketplaces). Normalise to "/" before matching
-      // so pickDropdownValue can do exact or near-exact hits instead of word overlap only.
       const dropdownRaw = (dropdowns.has(letter) && raw.includes(" > ") && !raw.includes("/"))
         ? (isMathis
             ? "Mathis Home/" + raw.split(" > ").map(s => s.trim()).join("/")
             : raw.split(" > ").map(s => s.trim()).join("/"))
         : raw;
-      const val = dropdowns.has(letter) ? pickDropdownValue(dropdownRaw, dropdowns.get(letter)!) : raw;
-      const ref = `${letter}${rn}`;
-      const isLargeId = /^\d{10,}$/.test(val);
-      const sAttr = getStyle(letter);
-      if (val !== "" && !isLargeId && !Number.isNaN(Number(val))) {
-        return `<c r="${ref}"${sAttr}><v>${x(val)}</v></c>`;
-      }
-      return `<c r="${ref}"${sAttr} t="s"><v>${ssIdx(val)}</v></c>`;
-    }).join("");
+      return dropdowns.has(letter) ? pickDropdownValue(dropdownRaw, dropdowns.get(letter)!) : raw;
+    };
 
-    outputRows.push(`<row${rowAttrs}>${cells}</row>`);
+    if (tplRow) {
+      // ── In-place modification: keep ALL original cells (preserves every s="N" style,
+      // border, background colour, merge, etc.) then patch only our data columns. ──
+      // Step 1: clear all cell values (same logic as the "clear excess rows" below)
+      let rowXml = tplRow
+        .replace(/<v>[\s\S]*?<\/v>/g, "")
+        .replace(/<f>[\s\S]*?<\/f>/g, "")
+        .replace(/<is>[\s\S]*?<\/is>/g, "")
+        .replace(/\s*\bt="[^"]*"/g, "")
+        .replace(/<c\b([^>]*)><\/c>/g, "<c$1/>");
+
+      // Step 2: write product values into the relevant cells
+      for (const { col, letter } of colEntries) {
+        const val = colVal(col, letter);
+        const ref = `${letter}${rn}`;
+        const isLargeId = /^\d{10,}$/.test(val);
+        const isNum = val !== "" && !isLargeId && !Number.isNaN(Number(val));
+
+        // Match either self-closing <c r="X1" s="N"/> or paired <c r="X1" s="N">…</c>
+        const cellPat = new RegExp(`<c\\b([^>]*\\br="${ref}"[^>]*)(?:/>|>[\\s\\S]*?<\\/c>)`);
+        const cm = rowXml.match(cellPat);
+
+        let newCell: string;
+        if (val === "") {
+          newCell = cm ? `<c${cm[1]}/>` : "";
+        } else if (isNum) {
+          newCell = cm ? `<c${cm[1]}><v>${x(val)}</v></c>` : `<c r="${ref}"><v>${x(val)}</v></c>`;
+        } else {
+          newCell = cm ? `<c${cm[1]} t="s"><v>${ssIdx(val)}</v></c>` : `<c r="${ref}" t="s"><v>${ssIdx(val)}</v></c>`;
+        }
+
+        if (cm) {
+          rowXml = rowXml.replace(cm[0], newCell);
+        } else if (newCell) {
+          // Cell not in template — append before </row> (rare; Excel will auto-sort on open)
+          rowXml = rowXml.replace("</row>", `${newCell}</row>`);
+        }
+      }
+      outputRows.push(rowXml);
+    } else {
+      // No template row at this position — build a new row with borrowed styles
+      const getStyle = (letter: string) => {
+        const s = borrowedStyle.get(letter);
+        return s ? ` s="${s}"` : "";
+      };
+      const cells = colEntries.map(({ col, letter }) => {
+        const val = colVal(col, letter);
+        const ref = `${letter}${rn}`;
+        const isLargeId = /^\d{10,}$/.test(val);
+        const sAttr = getStyle(letter);
+        if (val !== "" && !isLargeId && !Number.isNaN(Number(val))) {
+          return `<c r="${ref}"${sAttr}><v>${x(val)}</v></c>`;
+        }
+        return `<c r="${ref}"${sAttr} t="s"><v>${ssIdx(val)}</v></c>`;
+      }).join("");
+      outputRows.push(`<row r="${rn}">${cells}</row>`);
+    }
   }
 
   // Remaining pre-formatted rows beyond the product count — clear values but
