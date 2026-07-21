@@ -5,6 +5,7 @@ import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import { categorizeProducts, type ProductInput } from "@/lib/ai/categorize";
 import { enrichSkuOnlyProducts, looksLikeSkuName } from "@/lib/ai/resolve-sku";
+import { hasCatalogVendor } from "@/lib/ai/vendor-catalog";
 
 // Keys we try (in order) when extracting the vendor's own category from raw spreadsheet data.
 const VENDOR_CATEGORY_KEYS = [
@@ -89,6 +90,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           name: true,
           brand: true,
           description: true,
+          vendorSku: true,
           marketplaceCategory: true,
           vendorData: true,
         },
@@ -113,6 +115,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       name: p.name,
       brand: p.brand,
       description: p.description,
+      sku: p.vendorSku,
       vendorCategory: extractVendorCategory(p.vendorData),
       vendorContext: extractVendorContext(p.vendorData),
     }));
@@ -132,8 +135,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (productInputs.length > 0) {
       // SKU-only sheets (common for Mathis): resolve codes like TOVF-TOVL54566 → real
-      // product titles via web search before asking Claude to categorize.
-      const skuOnly = productInputs.filter((p) => looksLikeSkuName(p.name));
+      // product titles (vendor catalog first, then web search) before asking Claude to
+      // categorize. Trigger when the name still looks like a code OR the vendor SKU maps to
+      // a known catalog vendor — the latter lets re-runs correct a previously bad resolution.
+      const skuOnly = productInputs.filter(
+        (p) => looksLikeSkuName(p.name, p.sku) || (p.sku ? hasCatalogVendor(p.sku) : false),
+      );
       if (skuOnly.length > 0) {
         const { products: enriched, enrichments } = await enrichSkuOnlyProducts(productInputs);
         productInputs = enriched;
@@ -155,6 +162,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
 
       const results = await categorizeProducts(project.marketplace, productInputs);
+
+      // ── Bulletproofing: route uncertain products to review instead of guessing ──
+      // Correctness-first policy — it is always safer to mark a product "Uncategorized"
+      // (excluded from export, surfaced for manual review) than to assign a wrong category.
+      // Two gates:
+      //   1. Unresolved SKU — the name is still a raw vendor code (catalog + web both failed),
+      //      so the AI had nothing real to categorize. Never trust that guess.
+      //   2. Low confidence — the AI itself signalled uncertainty below the threshold.
+      const MIN_CONFIDENCE = Number(process.env.CATEGORIZE_MIN_CONFIDENCE ?? 0.6);
+      const inputById = new Map(productInputs.map((p) => [p.id, p]));
+
+      for (const r of results) {
+        const input = inputById.get(r.productId);
+        const stillRawSku = input ? looksLikeSkuName(input.name, input.sku) : false;
+        if (r.category !== "Uncategorized" && (stillRawSku || r.confidence < MIN_CONFIDENCE)) {
+          r.category = "Uncategorized";
+          r.path = "Uncategorized";
+        }
+      }
 
       await Promise.all(
         results.map((r) =>

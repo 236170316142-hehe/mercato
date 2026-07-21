@@ -136,10 +136,14 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
     }
   }
 
-  async function runCategorize() {
+  async function runCategorize(force = false) {
     setLoading(true);
     try {
-      const res = await fetch(`/api/projects/${project.id}/categorize`, { method: "POST" });
+      const res = await fetch(`/api/projects/${project.id}/categorize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error ?? "Categorization failed");

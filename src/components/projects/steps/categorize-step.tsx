@@ -18,7 +18,7 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
   loading: boolean;
   projectStatus: string;
   marketplace: string;
-  onRunCategorize: () => void;
+  onRunCategorize: (force?: boolean) => void;
   onNext: () => void;
 }) {
   const isMathis = marketplace === "mathis";
@@ -88,7 +88,7 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
           )}
           {hasResults && (
             <button
-              onClick={onRunCategorize}
+              onClick={() => onRunCategorize(true)}
               disabled={loading}
               className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
             >
@@ -97,7 +97,7 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
             </button>
           )}
           <button
-            onClick={hasResults ? onNext : onRunCategorize}
+            onClick={hasResults ? onNext : () => onRunCategorize(false)}
             disabled={loading}
             className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
           >

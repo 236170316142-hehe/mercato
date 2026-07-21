@@ -1,8 +1,11 @@
+import { resolveSkuFromCatalog } from "./vendor-catalog";
+
 export type SkuProductInput = {
   id: string;
   name: string;
   brand: string | null;
   description: string | null;
+  sku?: string | null;
   vendorCategory?: string | null;
   vendorContext?: string | null;
 };
@@ -37,7 +40,32 @@ export function looksLikeSkuName(name: string, vendorSku?: string | null): boole
   return false;
 }
 
-/** Search variants so "TOVF-TOVL54566" also tries "TOV-L54566". */
+/**
+ * Emit catalog-style variants for a single vendor code segment.
+ * Handles the TOV Furniture MPN style: <prefix><seriesLetter><digits><optional suffix>
+ * e.g. "TOVL54566" → "TOV-L54566", "TOVT54304FBMP" → "TOV-T54304" (drops the FBMP suffix),
+ * and the generic "ABC12345" → "ABC-12345".
+ */
+function segmentVariants(seg: string): string[] {
+  const out: string[] = [];
+  const s = seg.trim();
+  if (!s) return out;
+
+  // <letters><seriesLetter><4+ digits><optional trailing letters>
+  // Non-greedy prefix so the char right before the digits is treated as the series letter.
+  const series = s.match(/^([A-Za-z]+?)([A-Za-z])(\d{4,})([A-Za-z]*)$/);
+  if (series) {
+    out.push(`${series[1]}-${series[2].toUpperCase()}${series[3]}`);
+  }
+
+  // ABC12345[SUFFIX] → ABC-12345 (strip any trailing alpha suffix like FBMP)
+  const splitDigits = s.match(/^([A-Za-z]{2,})(\d{4,})[A-Za-z]*$/);
+  if (splitDigits) out.push(`${splitDigits[1]}-${splitDigits[2]}`);
+
+  return out;
+}
+
+/** Search variants so "TOVF-TOVL54566" also tries "TOV-L54566" and "TOVF-TOVT54304FBMP" tries "TOV-T54304". */
 export function skuSearchVariants(sku: string): string[] {
   const s = sku.trim();
   if (!s) return [];
@@ -48,23 +76,14 @@ export function skuSearchVariants(sku: string): string[] {
     const last = parts[parts.length - 1]!;
     out.add(last);
 
-    // TOVL54566 → TOV-L54566 (letter + L + digits, common furniture MPN style)
-    const tovL = last.match(/^([A-Za-z]+?)(L)(\d{4,})$/i);
-    if (tovL) out.add(`${tovL[1]}-${tovL[2].toUpperCase()}${tovL[3]}`);
-
-    // ABC12345 → ABC-12345
-    const splitDigits = last.match(/^([A-Za-z]{2,})(\d{4,})$/);
-    if (splitDigits) out.add(`${splitDigits[1]}-${splitDigits[2]}`);
+    for (const v of segmentVariants(last)) out.add(v);
 
     // Prefer last segment if first looks like a brand prefix (TOVF, APSA, …)
     if (/^[A-Z]{2,6}F?$/i.test(parts[0]!)) {
       out.add(parts.slice(1).join("-"));
     }
   } else {
-    const tovL = s.match(/^([A-Za-z]+?)(L)(\d{4,})$/i);
-    if (tovL) out.add(`${tovL[1]}-${tovL[2].toUpperCase()}${tovL[3]}`);
-    const splitDigits = s.match(/^([A-Za-z]{2,})(\d{4,})$/);
-    if (splitDigits) out.add(`${splitDigits[1]}-${splitDigits[2]}`);
+    for (const v of segmentVariants(s)) out.add(v);
   }
 
   // Prefer catalog-style codes (contain a hyphen) before raw vendor codes
@@ -201,10 +220,12 @@ async function searchTovFurniture(query: string): Promise<SearchHit[]> {
 }
 
 async function searchWeb(query: string, originalSku: string): Promise<SearchHit[]> {
-  // Vendor-specific catalog first for TOV codes (most reliable for Mathis furniture sheets)
+  // Vendor-specific catalog first for TOV codes (most reliable for Mathis furniture sheets).
+  // For TOV codes we ONLY trust the TOV catalog: a generic web fallback tends to return
+  // loose brand matches (e.g. "TOV" → "TOTO toilet parts"), which mislabels the product.
+  // Better to leave it unresolved and let categorization handle it than to overwrite with junk.
   if (isTovLikeSku(originalSku) || isTovLikeSku(query)) {
-    const tov = await searchTovFurniture(query);
-    if (tov.length) return tov;
+    return searchTovFurniture(query);
   }
   const serp = await searchSerpApi(query);
   if (serp.length) return serp;
@@ -254,17 +275,68 @@ export async function enrichSkuOnlyProducts(
     const slice = queue.slice(i, i + PARALLEL);
     await Promise.all(
       slice.map(async ({ p, idx }) => {
-        if (!looksLikeSkuName(p.name)) {
+        // Resolution key: the vendor SKU column is authoritative. Fall back to the product
+        // name only when it still looks like a raw code (never resolved yet). Using vendorSku
+        // means re-runs self-heal even if a prior bad run overwrote `name` with a wrong title.
+        const sku = (p.sku && p.sku.trim()) || (looksLikeSkuName(p.name) ? p.name.trim() : "");
+        if (!sku) {
           results[idx] = p;
           return;
         }
 
-        const variants = skuSearchVariants(p.name);
+        // 1. Authoritative first: match the vendor SKU against the vendor's own Shopify
+        //    catalog index (exact / digit-core). No guessing, no mislabels.
+        const catalogEntry = await resolveSkuFromCatalog(sku);
+        if (catalogEntry) {
+          // Category signals from the vendor itself, most authoritative first:
+          //  - `category`: the vendor's canonical breadcrumb (e.g. "Bedroom Furniture") — the
+          //    single primary category the vendor files it under (resolves multi-room ambiguity).
+          //  - `tags`: supporting product-type signals (e.g. "Placemats, Tabletop").
+          const tagHint = catalogEntry.tags.length ? catalogEntry.tags.join(", ") : null;
+          const primaryCategory = catalogEntry.category
+            ? [catalogEntry.category, tagHint].filter(Boolean).join(" | ")
+            : tagHint;
+          const enrichment: SkuEnrichment = {
+            productId: p.id,
+            name: catalogEntry.title,
+            brand: catalogEntry.brand || p.brand,
+            description: catalogEntry.description || p.description,
+            searchContext: `catalog: ${catalogEntry.sku} | ${catalogEntry.title}`,
+          };
+          enrichments.push(enrichment);
+          results[idx] = {
+            ...p,
+            name: catalogEntry.title,
+            brand: catalogEntry.brand || p.brand,
+            description: catalogEntry.description || p.description,
+            vendorCategory: primaryCategory ?? p.vendorCategory,
+            vendorContext: [
+              p.vendorContext,
+              `resolved_from_sku: ${sku}`,
+              `catalog_sku: ${catalogEntry.sku}`,
+              catalogEntry.category ? `vendor_primary_category: ${catalogEntry.category}` : null,
+              tagHint ? `vendor_tags: ${tagHint}` : null,
+            ]
+              .filter(Boolean)
+              .join("; "),
+          };
+          return;
+        }
+
+        // 2. Fallback: web search variants (generic / non-catalog vendors).
+        //    Only pursue this when the name itself still looks like a code — never overwrite
+        //    an already-resolved, human-readable name with a loose web guess.
+        if (!looksLikeSkuName(p.name, p.sku)) {
+          results[idx] = p;
+          return;
+        }
+
+        const variants = skuSearchVariants(sku);
         let hits: SearchHit[] = [];
-        let usedQuery = variants[0] ?? p.name;
+        let usedQuery = variants[0] ?? sku;
 
         for (const v of variants) {
-          hits = await searchWeb(v, p.name);
+          hits = await searchWeb(v, sku);
           usedQuery = v;
           if (hits.length > 0) {
             const digits = (v.match(/\d{4,}/) ?? [])[0];
@@ -279,6 +351,25 @@ export async function enrichSkuOnlyProducts(
 
         const resolvedName = pickProductName(hits, usedQuery);
         if (!resolvedName) {
+          results[idx] = p;
+          return;
+        }
+
+        // BULLETPROOF GUARD: only trust a web-resolved name if the search results actually
+        // reference this SKU. We require the SKU's distinctive digit core to appear as a
+        // *bounded* number in a hit (not merely a substring of a longer number) — otherwise
+        // it's a loose brand/keyword match (the "TOV → TOTO toilet" failure) and we leave the
+        // row unresolved so it goes to review instead of being confidently mislabeled.
+        const blob = hits.map((h) => `${h.title} ${h.snippet}`).join(" ");
+        const skuCore = (sku.match(/\d{4,}/g) ?? []).pop();
+        const isDegenerate = !!skuCore && /^(\d)\1+$/.test(skuCore); // e.g. "0000", "11111"
+        const hitDigitTokens = new Set(blob.match(/\d+/g) ?? []);
+        const normSku = sku.toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const normBlob = blob.toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const referencesSku =
+          (!!skuCore && !isDegenerate && hitDigitTokens.has(skuCore)) ||
+          (normSku.length >= 6 && normBlob.includes(normSku));
+        if (!referencesSku) {
           results[idx] = p;
           return;
         }
@@ -307,7 +398,7 @@ export async function enrichSkuOnlyProducts(
           name: resolvedName,
           brand,
           description,
-          vendorContext: [p.vendorContext, `resolved_from_sku: ${p.name}`, `web: ${searchContext.slice(0, 280)}`]
+          vendorContext: [p.vendorContext, `resolved_from_sku: ${sku}`, `web: ${searchContext.slice(0, 280)}`]
             .filter(Boolean)
             .join("; "),
         };
