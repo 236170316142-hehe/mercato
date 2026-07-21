@@ -748,7 +748,15 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
                     </span>
                     <span className="flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5" />
-                      {new Date(p.updatedAt).toLocaleDateString()}
+                      {new Date(p.updatedAt).toLocaleString("en-IN", {
+                        year: "numeric",
+                        month: "numeric",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                        hour12: true,
+                        timeZone: "Asia/Kolkata",
+                      })}
                     </span>
                   </div>
 
