@@ -322,14 +322,25 @@ async function fillTemplateXlsx(
   let sheetXml = await tplZip.file(sheetPath)!.async("string");
 
   // ── Shared strings ─────────────────────────────────────────────────────────
+  // Keep original <si> XML elements verbatim so rich-text formatting (bold,
+  // colored text, fonts) in template header cells is fully preserved.
+  // New plain-text entries for product data are appended after the originals.
   const ssPath = "xl/sharedStrings.xml";
   const existingSsXml = await tplZip.file(ssPath)?.async("string") ?? "";
-  const ssArr: string[] = [];
-  for (const m of existingSsXml.matchAll(/<si>([\s\S]*?)<\/si>/g)) ssArr.push(extractSsText(m[1]));
+  const originalSiXmls: string[] = [];   // raw inner XML of each <si>, kept as-is
+  const ssArr: string[] = [];            // plain-text equivalent (for header parsing & dropdown resolution)
+  for (const m of existingSsXml.matchAll(/<si>([\s\S]*?)<\/si>/g)) {
+    originalSiXmls.push(m[1]);
+    ssArr.push(extractSsText(m[1]));
+  }
   const ssMap = new Map<string, number>(ssArr.map((s, i) => [s, i]));
+  const newSiTexts: string[] = [];       // product-data values appended as plain text
   const ssIdx = (s: string): number => {
     let i = ssMap.get(s);
-    if (i === undefined) { i = ssArr.length; ssMap.set(s, i); ssArr.push(s); }
+    if (i !== undefined) return i;
+    i = originalSiXmls.length + newSiTexts.length;
+    ssMap.set(s, i);
+    newSiTexts.push(s);
     return i;
   };
 
@@ -538,9 +549,12 @@ async function fillTemplateXlsx(
   // ── Write modified files back into the ZIP ─────────────────────────────────
   tplZip.file(sheetPath, sheetXml);
 
+  // Write back: original <si> elements preserved verbatim (rich text intact),
+  // followed by new plain-text entries for product data values.
+  const totalSs = originalSiXmls.length + newSiTexts.length;
   const newSsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${ssArr.length}" uniqueCount="${ssArr.length}">
-${ssArr.map(s => `<si><t xml:space="preserve">${x(s)}</t></si>`).join("")}</sst>`;
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${totalSs}" uniqueCount="${totalSs}">
+${originalSiXmls.map(si => `<si>${si}</si>`).join("")}${newSiTexts.map(s => `<si><t xml:space="preserve">${x(s)}</t></si>`).join("")}</sst>`;
   tplZip.file(ssPath, newSsXml);
 
   // Register sharedStrings in [Content_Types].xml if the template omitted it
