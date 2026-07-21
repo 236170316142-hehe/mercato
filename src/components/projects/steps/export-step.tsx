@@ -58,8 +58,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
   const isMathis = marketplace === "mathis";
   const isTemu = marketplace === "temu";
   const isBestBuy = marketplace === "bestbuy";
-  const isWalmart = marketplace === "walmart";
-  // Category-split marketplaces: one file per category, matched to template automatically
+  // Category-split marketplaces: one file per category, matched to template automatically.
   // Walmart uses single-template picker (like Amazon) so users can choose their template.
   const usesCategoryZip = isMathis || isTemu || isBestBuy;
 
