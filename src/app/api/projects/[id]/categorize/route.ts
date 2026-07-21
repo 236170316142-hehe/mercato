@@ -6,6 +6,81 @@ import { prisma } from "@/lib/db";
 import { categorizeProducts, type ProductInput } from "@/lib/ai/categorize";
 import { enrichSkuOnlyProducts, looksLikeSkuName } from "@/lib/ai/resolve-sku";
 
+// ── PUT /api/projects/[id]/categorize ─────────────────────────────────────────
+// Import categories from a CSV file. Expected columns: SKU (or name), Category, [Category Path].
+// Matches rows to products by SKU → vendorSku exact match, then by normalized name.
+// Useful for the workflow: AI categorize → download CSV → verify/edit → re-upload.
+
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { user, response } = await authGuard();
+  if (response) return response;
+  const { id } = await params;
+
+  const project = await prisma.project.findUnique({
+    where: { id },
+    select: { id: true, userId: true, products: { select: { id: true, name: true, vendorSku: true } } },
+  });
+  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  let form: FormData;
+  try { form = await req.formData(); } catch {
+    return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+  }
+  const file = form.get("file");
+  if (!(file instanceof File)) return NextResponse.json({ error: "No file attached" }, { status: 400 });
+
+  const raw = Buffer.from(await file.arrayBuffer()).toString("utf-8").replace(/^﻿/, "");
+  const delim = raw.includes("\t") ? "\t" : ",";
+  const [headerLine, ...dataLines] = raw.split(/\r?\n/).filter(Boolean);
+  const headers = (headerLine ?? "").split(delim).map(h => h.replace(/^"|"$/g, "").trim().toLowerCase());
+
+  // Find column indices
+  const skuIdx = headers.findIndex(h => /sku|sku_id|vendor_sku|item_sku/.test(h));
+  const nameIdx = headers.findIndex(h => /product[\s_]?name|name|title/.test(h));
+  const catIdx = headers.findIndex(h => /^category$|marketplace[\s_]?cat/.test(h));
+  const pathIdx = headers.findIndex(h => /category[\s_]?path|path/.test(h));
+
+  if (catIdx === -1) {
+    return NextResponse.json({ error: "CSV must have a 'Category' column" }, { status: 400 });
+  }
+
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const skuMap = new Map(project.products.map(p => [p.vendorSku?.trim() ?? "", p.id]));
+  const nameMap = new Map(project.products.map(p => [norm(p.name), p.id]));
+
+  const updates: Array<{ id: string; category: string; path: string | null }> = [];
+  for (const line of dataLines) {
+    if (!line.trim()) continue;
+    const cols = line.split(delim).map(c => c.replace(/^"|"$/g, "").trim());
+    const sku = skuIdx >= 0 ? (cols[skuIdx] ?? "") : "";
+    const name = nameIdx >= 0 ? (cols[nameIdx] ?? "") : "";
+    const category = (cols[catIdx] ?? "").trim();
+    const path = pathIdx >= 0 ? (cols[pathIdx] ?? "").trim() || null : null;
+    if (!category) continue;
+
+    const productId = (sku && skuMap.get(sku)) || (name && nameMap.get(norm(name)));
+    if (!productId) continue;
+    updates.push({ id: productId, category, path });
+  }
+
+  if (!updates.length) {
+    return NextResponse.json({ error: "No matching products found in CSV" }, { status: 400 });
+  }
+
+  await Promise.all(
+    updates.map(u =>
+      prisma.product.update({
+        where: { id: u.id },
+        data: { marketplaceCategory: u.category, categoryPath: u.path, categorizedAt: new Date() },
+      })
+    )
+  );
+  await prisma.project.update({ where: { id }, data: { status: "categorized" } });
+
+  return NextResponse.json({ updated: updates.length, total: project.products.length });
+}
+
 // Keys we try (in order) when extracting the vendor's own category from raw spreadsheet data.
 const VENDOR_CATEGORY_KEYS = [
   "category", "Category", "CATEGORY",

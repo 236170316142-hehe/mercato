@@ -324,6 +324,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         )}
         {activeStep === 2 && (
           <CategorizeStep
+            projectId={project.id}
             products={products}
             categorizedCount={categorizedCount}
             loading={loading}

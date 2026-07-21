@@ -78,8 +78,10 @@ export async function verifyProducts(
       }));
   }
 
-  // Post-pass: AI visual comparison of catalog vs marketplace images.
+  // Post-pass 1: AI visual comparison of catalog vs marketplace images.
   await applyImageComparison(results, products);
+  // Post-pass 2: AI semantic title comparison for Walmart borderline cases.
+  if (marketplace === "walmart") await applySemanticTitleCheck(results, products);
   return results;
 }
 
@@ -147,6 +149,77 @@ async function applyImageComparison(results: VerifyResult[], products: Product[]
     const hasHardWarning = t.result.fields.some((f) => f.severity === "warning" && HARD_FIELDS.has(f.field));
     t.result.status = hasHardMismatch ? "mismatch" : (hasSoftMismatch || hasHardWarning) ? "warning" : "ok";
   });
+}
+
+// ── AI semantic title comparison (Walmart post-pass) ──────────────────────────
+// Walmart titles are often very different from vendor titles (much more verbose,
+// different structure). When the basic similarity score is "warning" (borderline),
+// ask Claude whether the two titles refer to the same product. This upgrades
+// genuine matches to "ok" and catches semantic mismatches word-overlap misses.
+
+async function applySemanticTitleCheck(results: VerifyResult[], products: Product[]): Promise<void> {
+  if (!process.env.ANTHROPIC_API_KEY) return;
+
+  const nameById = new Map(products.map((p) => [p.id, p.name]));
+
+  type Target = { result: VerifyResult; field: FieldResult; vendorTitle: string; liveTitle: string };
+  const targets: Target[] = [];
+  for (const r of results) {
+    if (r.status === "not_found" || r.status === "discontinued") continue;
+    const field = r.fields.find((f) => f.field === "title");
+    if (!field || field.severity !== "warning") continue; // only re-evaluate borderline cases
+    const vendorTitle = nameById.get(r.productId) ?? field.stored;
+    const liveTitle = field.live;
+    if (!vendorTitle || !liveTitle) continue;
+    targets.push({ result: r, field, vendorTitle, liveTitle });
+  }
+  if (!targets.length) return;
+
+  const { generateText } = await import("ai");
+  const { createAnthropic } = await import("@ai-sdk/anthropic");
+  const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const model = process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+
+  const CONCURRENCY = 5;
+  for (let i = 0; i < targets.length; i += CONCURRENCY) {
+    const batch = targets.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(async (t) => {
+      try {
+        const { text } = await generateText({
+          model: anthropic(model),
+          messages: [{
+            role: "user",
+            content:
+              `Vendor title: "${t.vendorTitle}"\n` +
+              `Walmart title: "${t.liveTitle}"\n\n` +
+              `Do these two titles refer to the SAME physical product (ignoring pack quantity differences, which are separate checks)?\n` +
+              `Consider abbreviations, brand aliases, and different phrasings of the same product.\n` +
+              `Answer on the first line: SAME or DIFFERENT\n` +
+              `On the second line: one short sentence explaining why.`,
+          }],
+          maxOutputTokens: 100,
+        });
+        const lines = text.trim().split("\n").map(l => l.trim()).filter(Boolean);
+        const verdict = (lines[0] ?? "").toUpperCase();
+        const reason = lines.slice(1).join(" ") || "";
+        if (verdict.startsWith("SAME")) {
+          t.field.severity = "ok";
+          t.field.match = true;
+          t.field.note = `AI title check: same product — ${reason}`;
+        } else if (verdict.startsWith("DIFFERENT")) {
+          t.field.severity = "mismatch";
+          t.field.match = false;
+          t.field.note = `AI title check: different product — ${reason}`;
+        }
+        // Recompute overall status
+        const HARD_FIELDS = new Set(["title", "brand", "model"]);
+        const hasHardMismatch = t.result.fields.some(f => f.severity === "mismatch" && HARD_FIELDS.has(f.field));
+        const hasSoftMismatch = t.result.fields.some(f => f.severity === "mismatch" && !HARD_FIELDS.has(f.field));
+        const hasHardWarning = t.result.fields.some(f => f.severity === "warning" && HARD_FIELDS.has(f.field));
+        t.result.status = hasHardMismatch ? "mismatch" : (hasSoftMismatch || hasHardWarning) ? "warning" : "ok";
+      } catch { /* leave existing severity in place */ }
+    }));
+  }
 }
 
 // ── Amazon (Keepa) ────────────────────────────────────────────────────────────
@@ -754,17 +827,21 @@ async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
       let item = null;
 
       if (p.upc) {
-        // Has a UPC — do UPC-based lookup only. If Walmart doesn't carry it by UPC,
-        // a keyword search would match random products with the same name (e.g. "Juniper" plant
-        // instead of "Juniper" quilt set). Better to return not_found than a wrong match.
+        // Try UPC-based lookup first; fall back to name search if Walmart doesn't index by UPC.
+        // Some legitimate products (especially newer listings) aren't indexed by UPC yet.
         item = await searchWalmartByUpc(p.upc).catch(() => null);
+        if (!item) {
+          // UPC lookup returned nothing — try name-based search so we don't miss the product.
+          // A title similarity check in compareToLive will surface any mismatch.
+          const query = [p.brand, p.name].filter(Boolean).join(" ").trim();
+          item = await searchWalmartByName(query).catch(() => null);
+          if (!item && p.name) item = await searchWalmartByName(p.name).catch(() => null);
+        }
       } else {
         // No UPC — try brand + name, then name alone
         const query = [p.brand, p.name].filter(Boolean).join(" ").trim();
         item = await searchWalmartByName(query).catch(() => null);
-        if (!item && p.name) {
-          item = await searchWalmartByName(p.name).catch(() => null);
-        }
+        if (!item && p.name) item = await searchWalmartByName(p.name).catch(() => null);
       }
 
       if (!item) return notFound(p.id);
@@ -776,9 +853,22 @@ async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
       const walmartProductUrl = item.itemId
         ? `https://www.walmart.com/ip/${slug}/${item.itemId}`
         : "";
+
+      // Collect ALL image angles: imageEntities (all secondary/primary shots) + fallback top-level fields.
+      // The AI visual comparison will pick the best-matching angle, improving accuracy.
+      const entityImages = (item.imageEntities ?? [])
+        .map((e) => e.largeImage ?? e.thumbnailImage)
+        .filter((u): u is string => !!u && u.startsWith("http"));
+      const allImages = [
+        ...entityImages,
+        item.largeImage,
+        item.thumbnailImage,
+      ].filter((u): u is string => !!u && u.startsWith("http"))
+       .filter((u, i, arr) => arr.indexOf(u) === i); // deduplicate
+
       const liveDataForCompare = {
         ...item,
-        images: [item.largeImage, item.thumbnailImage].filter(Boolean),
+        images: allImages,
         description: item.shortDescription ?? item.longDescription ?? "",
         productUrl: walmartProductUrl,
       };

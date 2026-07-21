@@ -14,6 +14,7 @@ export type WalmartItem = {
   shortDescription?: string;
   longDescription?: string;
   categoryPath?: string;
+  imageEntities?: Array<{ largeImage?: string; thumbnailImage?: string; entityType?: string }>;
 };
 
 function generateAuthHeaders(): Record<string, string> {
@@ -91,9 +92,28 @@ export async function searchWalmartByName(query: string): Promise<WalmartItem | 
       (search?.items as WalmartItem[] | undefined) ??
       (data.items as WalmartItem[] | undefined) ??
       [];
-    return items[0] ?? null;
+    const first = items[0] ?? null;
+    // Fetch full item details (including imageEntities) when we have an itemId
+    if (first?.itemId) {
+      const full = await fetchWalmartItemById(first.itemId).catch(() => null);
+      if (full) return full;
+    }
+    return first;
   } catch (e) {
     console.error("[walmart] Name search error:", e);
+    return null;
+  }
+}
+
+export async function fetchWalmartItemById(itemId: string): Promise<WalmartItem | null> {
+  try {
+    const headers = generateAuthHeaders();
+    const res = await fetch(`${BASE}/items?ids=${encodeURIComponent(itemId)}`, { headers });
+    if (!res.ok) return null;
+    const data = await res.json() as Record<string, unknown>;
+    const items = (data.items as WalmartItem[] | undefined) ?? [];
+    return items[0] ?? null;
+  } catch {
     return null;
   }
 }

@@ -1,6 +1,8 @@
 "use client";
 
-import { Tag, Loader2, CheckCircle2, AlertTriangle, XCircle, Download } from "lucide-react";
+import { useRef, useState } from "react";
+import { Tag, Loader2, CheckCircle2, AlertTriangle, XCircle, Download, Upload } from "lucide-react";
+import { toast } from "sonner";
 
 type Product = {
   id: string;
@@ -12,7 +14,8 @@ type Product = {
   categorizedAt: Date | null;
 };
 
-export function CategorizeStep({ products, categorizedCount, loading, projectStatus, marketplace, onRunCategorize, onNext }: {
+export function CategorizeStep({ projectId, products, categorizedCount, loading, projectStatus, marketplace, onRunCategorize, onNext }: {
+  projectId: string;
   products: Product[];
   categorizedCount: number;
   loading: boolean;
@@ -27,10 +30,29 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
   const isWalmart = marketplace === "walmart";
   const hasResults = products.some((p) => p.marketplaceCategory);
   const total = products.length;
+  const [uploading, setUploading] = useState(false);
+  const csvRef = useRef<HTMLInputElement>(null);
 
   const uncategorized = products.filter((p) => p.marketplaceCategory === "Uncategorized");
   const categorized = products.filter((p) => p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized");
   const pending = products.filter((p) => !p.marketplaceCategory);
+
+  async function handleCsvUpload(file: File) {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/projects/${projectId}/categorize`, { method: "PUT", body: fd });
+      const data = await res.json() as { updated?: number; total?: number; error?: string };
+      if (!res.ok) { toast.error(data.error ?? "Upload failed"); return; }
+      toast.success(`Categories imported — ${data.updated} of ${data.total} products updated`);
+      window.location.reload();
+    } catch {
+      toast.error("Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function downloadCsv() {
     const rows = [
@@ -77,6 +99,23 @@ export function CategorizeStep({ products, categorizedCount, loading, projectSta
               Skip →
             </button>
           )}
+          {/* Hidden CSV upload input */}
+          <input
+            ref={csvRef}
+            type="file"
+            accept=".csv,.tsv"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsvUpload(f); e.target.value = ""; }}
+          />
+          <button
+            onClick={() => csvRef.current?.click()}
+            disabled={uploading || loading}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+            title="Upload a corrected category CSV (SKU, Category, Category Path columns)"
+          >
+            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            Import Categories
+          </button>
           {hasResults && (
             <button
               onClick={downloadCsv}
