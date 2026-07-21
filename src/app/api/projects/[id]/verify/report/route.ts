@@ -30,13 +30,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   // Build CSV
-  const FIELD_ORDER = ["title", "brand", "model", "images", "description", "dimensions"];
+  const FIELD_ORDER = ["title", "brand", "model", "upc", "images", "description", "dimensions"];
   const mpLabel =
     project.marketplace === "walmart" ? "Walmart" :
     project.marketplace === "amazon_us" ? "Amazon US" :
     "Amazon";
 
-  const FIELD_LABELS: Record<string, string> = { model: "Model Number" };
+  const FIELD_LABELS: Record<string, string> = { model: "Model Number", upc: "UPC" };
   const header = [
     "SKU", "UPC", "ASIN", "Product Name", "Overall Status",
     "Catalog Image URL", `${mpLabel} Image URL`, "Image Result", "Image Note",

@@ -272,6 +272,23 @@ function eligibleProducts(products: Product[], _marketplace: string): Product[] 
   return products.filter((p) => p.verifyStatus !== "error");
 }
 
+// Fallback when the uploaded template can't be parsed. Produces a bare workbook
+// with none of the template's styling, structure, or dropdown validations — so
+// it always logs WHY, otherwise the degradation is invisible and surfaces later
+// as "the downloaded file doesn't match the template I uploaded".
+function bailToScratch(
+  products: Product[],
+  columns: Column[],
+  marketplace: string,
+  reason: string,
+): Promise<Buffer> {
+  console.warn(
+    `[export] Template preservation failed${marketplace ? ` (${marketplace})` : ""}: ${reason}. ` +
+    `Falling back to a generated workbook — original formatting and dropdowns will be lost.`,
+  );
+  return createXlsxFromScratch(products, columns, "Sheet1");
+}
+
 // ── Fill existing template file with product rows ─────────────────────────────
 // Uses pure JSZip + XML string manipulation — no ExcelJS.
 // Memory cost: ~3–5× template file size (vs ExcelJS at 50–200×, which OOMs on
@@ -317,7 +334,10 @@ async function fillTemplateXlsx(
   const targetDef = sheetDefs.find(s => /^template$/i.test(s.name)) ?? sheetDefs[0];
   const sheetPath = targetDef ? rIdToTarget.get(targetDef.rId) : null;
   if (!sheetPath || !tplZip.file(sheetPath)) {
-    return createXlsxFromScratch(products, columns, "Sheet1");
+    return bailToScratch(
+      products, columns, marketplace,
+      `no usable worksheet found (sheets: ${sheetDefs.map(s => s.name).join(", ") || "none"})`,
+    );
   }
   let sheetXml = await tplZip.file(sheetPath)!.async("string");
 
@@ -335,7 +355,7 @@ async function fillTemplateXlsx(
 
   // ── Parse header row ───────────────────────────────────────────────────────
   const sdMatch = sheetXml.match(/<sheetData>([\s\S]*?)<\/sheetData>/);
-  if (!sdMatch) return createXlsxFromScratch(products, columns, "Sheet1");
+  if (!sdMatch) return bailToScratch(products, columns, marketplace, "template sheet has no <sheetData> block");
   const rowMatches = [...sdMatch[1].matchAll(/<row\b[^>]*\br="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)];
 
   // Header = row with the most literal (non-formula) cells
@@ -346,7 +366,7 @@ async function fillTemplateXlsx(
     const count = (rm[0].match(/<c\b/g)?.length ?? 0) - (rm[0].match(/<f>/g)?.length ?? 0);
     if (count > maxLiteral) { maxLiteral = count; headerRowNum = parseInt(rm[1]); headerRowXml = rm[0]; }
   }
-  if (!headerRowXml) return createXlsxFromScratch(products, columns, "Sheet1");
+  if (!headerRowXml) return bailToScratch(products, columns, marketplace, "could not identify a header row in the template");
 
   // Map column letter → header label (resolve shared-string refs)
   const colLetterToHeader = new Map<string, string>();
@@ -369,7 +389,18 @@ async function fillTemplateXlsx(
       }
     }
   }
-  if (colEntries.length === 0) return createXlsxFromScratch(products, columns, "Sheet1");
+  if (colEntries.length === 0) {
+    // The most common cause of a "downloaded file doesn't match my template" report:
+    // the template's header labels don't normalize-match the stored column
+    // definitions, so the original workbook (styles, dropdowns, structure) is
+    // discarded. Log both sides so the mismatch is diagnosable from the template.
+    return bailToScratch(
+      products, columns, marketplace,
+      `no template header matched the stored column definitions — ` +
+      `template headers: [${[...colLetterToHeader.values()].join(" | ")}] ; ` +
+      `expected columns: [${columns.map(c => c.label ?? c.key).join(" | ")}]`,
+    );
+  }
 
   // OOXML requires cells within a row to appear in left-to-right column order
   colEntries.sort((a, b) => {

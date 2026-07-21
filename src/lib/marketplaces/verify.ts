@@ -1010,11 +1010,17 @@ function compareToLive(
   if (vendorUpc) {
     const upcMatch = liveUpc ? vendorUpc.replace(/\D/g, "").endsWith(liveUpc.replace(/\D/g, "")) ||
       liveUpc.replace(/\D/g, "").endsWith(vendorUpc.replace(/\D/g, "")) : false;
+    // An absent live UPC is "could not verify", NOT a pass — previously this was
+    // reported as ok/match, so unverified products looked identical to confirmed
+    // matches in the report. Surface it as a warning with an explicit note.
     fields.push({
       field: "upc", label: "UPC",
       stored: vendorUpc, live: liveUpc || "N/A",
-      match: upcMatch || !liveUpc,
-      severity: (!liveUpc || upcMatch) ? "ok" : "warning",
+      match: upcMatch,
+      severity: upcMatch ? "ok" : "warning",
+      ...(liveUpc
+        ? (upcMatch ? {} : { note: "Vendor UPC does not match the marketplace UPC" })
+        : { note: "Marketplace listing has no UPC — could not verify" }),
     });
   }
 
