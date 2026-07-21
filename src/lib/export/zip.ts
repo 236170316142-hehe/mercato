@@ -1271,11 +1271,9 @@ function pickDropdownValue(raw: string, options: string[]): string {
 
 function normalizeKey(s: string): string {
   return s.toLowerCase()
-    .replace(/\s*\([^)]*\)\s*/g, " ")   // strip parenthetical annotations: (in), (Y/N), (lbs), etc.
-    .replace(/#/g, "")                   // strip "#" — "Style #" → "style ", "Item #" → "item "
-    .replace(/[\s_\-]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .trim();
+    .replace(/\s*\([^)]*\)\s*/g, "")    // strip parenthetical annotations: (in), (Y/N), (lbs), etc.
+    .replace(/#/g, "")                   // strip "#" — "Style #" → "style", "Item #" → "item"
+    .replace(/[^a-z0-9]+/g, "");        // strip ALL non-alphanumeric — makes "product_id_1" == "ProductId1" == "product id 1"
 }
 
 function sanitize(name: string): string {
