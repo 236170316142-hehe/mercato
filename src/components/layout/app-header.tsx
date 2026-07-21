@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
 import { signOut } from "next-auth/react";
 import {
   FolderOpen, Users, FileText, LogOut, ShoppingBag, ChevronDown,
@@ -13,6 +14,18 @@ type User = { id: string; name?: string | null; email?: string | null; role: str
 export function AppHeader({ user }: { user: User }) {
   const pathname = usePathname();
   const isAdmin = user.role === "admin";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
 
   const isActive = (href: string) =>
     href === "/projects" ? pathname === "/projects" || pathname.startsWith("/projects") : pathname.startsWith(href);
@@ -61,8 +74,11 @@ export function AppHeader({ user }: { user: User }) {
 
         {/* User */}
         <div className="ml-auto flex items-center">
-          <div className="group relative">
-            <button className="flex items-center gap-2 h-8 px-3 rounded-lg hover:bg-accent transition text-sm">
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              className="flex items-center gap-2 h-8 px-3 rounded-lg hover:bg-accent transition text-sm"
+            >
               <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-bold">
                 {(user.name ?? user.email ?? "U")[0].toUpperCase()}
               </div>
@@ -73,27 +89,30 @@ export function AppHeader({ user }: { user: User }) {
             </button>
 
             {/* Dropdown */}
-            <div className="absolute right-0 top-full mt-1 w-48 rounded-xl border bg-card shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-              <div className="px-3 py-2.5 border-b">
-                <p className="text-sm font-medium truncate">{user.name ?? "User"}</p>
-                <p className="text-xs text-muted-foreground truncate">{user.email}</p>
-                <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-primary/10 text-primary mt-1 inline-block capitalize">
-                  {user.role}
-                </span>
+            {menuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-48 rounded-xl border bg-card shadow-lg z-50">
+                <div className="px-3 py-2.5 border-b">
+                  <p className="text-sm font-medium truncate">{user.name ?? "User"}</p>
+                  <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                  <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-primary/10 text-primary mt-1 inline-block capitalize">
+                    {user.role}
+                  </span>
+                </div>
+                <div className="p-1">
+                  <button
+                    onClick={async () => {
+                      setMenuOpen(false);
+                      await signOut({ redirect: false });
+                      window.location.href = "/login";
+                    }}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-destructive hover:bg-destructive/10 transition"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    Sign out
+                  </button>
+                </div>
               </div>
-              <div className="p-1">
-                <button
-                  onClick={async () => {
-                    await signOut({ redirect: false });
-                    window.location.href = "/login";
-                  }}
-                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-destructive hover:bg-destructive/10 transition"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  Sign out
-                </button>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
