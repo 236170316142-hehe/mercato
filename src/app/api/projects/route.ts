@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import { parseVendorFile } from "@/lib/vendor/parse";
+import { recoverStaleProjects } from "@/lib/projects/recover-stale";
 
 export async function POST(req: NextRequest) {
   const { user, response } = await authGuard();
@@ -69,6 +70,8 @@ export async function DELETE(req: NextRequest) {
 export async function GET() {
   const { user, response } = await authGuard();
   if (response) return response;
+
+  await recoverStaleProjects({ userId: user!.id });
 
   const projects = await prisma.project.findMany({
     where: { userId: user!.id },
