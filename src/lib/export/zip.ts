@@ -607,6 +607,31 @@ async function fillTemplateXlsx(
   const keptRows = rowMatches.filter(rm => parseInt(rm[1]) < firstDataRowNum).map(rm => rm[0]).join("");
   sheetXml = sheetXml.replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${keptRows}${outputRows.join("")}</sheetData>`);
 
+  // ── Expand TABLE and autoFilter refs to cover all exported data rows ────────
+  // Template colours usually come from the TABLE style (not per-cell s="N").
+  // If the table's ref ends before our last data row those rows appear plain white.
+  // Parse the table ref, keep the column span, extend the end row.
+  const lastDataRow = firstDataRowNum - 1 + products.length;
+
+  // Helper: given a ref like "A1:AA10", extend the end-row to lastDataRow → "A1:AA5"
+  const extendRef = (ref: string): string => {
+    const m = ref.match(/^([A-Z]+)(\d+):([A-Z]+)\d+$/i);
+    if (!m) return ref;
+    return `${m[1]}${m[2]}:${m[3]}${lastDataRow}`;
+  };
+
+  // Update xl/tables/*.xml — table ref + its nested autoFilter ref
+  for (const [fpath, fobj] of Object.entries(tplZip.files)) {
+    if (!/^xl\/tables\/[^/]+\.xml$/i.test(fpath)) continue;
+    let tblXml = await fobj.async("string");
+    tblXml = tblXml.replace(/(<table\b[^>]*\bref=")([^"]+)(")/i, (_, pre, ref, post) => `${pre}${extendRef(ref)}${post}`);
+    tblXml = tblXml.replace(/(<autoFilter\b[^>]*\bref=")([^"]+)(")/i, (_, pre, ref, post) => `${pre}${extendRef(ref)}${post}`);
+    tplZip.file(fpath, tblXml);
+  }
+
+  // Also update the sheet-level <autoFilter> (some templates skip xl/tables/ entirely)
+  sheetXml = sheetXml.replace(/(<autoFilter\b[^>]*\bref=")([^"]+)(")/i, (_, pre, ref, post) => `${pre}${extendRef(ref)}${post}`);
+
   // ── Write modified files back into the ZIP ─────────────────────────────────
   tplZip.file(sheetPath, sheetXml);
 
