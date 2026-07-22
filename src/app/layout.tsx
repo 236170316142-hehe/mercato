@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Bitcount_Single } from "next/font/google";
 import { Toaster } from "sonner";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -17,13 +18,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} ${brandFont.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-background text-foreground">
-        <ConfirmProvider>
-          {children}
-          <Toaster richColors position="top-right" />
-        </ConfirmProvider>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <ConfirmProvider>
+            {children}
+            <Toaster richColors position="top-right" />
+          </ConfirmProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

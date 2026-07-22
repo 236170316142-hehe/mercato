@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { signOut } from "next-auth/react";
 import { LogOut, ChevronDown, Menu } from "lucide-react";
 import { useSidebar } from "./sidebar-context";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 type User = { id: string; name?: string | null; email?: string | null; role: string };
 
@@ -33,7 +34,8 @@ export function AppNavbar({ user }: { user: User }) {
           <Menu className="h-5 w-5" />
         </button>
 
-        <div className="ml-auto flex items-center">
+        <div className="ml-auto flex items-center gap-1">
+          <ThemeToggle />
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setMenuOpen((o) => !o)}

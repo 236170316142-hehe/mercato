@@ -5,6 +5,7 @@ import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const LOGOUT_TOAST_KEY = "mercato:logout-toast";
 
@@ -39,6 +40,9 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center p-4">
+      <div className="absolute right-4 top-4 z-10">
+        <ThemeToggle className="bg-white" />
+      </div>
       <div
         className="absolute inset-0"
         style={{

@@ -52,11 +52,25 @@ export function Sidebar({ role }: Props) {
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
-        {/* Brand + collapse toggle */}
+        {/* Collapse toggle: floats on the sidebar's edge */}
+        <button
+          onClick={toggleCollapsed}
+          className="absolute -right-3 top-4 z-10 hidden h-6 w-6 items-center justify-center rounded-full border bg-card text-muted-foreground shadow-sm transition hover:text-foreground md:flex"
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {collapsed ? (
+            <ChevronsRight className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronsLeft className="h-3.5 w-3.5" />
+          )}
+        </button>
+
+        {/* Brand */}
         <div
           className={cn(
             "flex h-14 shrink-0 items-center gap-3 border-b px-4",
-            collapsed && "md:justify-center md:gap-2 md:px-2"
+            collapsed && "md:justify-center md:px-2"
           )}
         >
           <span
@@ -79,22 +93,6 @@ export function Sidebar({ role }: Props) {
             aria-label="Close sidebar"
           >
             <X className="h-4 w-4" />
-          </button>
-
-          <button
-            onClick={toggleCollapsed}
-            className={cn(
-              "hidden items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground md:flex",
-              !collapsed && "ml-auto"
-            )}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {collapsed ? (
-              <ChevronsRight className="h-4 w-4" />
-            ) : (
-              <ChevronsLeft className="h-4 w-4" />
-            )}
           </button>
         </div>
 
