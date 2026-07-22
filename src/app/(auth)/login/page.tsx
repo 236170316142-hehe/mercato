@@ -1,16 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, ShoppingBag } from "lucide-react";
+import { Loader2 } from "lucide-react";
+
+const LOGOUT_TOAST_KEY = "mercato:logout-toast";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (sessionStorage.getItem(LOGOUT_TOAST_KEY)) {
+      sessionStorage.removeItem(LOGOUT_TOAST_KEY);
+      // Deferred so sonner's <Toaster/> has subscribed before the toast is pushed
+      // (this effect can otherwise fire before Toaster mounts on a fresh page load).
+      const id = setTimeout(() => toast.success("Signed out successfully"), 0);
+      return () => clearTimeout(id);
+    }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -20,24 +32,39 @@ export default function LoginPage() {
     if (res?.error) {
       toast.error("Invalid email or password");
     } else {
+      toast.success("Signed in successfully");
       router.push("/projects");
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-4">
-      <div className="w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundColor: "#ffffff",
+          opacity: 0.8,
+          backgroundImage:
+            "radial-gradient(#000000 1.5px, transparent 1.5px), radial-gradient(#000000 1.5px, #ffffff 1.5px)",
+          backgroundSize: "20px 20px",
+          backgroundPosition: "0 0, 10px 10px",
+        }}
+      />
+      <div className="relative w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-foreground mb-4">
-            <ShoppingBag className="w-7 h-7 text-background" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight">Mercato</h1>
-          <p className="text-sm text-muted-foreground mt-1">Multi-marketplace sourcing platform</p>
+          <h1 className="inline-block bg-white px-3 py-1 text-4xl font-semibold tracking-wide [font-family:var(--font-brand)]">
+            Mercato
+          </h1>
+          <p className="mt-1">
+            <span className="inline-block bg-white px-2 py-0.5 text-sm text-muted-foreground">
+              Multi-marketplace sourcing platform
+            </span>
+          </p>
         </div>
 
         {/* Card */}
-        <div className="bg-card border rounded-2xl shadow-sm p-8">
+        <div className="bg-card rounded-2xl p-8">
           <h2 className="text-lg font-semibold mb-6">Sign in to your account</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
