@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { LogOut, ChevronDown, Menu } from "lucide-react";
 import { useSidebar } from "./sidebar-context";
@@ -33,6 +34,14 @@ export function AppNavbar({ user }: { user: User }) {
         >
           <Menu className="h-5 w-5" />
         </button>
+
+        {/* Brand — mobile only; on desktop the sidebar already shows it */}
+        <Link
+          href="/projects"
+          className="text-lg font-semibold tracking-wide [font-family:var(--font-brand)] md:hidden"
+        >
+          Mercato
+        </Link>
 
         <div className="ml-auto flex items-center gap-1">
           <ThemeToggle />

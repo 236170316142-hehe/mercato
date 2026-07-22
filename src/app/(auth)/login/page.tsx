@@ -41,27 +41,17 @@ export default function LoginPage() {
   return (
     <div className="relative min-h-screen flex items-center justify-center p-4">
       <div className="absolute right-4 top-4 z-10">
-        <ThemeToggle className="bg-white" />
+        <ThemeToggle className="bg-background" />
       </div>
-      <div
-        className="absolute inset-0"
-        style={{
-          backgroundColor: "#ffffff",
-          opacity: 0.8,
-          backgroundImage:
-            "radial-gradient(#000000 1.5px, transparent 1.5px), radial-gradient(#000000 1.5px, #ffffff 1.5px)",
-          backgroundSize: "20px 20px",
-          backgroundPosition: "0 0, 10px 10px",
-        }}
-      />
+      <div className="dots-backdrop absolute inset-0" />
       <div className="relative w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <h1 className="inline-block bg-white px-3 py-1 text-4xl font-semibold tracking-wide [font-family:var(--font-brand)]">
+          <h1 className="inline-block bg-background px-3 py-1 text-4xl font-semibold tracking-wide [font-family:var(--font-brand)]">
             Mercato
           </h1>
           <p className="mt-1">
-            <span className="inline-block bg-white px-2 py-0.5 text-sm text-muted-foreground">
+            <span className="inline-block bg-background px-2 py-0.5 text-sm text-muted-foreground">
               Multi-marketplace sourcing platform
             </span>
           </p>

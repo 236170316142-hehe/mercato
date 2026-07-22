@@ -24,6 +24,10 @@
   --border: 240 5.9% 90%;
   --input: 240 5.9% 90%;
   --ring: 240 5.9% 10%;
+
+  /* Dotted auth backdrop */
+  --dots-bg: #ffffff;
+  --dots-fg: #000000;
 }
 
 .dark {
@@ -46,6 +50,10 @@
   --border: 240 5% 23%;
   --input: 240 5% 23%;
   --ring: 240 5% 70%;
+
+  /* Auth backdrop — plain charcoal, matches --background */
+  --dots-bg: hsl(240 6% 12%);
+  --dots-fg: #ffffff;
 }
 
 @theme inline {
@@ -83,4 +91,20 @@
 body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
+}
+
+/* Auth screen backdrop: dotted in light mode, plain charcoal in dark mode */
+.dots-backdrop {
+  background-color: var(--dots-bg);
+  background-image:
+    radial-gradient(var(--dots-fg) 1.5px, transparent 1.5px),
+    radial-gradient(var(--dots-fg) 1.5px, var(--dots-bg) 1.5px);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+  opacity: 0.8;
+}
+
+.dark .dots-backdrop {
+  background-image: none;
+  opacity: 1;
 }

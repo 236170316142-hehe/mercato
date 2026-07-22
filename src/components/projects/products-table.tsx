@@ -51,8 +51,8 @@ export function ProductsTable({ products, onNext, onRunVerify, loading, projectS
   const ctaAction = skipVerify ? onNext : (hasVerified ? onNext : onRunVerify);
 
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 sm:p-8">
+      <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Imported Products</h2>
           <p className="text-sm text-muted-foreground mt-0.5">

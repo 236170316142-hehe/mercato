@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  Upload, ShieldCheck, Tag, Download,
+  FileSpreadsheet, ShieldCheck, Tag, Download,
   CheckCircle2, Loader2, ChevronRight, ArrowLeft, Trash2,
 } from "lucide-react";
 import Link from "next/link";
@@ -40,7 +40,7 @@ type Project = {
 };
 
 const STEPS = [
-  { key: "uploaded",     label: "Upload",      icon: Upload,      desc: "Vendor file imported" },
+  { key: "uploaded",     label: "Upload",      icon: FileSpreadsheet, desc: "Vendor file imported" },
   { key: "verified",     label: "Verify",       icon: ShieldCheck, desc: "Check against marketplace" },
   { key: "categorized",  label: "Categorize",   icon: Tag,         desc: "AI category assignment" },
   { key: "done",         label: "Export",       icon: Download,    desc: "Generate & download ZIP" },
@@ -212,32 +212,39 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b px-8 py-5 flex items-center gap-4 shrink-0">
-        <Link href="/projects" className="text-muted-foreground hover:text-foreground transition">
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="font-bold text-lg truncate">{project.name}</h1>
-            <span className="flex items-center gap-1.5 text-muted-foreground text-sm shrink-0">
-              <MarketplaceLogo marketplace={project.marketplace} className="w-4 h-4" />
-              {MARKETPLACE_LABELS[project.marketplace]}
-            </span>
+      <div className="border-b py-5 shrink-0">
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 sm:gap-4 sm:px-8">
+          <Link
+            href="/projects"
+            title="Back to projects"
+            aria-label="Back to projects"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+          >
+            <ArrowLeft className="w-4.5 h-4.5" />
+          </Link>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="font-bold text-lg truncate">{project.name}</h1>
+              <span className="flex items-center gap-1.5 text-muted-foreground text-sm shrink-0">
+                <MarketplaceLogo marketplace={project.marketplace} className="w-4 h-4" />
+                {MARKETPLACE_LABELS[project.marketplace]}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">{products.length} products</p>
           </div>
-          <p className="text-xs text-muted-foreground">{products.length} products</p>
+          <button
+            onClick={handleDelete}
+            title="Delete project"
+            className="ml-2 w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-red-50 hover:text-red-600 hover:border hover:border-red-200 transition-all"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
         </div>
-        <button
-          onClick={handleDelete}
-          title="Delete project"
-          className="ml-2 w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-red-50 hover:text-red-600 hover:border hover:border-red-200 transition-all"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
       </div>
 
       {/* Stepper */}
-      <div className="border-b px-8 py-4 shrink-0">
-        <div className="flex items-center gap-0">
+      <div className="py-4 shrink-0">
+        <div className="mx-auto flex max-w-6xl items-center gap-0 overflow-x-auto px-4 sm:px-8">
           {STEPS.map((step, idx) => {
             const Icon = step.icon;
             const isSkipVerifyStep = skipVerify && idx === 1;
@@ -245,7 +252,9 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
             const isSkipped = isSkipVerifyStep || isAmazonCategorize;
             // For skip-verify marketplaces, step 2 (Categorize) is reachable once the project is uploaded
             const maxStep = skipVerify ? Math.max(currentStepIndex, 2) : currentStepIndex;
-            const done = !isSkipped && maxStep > idx;
+            // A step the project has reached is itself complete (e.g. status "uploaded"
+            // means the Upload step finished), so it stays navigable and shows as done.
+            const done = !isSkipped && maxStep >= idx;
             const active = activeStep === idx;
             const current = currentStepIndex === idx;
             const isLoading = loading && current;
@@ -276,7 +285,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
                       <Icon className="w-4 h-4" />
                     )}
                   </div>
-                  <div className="text-left hidden sm:block">
+                  <div className="text-left hidden lg:block">
                     <p className={cn("text-xs font-semibold", active ? "text-primary" : done ? "text-foreground" : "text-muted-foreground")}>
                       {step.label}
                     </p>
@@ -298,6 +307,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
 
       {/* Step content */}
       <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-6xl">
         {activeStep === 0 && (
           <ProductsTable
             products={products}
@@ -347,6 +357,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
             projectStatus={project.status}
           />
         )}
+        </div>
       </div>
     </div>
   );

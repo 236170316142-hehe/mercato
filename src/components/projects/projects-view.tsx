@@ -11,6 +11,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { NewProjectModal } from "@/components/projects/new-project-modal";
 
 const PAGE_SIZE = 12;
 
@@ -388,6 +389,7 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   const marketplaceOptions = useMemo(() => {
     return Object.entries(MARKETPLACE_LABELS)
@@ -528,7 +530,7 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
   const allPageSelected = paginated.length > 0 && paginated.every((p) => selected.has(p.id));
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-8 max-w-6xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -538,13 +540,14 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
             {hasActiveFilters && ` (of ${projects.length})`}
           </p>
         </div>
-        <Link
-          href="/projects/new"
+        <button
+          type="button"
+          onClick={() => setNewProjectOpen(true)}
           className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition"
         >
           <Plus className="w-4 h-4" />
           New project
-        </Link>
+        </button>
       </div>
 
       {/* Bulk action bar */}
@@ -646,13 +649,14 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
           <p className="text-sm text-muted-foreground mb-6 max-w-xs">
             Upload a vendor file to start sourcing products across any marketplace.
           </p>
-          <Link
-            href="/projects/new"
+          <button
+            type="button"
+            onClick={() => setNewProjectOpen(true)}
             className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition"
           >
             <Plus className="w-4 h-4" />
             Create your first project
-          </Link>
+          </button>
         </div>
       )}
 
@@ -775,18 +779,19 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
 
       {/* Pagination */}
       {filtered.length > PAGE_SIZE && (
-        <div className="flex items-center justify-between mt-8">
-          <p className="text-xs text-muted-foreground">
+        <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
+          <p className="shrink-0 text-xs text-muted-foreground">
             Page {currentPage} of {totalPages}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={currentPage === 1}
-              className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border text-sm font-medium hover:bg-muted transition disabled:opacity-40 disabled:pointer-events-none"
+              className="inline-flex items-center gap-1 h-8 px-2 sm:px-3 rounded-lg border text-sm font-medium hover:bg-muted transition disabled:opacity-40 disabled:pointer-events-none"
+              aria-label="Previous page"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
-              Prev
+              <span className="hidden sm:inline">Prev</span>
             </button>
 
             {getPageNumbers(currentPage, totalPages).map((n, i) =>
@@ -814,14 +819,17 @@ export function ProjectsView({ projects: initial }: { projects: Project[] }) {
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages}
-              className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border text-sm font-medium hover:bg-muted transition disabled:opacity-40 disabled:pointer-events-none"
+              className="inline-flex items-center gap-1 h-8 px-2 sm:px-3 rounded-lg border text-sm font-medium hover:bg-muted transition disabled:opacity-40 disabled:pointer-events-none"
+              aria-label="Next page"
             >
-              Next
+              <span className="hidden sm:inline">Next</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
       )}
+
+      <NewProjectModal open={newProjectOpen} onClose={() => setNewProjectOpen(false)} />
     </div>
   );
 }

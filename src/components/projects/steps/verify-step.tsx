@@ -104,15 +104,15 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
   }
 
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 sm:p-8">
+      <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Marketplace Verification</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             Compare catalog data against live {marketplaceLabel} listings — title, images, description &amp; dimensions
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {hasResults && (
             <button
               onClick={downloadReport}
@@ -147,7 +147,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
       {/* Summary cards */}
       {hasResults && (
         <>
-          <div className="grid grid-cols-5 gap-3 mb-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 mb-3">
             {[
               { label: "Match",        status: "ok",           count: verifiedCount,    color: "border-green-200 bg-green-50",    text: "text-green-700",   ring: "ring-green-400" },
               { label: "Warning",      status: "warning",      count: warningCount,     color: "border-yellow-200 bg-yellow-50",  text: "text-yellow-700",  ring: "ring-yellow-400" },
@@ -269,18 +269,18 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                 {isOpen && (
                   <div className="border-t bg-muted/20 divide-y">
                     {/* SKU, UPC, ASIN always shown */}
-                    <div className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
+                    <div className="grid grid-cols-[90px_1fr_1fr] sm:grid-cols-[120px_1fr_1fr] gap-2 sm:gap-4 px-3 sm:px-4 py-2.5 text-xs">
                       <span className="font-medium text-muted-foreground">SKU</span>
                       <p className="font-medium">{p.vendorSku ?? "—"}</p>
                       <div />
                     </div>
-                    <div className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
+                    <div className="grid grid-cols-[90px_1fr_1fr] sm:grid-cols-[120px_1fr_1fr] gap-2 sm:gap-4 px-3 sm:px-4 py-2.5 text-xs">
                       <span className="font-medium text-muted-foreground">UPC</span>
                       <p className="font-medium">{p.upc ?? "—"}</p>
                       <div />
                     </div>
                     {(marketplace === "amazon" || marketplace === "amazon_us") && (
-                      <div className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
+                      <div className="grid grid-cols-[90px_1fr_1fr] sm:grid-cols-[120px_1fr_1fr] gap-2 sm:gap-4 px-3 sm:px-4 py-2.5 text-xs">
                         <span className="font-medium text-muted-foreground">ASIN</span>
                         <div className="flex items-center gap-2">
                           <p className="font-medium font-mono">{p.asin ?? "—"}</p>
@@ -296,7 +296,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
                       const isImg = f.field === "images";
                       const isUrl = (v: string) => v && v.startsWith("http");
                       return (
-                        <div key={f.field} className="grid grid-cols-[120px_1fr_1fr] gap-4 px-4 py-2.5 text-xs">
+                        <div key={f.field} className="grid grid-cols-[90px_1fr_1fr] sm:grid-cols-[120px_1fr_1fr] gap-2 sm:gap-4 px-3 sm:px-4 py-2.5 text-xs">
                           <span className={cn("font-medium", FIELD_SEVERITY[f.severity])}>{f.label}</span>
                           <div>
                             <p className="text-muted-foreground mb-0.5">Catalog</p>
