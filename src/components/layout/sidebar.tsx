@@ -97,7 +97,7 @@ export function Sidebar({ role }: Props) {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-3 py-4">
+        <nav className="flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden px-3 py-4">
           {navItems.map(({ href, label, icon: Icon }) => {
             const active = path.startsWith(href);
             return (
