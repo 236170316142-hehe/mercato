@@ -63,7 +63,7 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
         p.brand ?? "",
         p.marketplaceCategory ?? "",
         p.categoryPath ?? "",
-        p.marketplaceCategory === "Uncategorized" ? "No match" : p.marketplaceCategory ? "Done" : "Pending",
+        p.marketplaceCategory === "Uncategorized" ? "No match" : p.marketplaceCategory ? "Done" : "Not categorized",
       ]),
     ];
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -89,12 +89,12 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
               : `AI assigns each product to the correct ${marketplace} category`}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end sm:gap-3">
           {isWalmart && (
             <button
               onClick={onNext}
               disabled={loading}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+              className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
             >
               Skip →
             </button>
@@ -110,7 +110,7 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
           <button
             onClick={() => csvRef.current?.click()}
             disabled={uploading || loading}
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+            className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
             title="Upload a corrected category CSV (SKU, Category, Category Path columns)"
           >
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -119,7 +119,7 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
           {hasResults && (
             <button
               onClick={downloadCsv}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition"
+              className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition"
             >
               <Download className="w-4 h-4" />
               Download CSV
@@ -129,7 +129,7 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
             <button
               onClick={() => onRunCategorize(true)}
               disabled={loading}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+              className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Tag className="w-4 h-4" />}
               Re-categorize
@@ -138,7 +138,7 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
           <button
             onClick={hasResults ? onNext : () => onRunCategorize(false)}
             disabled={loading}
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+            className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Tag className="w-4 h-4" />}
             {loading ? "Categorizing…" : hasResults ? "Continue to Export →" : "Run Categorization"}
@@ -148,7 +148,7 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
 
       {/* Progress */}
       {hasResults && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
           <div className="rounded-xl border p-4 bg-green-50 border-green-200">
             <p className="text-2xl font-bold text-green-700">{categorized.length}</p>
             <p className="text-sm text-muted-foreground">Categorized</p>
@@ -207,7 +207,7 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
 
       {/* Results table */}
       {hasResults && !loading && (
-        <div className="rounded-xl border overflow-hidden">
+        <div className="rounded-xl border overflow-x-auto overflow-y-hidden">
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr>
@@ -246,7 +246,14 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
                           Done
                         </span>
                       ) : (
-                        <span className="text-xs text-muted-foreground">pending</span>
+                        // Not a verdict about the product — this row simply
+                        // hasn't been through categorization yet.
+                        <span
+                          className="text-xs text-muted-foreground"
+                          title="This product hasn't been categorized yet — run Categorization to assign it"
+                        >
+                          Not categorized
+                        </span>
                       )}
                     </td>
                   </tr>

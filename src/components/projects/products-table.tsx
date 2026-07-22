@@ -25,7 +25,7 @@ const STATUS_BADGE: Record<string, string> = {
 export function ProductsTable({ products, onNext, onRunVerify, loading, projectStatus, skipVerify }: {
   products: Product[];
   onNext: () => void;
-  onRunVerify: () => void;
+  onRunVerify: (force?: boolean) => void;
   loading: boolean;
   projectStatus: string;
   skipVerify?: boolean;
@@ -48,7 +48,8 @@ export function ProductsTable({ products, onNext, onRunVerify, loading, projectS
   const ctaLabel = skipVerify
     ? "Categorize →"
     : loading ? "Verifying…" : hasVerified ? "View verification →" : "Run verification";
-  const ctaAction = skipVerify ? onNext : (hasVerified ? onNext : onRunVerify);
+  // Wrapped so the click event isn't passed through as the `force` argument.
+  const ctaAction = skipVerify ? onNext : (hasVerified ? onNext : () => onRunVerify());
 
   return (
     <div className="p-4 sm:p-8">
@@ -62,7 +63,7 @@ export function ProductsTable({ products, onNext, onRunVerify, loading, projectS
         <button
           onClick={ctaAction}
           disabled={loading}
-          className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+          className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : ctaIcon}
           {ctaLabel}
@@ -81,7 +82,7 @@ export function ProductsTable({ products, onNext, onRunVerify, loading, projectS
       </div>
 
       {/* Table */}
-      <div className="rounded-xl border overflow-hidden">
+      <div className="rounded-xl border overflow-x-auto overflow-y-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             <tr>
@@ -108,7 +109,14 @@ export function ProductsTable({ products, onNext, onRunVerify, loading, projectS
                       {p.verifyStatus}
                     </span>
                   ) : (
-                    <span className="text-xs text-muted-foreground">pending</span>
+                    // Not a verdict about the product — this row simply hasn't
+                    // been through verification yet (e.g. an interrupted run).
+                    <span
+                      className="text-xs text-muted-foreground"
+                      title="This product hasn't been verified yet — run Verify to check it against the marketplace"
+                    >
+                      Not checked
+                    </span>
                   )}
                 </td>
               </tr>

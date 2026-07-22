@@ -62,7 +62,7 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
   discontinuedCount: number;
   loading: boolean;
   projectStatus: string;
-  onRunVerify: () => void;
+  onRunVerify: (force?: boolean) => void;
   onApproveProduct: (productId: string) => Promise<void>;
   onMarkDiscontinued: (productId: string) => Promise<void>;
   onNext: () => void;
@@ -112,12 +112,12 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
             Compare catalog data against live {marketplaceLabel} listings — title, images, description &amp; dimensions
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end sm:gap-3">
           {hasResults && (
             <button
               onClick={downloadReport}
               disabled={downloading}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+              className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
             >
               {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               Download Report
@@ -125,18 +125,18 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
           )}
           {hasResults && (
             <button
-              onClick={onRunVerify}
+              onClick={() => onRunVerify(true)}
               disabled={loading}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
+              className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg border text-sm font-medium hover:bg-accent transition disabled:opacity-50"
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
               Re-verify
             </button>
           )}
           <button
-            onClick={hasResults ? onNext : onRunVerify}
+            onClick={hasResults ? onNext : () => onRunVerify()}
             disabled={loading}
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+            className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
             {loading ? "Verifying…" : hasResults ? "Continue →" : "Run verification"}

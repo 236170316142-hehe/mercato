@@ -108,19 +108,28 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
     }
   }
 
-  async function runVerify() {
+  // `force` re-checks every product (explicit "Re-verify"); the default resumes,
+  // processing only products that have not been verified yet.
+  async function runVerify(force = false) {
     setLoading(true);
     try {
-      const res = await fetch(`/api/projects/${project.id}/verify`, { method: "POST" });
+      const res = await fetch(
+        `/api/projects/${project.id}/verify${force ? "?force=1" : ""}`,
+        { method: "POST" },
+      );
       const data = await res.json();
       if (!res.ok) {
         if (data.code === "INSUFFICIENT_KEEPA_TOKENS") {
           toast.warning(data.error ?? "Not enough Keepa tokens available to verify");
+        } else if (data.resumable && data.verified > 0) {
+          toast.warning(`Verification stopped after ${data.verified} products — results so far are saved. Run Verify again to continue.`);
         } else {
           toast.error(data.error ?? "Verification failed");
         }
       } else {
-        if (data.skipped > 0) {
+        if (data.remaining > 0) {
+          toast.warning(`Verified ${data.verified} products — ${data.remaining} still to check. Run Verify again to continue.`);
+        } else if (data.skipped > 0) {
           toast.warning(`Verified ${data.verified} products. ${data.skipped} skipped (Keepa tokens ran low — previous results preserved). Re-verify when tokens refill.`);
         } else {
           toast.success(`Verified ${data.verified} products`);

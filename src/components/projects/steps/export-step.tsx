@@ -201,7 +201,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
         <button
           onClick={handleExport}
           disabled={!canExport}
-          className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+          className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
         >
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
           {buttonLabel}
@@ -209,7 +209,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
         {usesCategoryZip ? (
           <>
             <div className="rounded-xl border p-4 bg-green-50 border-green-200">

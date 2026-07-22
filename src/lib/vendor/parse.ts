@@ -238,6 +238,33 @@ function gridToRows(grid: string[][]): VendorRow[] {
   const GROUP_LABEL_RE = /\b(approx|master|package|individual|item|dims?|weights?|lbs?|inches|carton)\b/i;
   const hasSubHeader = subRow.filter(v => SUB_LABEL_RE.test(v)).length >= 2;
 
+  // ── Field-code header row detection ─────────────────────────────────────────
+  // Mathis (and other Mirakl-style) templates repeat the header twice:
+  //   Row 1 = human labels       ("Product", "SKU", "UPC", "Brand")
+  //   Row 2 = internal field ids ("name",    "sku", "UPC", "brand")  ← NOT a product
+  // The second row would otherwise be imported as a product literally named "name".
+  // It is identified by being a near-duplicate of the header row: most of its
+  // non-blank cells collapse to the same token as the header cell above them,
+  // or are themselves well-known field-code words.
+  const FIELD_CODE_RE = /^(name|title|sku|shopsku|upc|ean|gtin|barcode|brand|manufacturer|description|price|category|image|imageurl|qty|quantity|asin|model|color|colour|size|material|weight|length|width|height|depth)$/i;
+  const collapseCell = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const isFieldCodeRow = (() => {
+    const headerCells = rawHeaders.slice(0, width).map(h => String(h ?? "").trim());
+    let compared = 0;
+    let matched = 0;
+    for (let i = 0; i < width; i++) {
+      const sub = subRow[i] ?? "";
+      if (!sub) continue;
+      compared++;
+      const subC = collapseCell(sub);
+      const headC = collapseCell(headerCells[i] ?? "");
+      // Same token as the label above (Product/product, SKU/sku, UPC/UPC) or a known field code
+      if ((headC && subC === headC) || FIELD_CODE_RE.test(sub)) matched++;
+    }
+    // Need a few cells to judge, and the clear majority must look like field codes
+    return compared >= 3 && matched / compared >= 0.6;
+  })();
+
   const headers: string[] = rawHeaders.slice(0, width).map((h, i) => {
     const main = String(h ?? "").trim();
     if (hasSubHeader) {
@@ -248,8 +275,8 @@ function gridToRows(grid: string[][]): VendorRow[] {
     return main;
   });
 
-  // Data rows start after header (and sub-header row if one was consumed)
-  const dataStartIdx = hasSubHeader ? headerIdx + 2 : headerIdx + 1;
+  // Data rows start after header (and sub-header / field-code row if one was consumed)
+  const dataStartIdx = (hasSubHeader || isFieldCodeRow) ? headerIdx + 2 : headerIdx + 1;
 
   // Build data rows (rows below header, non-blank)
   const dataRows: string[][] = [];
@@ -290,6 +317,10 @@ function gridToRows(grid: string[][]): VendorRow[] {
       || "";
 
     if (!name) return null;
+
+    // Safety net for repeated/echoed header rows anywhere in the sheet: a product
+    // whose name is a bare field code ("name", "title", "sku") is a header, not a product.
+    if (FIELD_CODE_RE.test(name.trim())) return null;
 
     // Filter out footer/legal text rows (T&C lines, policy disclaimers, etc.)
     const nonBlankCells = row.filter(c => c && c.trim()).length;

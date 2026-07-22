@@ -11,11 +11,17 @@ import {
 
 const BATCH_SIZE = 50;
 
+// Stop starting new batches once we're this close to the `maxDuration` ceiling.
+// A run that is cut off mid-batch loses that batch's work and strands the
+// project; stopping cleanly lets the caller resume from where we left off.
+const TIME_BUDGET_MS = (maxDuration - 45) * 1000;
+
 function isAmazonMarketplace(marketplace: string): boolean {
   return marketplace === "amazon" || marketplace === "amazon_us";
 }
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const startedAt = Date.now();
   const { user, response } = await authGuard();
   if (response) return response;
   const { id } = await params;
@@ -48,7 +54,25 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (project.userId !== user!.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const allProducts = project.products;
+  // Resume by default: only products that were never verified are processed, so
+  // a run cut short by the duration ceiling can be continued by calling again.
+  // `?force=1` re-checks everything (the explicit "Re-verify" action).
+  const force = _req.nextUrl.searchParams.get("force") === "1";
+  const allProducts = force
+    ? project.products
+    : project.products.filter((p) => p.verifyStatus == null);
+
+  // Nothing left to do — the project is already fully verified.
+  if (allProducts.length === 0) {
+    await prisma.project.update({ where: { id }, data: { status: "verified" } });
+    return NextResponse.json({
+      verified: 0,
+      skipped: 0,
+      remaining: 0,
+      complete: true,
+      totalProducts: project.products.length,
+    });
+  }
 
   // Preflight: Amazon verify needs Keepa tokens (estimate + 100 buffer) before starting.
   if (isAmazonMarketplace(project.marketplace) && allProducts.length > 0) {
@@ -82,10 +106,19 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   let totalProcessed = 0;
   let totalSkipped = 0;
+  let attempted = 0;
+  let ranOutOfTime = false;
 
   try {
     for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
+      // Stop before the platform kills us mid-batch. Work already committed is
+      // kept, and the response tells the caller how much is left to resume.
+      if (Date.now() - startedAt > TIME_BUDGET_MS) {
+        ranOutOfTime = true;
+        break;
+      }
       const batch = allProducts.slice(i, i + BATCH_SIZE);
+      attempted += batch.length;
       const results = await verifyProducts(project.marketplace, batch as Parameters<typeof verifyProducts>[1]);
 
       const processed = results.filter((r) => r.status !== "skipped");
@@ -122,12 +155,32 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       totalProcessed += processed.length;
     }
 
-    await prisma.project.update({ where: { id }, data: { status: "verified" } });
+    const remaining = allProducts.length - attempted;
+    const complete = remaining === 0;
 
-    return NextResponse.json({ verified: totalProcessed, skipped: totalSkipped });
+    // Only claim "verified" once every product has actually been checked;
+    // otherwise leave the project resumable rather than falsely complete.
+    await prisma.project.update({
+      where: { id },
+      data: { status: complete ? "verified" : "uploaded" },
+    });
+
+    return NextResponse.json({
+      verified: totalProcessed,
+      skipped: totalSkipped,
+      remaining,
+      complete,
+      partial: ranOutOfTime,
+      totalProducts: project.products.length,
+    });
   } catch (err) {
+    // Work already committed to the DB is preserved; the project drops back to
+    // "uploaded" so the next call resumes with whatever is still unverified.
     await prisma.project.update({ where: { id }, data: { status: "uploaded" } });
     const msg = err instanceof Error ? err.message : "Verification failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json(
+      { error: msg, verified: totalProcessed, resumable: true },
+      { status: 500 },
+    );
   }
 }

@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import type { Product, ExportTemplate } from "@prisma/client";
 import { loadMathisCategoryPaths } from "../ai/mathis-taxonomy";
+import { matchDropdownValues, dropdownKey, type DropdownQuery } from "../ai/match-dropdown";
 
 type Column = { key: string; label: string; required?: boolean };
 
@@ -513,21 +514,57 @@ async function fillTemplateXlsx(
 
   const outputRows: string[] = [];
 
+  // ── Dropdown-constrained values ────────────────────────────────────────────
+  // Every column carrying a dataValidation list MUST receive one of its own options
+  // verbatim, otherwise the marketplace rejects the row on import. Resolution order:
+  //   1. pickDropdownValue — deterministic (exact → word overlap → substring)
+  //   2. AI nearest-compatible match, for values with no lexical overlap
+  //      ("Charcoal" → "Grey", "Boucle" → "Fabric")
+  //   3. Blank — better an empty optional cell than an invalid value
+  // The raw value is never written through to a dropdown column.
+
+  // Normalize a path-style value ("A > B") to the slash form Mathis dropdowns use.
+  const toDropdownRaw = (raw: string): string =>
+    (raw.includes(" > ") && !raw.includes("/"))
+      ? (isMathis
+          ? "Mathis Home/" + raw.split(" > ").map(s => s.trim()).join("/")
+          : raw.split(" > ").map(s => s.trim()).join("/"))
+      : raw;
+
+  // Pass 1 — collect values the deterministic matcher could not place.
+  const aiQueries: DropdownQuery[] = [];
+  for (const p of products) {
+    for (const { col, letter } of colEntries) {
+      const options = dropdowns.get(letter);
+      if (!options) continue;
+      const raw = String(getProductField(p, col.key) ?? "");
+      if (!raw.trim()) continue;
+      const candidate = toDropdownRaw(raw);
+      if (pickDropdownValue(candidate, options) === null) {
+        aiQueries.push({ column: colLetterToHeader.get(letter) ?? col.label ?? col.key, value: candidate, options });
+      }
+    }
+  }
+  const aiMatches = aiQueries.length ? await matchDropdownValues(aiQueries) : new Map<string, string>();
+
+  // Compute the final value for a column (dropdown-safe)
+  const colVal = (p: Product, col: Column, letter: string): string => {
+    const raw = String(getProductField(p, col.key) ?? "");
+    const options = dropdowns.get(letter);
+    if (!options) return raw;
+    if (!raw.trim()) return "";
+    const candidate = toDropdownRaw(raw);
+    const picked = pickDropdownValue(candidate, options);
+    if (picked !== null) return picked;
+    // Deterministic matching failed — use the AI match, else blank the cell.
+    const header = colLetterToHeader.get(letter) ?? col.label ?? col.key;
+    return aiMatches.get(dropdownKey(header, candidate)) ?? "";
+  };
+
   for (let i = 0; i < products.length; i++) {
     const p = products[i];
     const rn = firstDataRowNum + i;
     const tplRow = allDataRows.get(rn);
-
-    // Compute value for a column (handles dropdown path normalisation)
-    const colVal = (col: Column, letter: string): string => {
-      const raw = String(getProductField(p, col.key) ?? "");
-      const dropdownRaw = (dropdowns.has(letter) && raw.includes(" > ") && !raw.includes("/"))
-        ? (isMathis
-            ? "Mathis Home/" + raw.split(" > ").map(s => s.trim()).join("/")
-            : raw.split(" > ").map(s => s.trim()).join("/"))
-        : raw;
-      return dropdowns.has(letter) ? pickDropdownValue(dropdownRaw, dropdowns.get(letter)!) : raw;
-    };
 
     if (tplRow) {
       // ── In-place modification: keep ALL original cells (preserves every s="N" style,
@@ -542,7 +579,7 @@ async function fillTemplateXlsx(
 
       // Step 2: write product values into the relevant cells
       for (const { col, letter } of colEntries) {
-        const val = colVal(col, letter);
+        const val = colVal(p, col, letter);
         const ref = `${letter}${rn}`;
         const isLargeId = /^\d{10,}$/.test(val);
         const isNum = val !== "" && !isLargeId && !Number.isNaN(Number(val));
@@ -575,7 +612,7 @@ async function fillTemplateXlsx(
         return s ? ` s="${s}"` : "";
       };
       const cells = colEntries.map(({ col, letter }) => {
-        const val = colVal(col, letter);
+        const val = colVal(p, col, letter);
         const ref = `${letter}${rn}`;
         const isLargeId = /^\d{10,}$/.test(val);
         const sAttr = getStyle(letter);
@@ -890,8 +927,16 @@ function getProductField(p: Product, key: string): unknown {
 
   // Guaranteed unique ID: prefer meaningful identifiers, fall back to DB id (always non-empty)
   const goodsId   = p.upc ?? p.vendorSku ?? anyVendorId ?? p.id;
-  const skuId     = p.vendorSku ?? p.upc ?? anyVendorId ?? p.id;
   const productId = p.upc ?? p.vendorSku ?? anyVendorId ?? p.asin ?? verifiedAsin ?? p.id;
+
+  // SKU columns must carry the SELLER'S OWN item code — never a barcode. A UPC/EAN/GTIN
+  // is a global product identifier and belongs only in the UPC column; writing it into
+  // SKU produced Mathis files where the SKU column was full of barcodes. So the SKU
+  // fallback chain deliberately excludes p.upc, and any purely-numeric 8–14 digit
+  // candidate (i.e. a barcode that leaked into a vendor "item no" column) is rejected.
+  const looksLikeBarcode = (v: unknown): boolean => /^\d{8,14}$/.test(String(v ?? "").trim());
+  const skuId = [p.vendorSku, anyVendorId].find((v) => v != null && String(v).trim() !== "" && !looksLikeBarcode(v))
+    ?? p.id;
 
   // ── Description / details — prefer vendor text, fall back to product name ──
   const descriptionText =
@@ -1323,7 +1368,12 @@ function detectUpcType(raw: string): "UPC" | "EAN" | "GTIN" | "ASIN" | "" {
  *   3. collapsed substring — last-resort loose containment
  * Falls back to the original value (Excel flags it invalid) when nothing matches.
  */
-function pickDropdownValue(raw: string, options: string[]): string {
+/**
+ * Deterministically map a value onto one of a dropdown's allowed options.
+ * Returns null when no option is a defensible match, so the caller can hand the
+ * value to the AI matcher instead of writing a value the marketplace will reject.
+ */
+function pickDropdownValue(raw: string, options: string[]): string | null {
   if (!raw || !options.length) return raw;
   const collapse = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -1366,7 +1416,9 @@ function pickDropdownValue(raw: string, options: string[]): string {
   });
   if (sub) return sub;
 
-  return raw; // no match — keep original; Excel will flag it as invalid
+  // No defensible match. Returning the raw value here would write a value that is not
+  // in the list, which the marketplace rejects — signal failure so the AI matcher runs.
+  return null;
 }
 
 function normalizeKey(s: string): string {
