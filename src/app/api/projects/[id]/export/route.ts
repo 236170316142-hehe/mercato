@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import type { ExportTemplate } from "@prisma/client";
 import { generateCategoryZip, generateExportZip, generateFlatCategoryZip, generateFlatExport, generateSingleTemplateExport, type TemplateRow } from "@/lib/export/zip";
 import { createJob, resolveJob, rejectJob, getJob } from "@/lib/export/job-store";
+import { buildDownloadName, contentDisposition } from "@/lib/export/filename";
 
 export const maxDuration = 300;
 
@@ -27,11 +28,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ status: "error", error: job.error }, { status: 500 });
   }
 
-  // Done — serve the ZIP
+  // Done — serve the ZIP under a human-readable name
+  // ("mercato-Spring Catalog-mathis-23-07-2026.zip" rather than the raw project id).
+  const meta = await prisma.project.findUnique({
+    where: { id },
+    select: { name: true, marketplace: true },
+  });
+  const filename = buildDownloadName({
+    projectName: meta?.name,
+    marketplace: meta?.marketplace,
+    extension: "zip",
+  });
+
   return new Response(job.zip as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="mercato-${id}.zip"`,
+      "Content-Disposition": contentDisposition(filename),
     },
   });
 }

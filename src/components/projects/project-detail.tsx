@@ -330,6 +330,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         {activeStep === 1 && (
           <VerifyStep
             projectId={project.id}
+            projectName={project.name}
             products={products}
             verifiedCount={verifiedCount}
             warningCount={warningCount}
@@ -348,6 +349,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         {activeStep === 2 && (
           <CategorizeStep
             projectId={project.id}
+            projectName={project.name}
             products={products}
             categorizedCount={categorizedCount}
             loading={loading}
@@ -360,6 +362,7 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
         {activeStep === 3 && (
           <ExportStep
             projectId={project.id}
+            projectName={project.name}
             marketplace={project.marketplace}
             products={products}
             verifiedCount={exportCount}

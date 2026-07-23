@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { Tag, Loader2, CheckCircle2, AlertTriangle, XCircle, Download, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { buildDownloadName } from "@/lib/export/filename";
 
 type Product = {
   id: string;
@@ -14,8 +15,9 @@ type Product = {
   categorizedAt: Date | null;
 };
 
-export function CategorizeStep({ projectId, products, categorizedCount, loading, projectStatus, marketplace, onRunCategorize, onNext }: {
+export function CategorizeStep({ projectId, projectName, products, categorizedCount, loading, projectStatus, marketplace, onRunCategorize, onNext }: {
   projectId: string;
+  projectName: string;
   products: Product[];
   categorizedCount: number;
   loading: boolean;
@@ -71,7 +73,12 @@ export function CategorizeStep({ projectId, products, categorizedCount, loading,
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${marketplace}_categories.csv`;
+    a.download = buildDownloadName({
+      prefix: "mercato-categories",
+      projectName,
+      marketplace,
+      extension: "csv",
+    });
     a.click();
     URL.revokeObjectURL(url);
   }

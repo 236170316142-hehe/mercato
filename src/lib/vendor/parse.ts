@@ -108,6 +108,13 @@ function pickBestSkuCol(headers: string[], sample: string[][], taken: Set<number
     );
     const formatScore = formatShare * 20;
 
+    // Global-identifier penalty. A column of ASINs or barcodes identifies the PRODUCT,
+    // not the seller's item — it is never a shop SKU, even when the vendor headed it
+    // "SKU". These sheets are common (Amazon-sourced catalogues), and without this the
+    // literal-"SKU" header score of 100 made an ASIN column win outright.
+    const globalIdShare = columnShare(sample, i, (v) => ASIN_RE.test(v) || isBarcode(v));
+    if (globalIdShare >= 0.6) continue; // disqualify outright
+
     const total = headerScore + uniquenessScore + formatScore;
     candidates.push({ idx: i, score: total });
   }

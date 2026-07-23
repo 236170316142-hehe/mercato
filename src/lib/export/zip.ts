@@ -2,6 +2,8 @@ import JSZip from "jszip";
 import type { Product, ExportTemplate } from "@prisma/client";
 import { loadMathisCategoryPaths } from "../ai/mathis-taxonomy";
 import { matchDropdownValues, dropdownKey, type DropdownQuery } from "../ai/match-dropdown";
+import { exportGroupOf } from "./category-group";
+import { ASIN_RE } from "../barcode";
 
 type Column = { key: string; label: string; required?: boolean };
 
@@ -72,8 +74,10 @@ export async function generateFlatCategoryZip(
   for (const p of eligible) {
     const cat = p.marketplaceCategory;
     if (!cat || cat === "Uncategorized") continue;
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat)!.push(p);
+    // Mathis groups by department; other marketplaces by full category path.
+    const group = exportGroupOf(cat, marketplace);
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group)!.push(p);
   }
 
   // Fall back to single flat file if nothing was categorized
@@ -112,13 +116,20 @@ export async function generateCategoryZip(
   // Even when all categories resolve to the same fallback template, each category
   // gets its own named file (e.g. "Baby & Kids.xlsx", "Seasonal.xlsx") instead
   // of everything collapsing into a single template-named file.
+  // For Mathis the group is the DEPARTMENT (first path segment), so every subcategory
+  // under "Baby & Kids > …" lands in one "Baby & Kids" file rather than one file per
+  // leaf. Other marketplaces continue to group on the full category path.
   const byCategory = new Map<string, { template: TemplateRow; catLabel: string; products: Product[] }>();
   for (const p of eligible) {
     const cat = p.marketplaceCategory;
     const isUncategorized = !cat || cat === "Uncategorized";
-    const catKey = isUncategorized ? `__uncategorized__` : cat;
-    const tpl = isUncategorized ? fallback : findBestTemplate(cat!, templates, fallback);
-    if (!byCategory.has(catKey)) byCategory.set(catKey, { template: tpl, catLabel: isUncategorized ? "" : cat!, products: [] });
+    const group = isUncategorized ? "" : exportGroupOf(cat!, marketplace);
+    const catKey = isUncategorized ? `__uncategorized__` : group;
+    // Match the template on the same string the group is keyed by, so every product in
+    // a department resolves to one template. (Matching on the full leaf path would let
+    // whichever leaf happened to come first decide the template for the whole file.)
+    const tpl = isUncategorized ? fallback : findBestTemplate(group, templates, fallback);
+    if (!byCategory.has(catKey)) byCategory.set(catKey, { template: tpl, catLabel: isUncategorized ? "" : group, products: [] });
     byCategory.get(catKey)!.products.push(p);
   }
 
@@ -332,6 +343,17 @@ async function fillTemplateXlsx(
     if (p) sheetNameToPath.set(sd.name.toLowerCase(), p);
   }
 
+  // Defined names → the range they point at. Real marketplace templates (Mathis included)
+  // name every dropdown's option list, so a dataValidation reads
+  //   formula1 = Validation_<hash>_product_RUG_SHAPE
+  // which only becomes a usable range via this map (→ ReferenceData!$R$2:$R$7).
+  const definedNames = new Map<string, string>();
+  for (const m of wbXml.matchAll(/<definedName\b([^>]*)>([\s\S]*?)<\/definedName>/g)) {
+    const nm = m[1].match(/\bname="([^"]+)"/i)?.[1];
+    const target = xmlUnescape(m[2].trim());
+    if (nm && target) definedNames.set(nm, target);
+  }
+
   const targetDef = sheetDefs.find(s => /^template$/i.test(s.name)) ?? sheetDefs[0];
   const sheetPath = targetDef ? rIdToTarget.get(targetDef.rId) : null;
   if (!sheetPath || !tplZip.file(sheetPath)) {
@@ -425,25 +447,56 @@ async function fillTemplateXlsx(
   // The old regex required type= to precede sqref= in the attribute list —
   // OOXML doesn't guarantee attribute order so some templates were missed.
   const dropdowns = new Map<string, string[]>(); // column letter → options
-  for (const dv of sheetXml.matchAll(/<dataValidation\b([^>]*?)>([\s\S]*?)<\/dataValidation>/g)) {
-    const attrs = dv[1];
-    const body  = dv[2];
+
+  // Excel writes dropdowns in THREE different encodings and a template can mix them.
+  // Only the first was handled before, so columns using the others were treated as free
+  // text and the raw vendor value was written straight through — that is how "Rectangle"
+  // reached a cell whose list only offers "Rectangular".
+  //
+  //   1. paired         <dataValidation …><formula1>"A,B"</formula1></dataValidation>
+  //   2. self-closing   <dataValidation … formula1="&quot;A,B&quot;"/>
+  //   3. x14 extension  <x14:dataValidation …><x14:formula1><xm:f>Lists!$A$1:$A$9</xm:f>…
+  //                     plus <xm:sqref> instead of a sqref attribute (Excel uses this
+  //                     whenever the option list lives on another sheet)
+  type RawDv = { attrs: string; body: string };
+  const rawDvs: RawDv[] = [];
+  // Paired or self-closing, with or without an x14: prefix
+  for (const m of sheetXml.matchAll(
+    /<(?:\w+:)?dataValidation\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?dataValidation>)/g,
+  )) {
+    rawDvs.push({ attrs: m[1] ?? "", body: m[2] ?? "" });
+  }
+
+  for (const { attrs, body } of rawDvs) {
     if (!/\btype="list"/i.test(attrs)) continue;
-    const sqrefVal = attrs.match(/\bsqref="([^"]+)"/i)?.[1];
+    // sqref lives either in an attribute or, for x14 blocks, in an <xm:sqref> element
+    const sqrefVal =
+      attrs.match(/\bsqref="([^"]+)"/i)?.[1] ??
+      body.match(/<(?:\w+:)?sqref[^>]*>([\s\S]*?)<\/(?:\w+:)?sqref>/i)?.[1]?.trim();
     if (!sqrefVal) continue;
     // sqref can be a space-separated list of ranges; extract every unique column letter
     const letters = [...new Set([...sqrefVal.matchAll(/([A-Z]+)\d*/gi)].map(m => m[1].toUpperCase()))];
     if (!letters.length) continue;
+    // formula1 may be an attribute, a <formula1> element, or an x14 <xm:f> element
+    const rawFormula =
+      body.match(/<(?:\w+:)?formula1[^>]*>\s*(?:<(?:\w+:)?f[^>]*>([\s\S]*?)<\/(?:\w+:)?f>|([\s\S]*?))\s*<\/(?:\w+:)?formula1>/i)
+        ?.slice(1).find(Boolean)?.trim() ??
+      attrs.match(/\bformula1="([^"]*)"/i)?.[1]?.trim() ??
+      "";
     // XML-unescape formula1 (some exporters write &quot; instead of ")
-    const rawFormula = body.match(/<formula1[^>]*>([\s\S]*?)<\/formula1>/i)?.[1]?.trim() ?? "";
     const formula = xmlUnescape(rawFormula);
     let opts: string[] = [];
     if (formula.startsWith('"') && formula.endsWith('"')) {
       // Inline list: "Yes,No" or "New,Used,Refurbished"
       opts = formula.slice(1, -1).split(",").map(s => s.trim()).filter(Boolean);
     } else if (formula) {
-      // Range reference: Lists!$A$1:$A$10 or =Sheet2!$B:$B
-      opts = await resolveXmlRangeDropdown(tplZip, formula.replace(/^=/, ""), sheetNameToPath, ssArr);
+      // Range reference: Lists!$A$1:$A$10, =Sheet2!$B:$B, or a DEFINED NAME.
+      // Mathis templates point every dropdown at a defined name (e.g.
+      // "Validation_28ae…_product_RUG_SHAPE" → ReferenceData!$R$2:$R$7) rather than a
+      // direct range. Resolve the name to its range first; unresolved names yield no
+      // options, which would silently turn the column into free text.
+      const ref = definedNames.get(formula.replace(/^=/, "").trim()) ?? formula.replace(/^=/, "");
+      opts = await resolveXmlRangeDropdown(tplZip, ref, sheetNameToPath, ssArr);
     }
     if (opts.length) {
       for (const letter of letters) {
@@ -554,11 +607,31 @@ async function fillTemplateXlsx(
     if (!options) return raw;
     if (!raw.trim()) return "";
     const candidate = toDropdownRaw(raw);
+
+    let value: string;
     const picked = pickDropdownValue(candidate, options);
-    if (picked !== null) return picked;
-    // Deterministic matching failed — use the AI match, else blank the cell.
-    const header = colLetterToHeader.get(letter) ?? col.label ?? col.key;
-    return aiMatches.get(dropdownKey(header, candidate)) ?? "";
+    if (picked !== null) {
+      value = picked;
+    } else {
+      // Deterministic matching failed — use the AI match, else blank the cell.
+      const header = colLetterToHeader.get(letter) ?? col.label ?? col.key;
+      value = aiMatches.get(dropdownKey(header, candidate)) ?? "";
+    }
+
+    // ── Hard invariant ───────────────────────────────────────────────────────
+    // Matching the template is the core promise of this export, so a value that is
+    // not in the list must never survive to the sheet — no matter which stage above
+    // produced it or failed (AI unavailable, key missing, request error, stale match).
+    // Anything unrecognised is dropped and logged rather than written as invalid data.
+    if (value && !options.some((o) => o === value)) {
+      const header = colLetterToHeader.get(letter) ?? col.label ?? col.key;
+      console.warn(
+        `[export] dropped invalid dropdown value for "${header}": ${JSON.stringify(value)} ` +
+        `(vendor value ${JSON.stringify(raw)}; ${options.length} allowed options)`,
+      );
+      return "";
+    }
+    return value;
   };
 
   for (let i = 0; i < products.length; i++) {
@@ -911,6 +984,11 @@ function getProductField(p: Product, key: string): unknown {
   // ── Broad ID search across vendor data ──────────────────────────────────────
   // Covers any column a vendor might use for item/style/model/catalog numbers
   const anyVendorId = fromVendor(
+    // Explicit seller-SKU columns come FIRST. Vendor sheets often carry both a real
+    // "Shop SKU" (e.g. TOVF-TOVOC21017FBMP) and a generic "sku" column holding junk —
+    // in the Mathis feed "sku" literally contains the text "ASIN". Alias order decides
+    // the winner, so the specific, trustworthy headers must be tried before "sku".
+    "shop_sku", "shopsku", "offer_sku", "offersku", "seller_sku", "merchant_sku", "vendor_sku", "supplier_sku",
     "item", "item_no", "item_number", "item_id", "item_#",
     "sku", "sku_id", "sku_no",
     "style", "style_no", "style_number", "style_id", "style_#",
@@ -929,14 +1007,35 @@ function getProductField(p: Product, key: string): unknown {
   const goodsId   = p.upc ?? p.vendorSku ?? anyVendorId ?? p.id;
   const productId = p.upc ?? p.vendorSku ?? anyVendorId ?? p.asin ?? verifiedAsin ?? p.id;
 
-  // SKU columns must carry the SELLER'S OWN item code — never a barcode. A UPC/EAN/GTIN
-  // is a global product identifier and belongs only in the UPC column; writing it into
-  // SKU produced Mathis files where the SKU column was full of barcodes. So the SKU
-  // fallback chain deliberately excludes p.upc, and any purely-numeric 8–14 digit
-  // candidate (i.e. a barcode that leaked into a vendor "item no" column) is rejected.
-  const looksLikeBarcode = (v: unknown): boolean => /^\d{8,14}$/.test(String(v ?? "").trim());
-  const skuId = [p.vendorSku, anyVendorId].find((v) => v != null && String(v).trim() !== "" && !looksLikeBarcode(v))
-    ?? p.id;
+  // SKU columns must carry the SELLER'S OWN item code — never a GLOBAL product identifier.
+  // A UPC/EAN/GTIN (barcode) and an ASIN (Amazon's id) both identify the product across
+  // all sellers, so neither is a shop SKU. Vendor sheets frequently put an ASIN in a
+  // column literally headed "SKU", which is how ASINs ended up in Mathis' shopSKU column.
+  // Every candidate is therefore shape-checked and rejected if it is a barcode or an ASIN.
+  const isGlobalId = (v: unknown): boolean => {
+    const s = String(v ?? "").trim();
+    return /^\d{8,14}$/.test(s) || ASIN_RE.test(s);
+  };
+  // Some sheets put a FIELD NAME in the cell instead of a value — the Mathis feed's
+  // "sku" column literally reads "ASIN" on every row. Such placeholder text is not a
+  // code and must never reach the SKU column; it is rejected so the next candidate wins.
+  const isPlaceholder = (v: unknown): boolean =>
+    /^(asin|upc|ean|gtin|sku|shop\s*sku|offer\s*sku|barcode|n\/?a|none|null|tbd|-{1,}|#n\/a)$/i
+      .test(String(v ?? "").trim());
+  //
+  // shopSKU is a REQUIRED unique seller identifier, so it can never be blank. When the
+  // vendor supplied no usable code, derive a readable one from the brand + barcode
+  // (e.g. "TOV-644114") rather than emitting the opaque database cuid. It is stable —
+  // the same product always derives the same code — so re-exports stay consistent.
+  const derivedSku = (): string => {
+    const brandPart = String(p.brand ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    const barcode = String(p.upc ?? "").replace(/\D/g, "");
+    const tail = barcode ? barcode.slice(-6) : String(p.id).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(-6);
+    return [brandPart, tail].filter(Boolean).join("-") || p.id;
+  };
+  const skuId = [p.vendorSku, anyVendorId].find(
+    (v) => v != null && String(v).trim() !== "" && !isGlobalId(v) && !isPlaceholder(v),
+  ) ?? derivedSku();
 
   // ── Description / details — prefer vendor text, fall back to product name ──
   const descriptionText =

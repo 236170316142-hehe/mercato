@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import { toDisplayBarcode } from "@/lib/barcode";
+import { buildDownloadName, contentDisposition } from "@/lib/export/filename";
 
 type FieldResult = { field: string; label: string; stored: string; live: string; severity: string; note?: string };
 
@@ -15,6 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     select: {
       id: true,
       userId: true,
+      name: true,
       marketplace: true,
       products: {
         select: {
@@ -83,7 +85,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="verification-report-${id}.csv"`,
+      "Content-Disposition": contentDisposition(buildDownloadName({
+        prefix: "mercato-verification-report",
+        projectName: project.name,
+        marketplace: project.marketplace,
+        extension: "csv",
+      })),
     },
   });
 }

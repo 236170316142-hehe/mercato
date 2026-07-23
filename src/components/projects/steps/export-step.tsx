@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import { AlertTriangle, Download, FileSpreadsheet, Loader2, Package, Shuffle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { exportGroupOf } from "@/lib/export/category-group";
+import { buildDownloadName } from "@/lib/export/filename";
 
 type Template = {
   id: string;
@@ -41,8 +43,9 @@ function matchTemplate(category: string, templates: Template[]): Template {
   return best;
 }
 
-export function ExportStep({ projectId, marketplace, products, projectStatus }: {
+export function ExportStep({ projectId, projectName, marketplace, products, projectStatus }: {
   projectId: string;
+  projectName: string;
   marketplace: string;
   products: Product[];
   verifiedCount: number;
@@ -81,10 +84,14 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
       .catch(() => setFetching(false));
   }, [marketplace, isMathis]);
 
+  // One entry per output FILE. Mathis produces one file per department, so all
+  // "Baby & Kids > …" leaf paths collapse into a single "Baby & Kids" row here —
+  // this must stay in sync with the server-side grouping in generateCategoryZip.
   const categoryCounts = new Map<string, number>();
   for (const p of products) {
     if (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") {
-      categoryCounts.set(p.marketplaceCategory, (categoryCounts.get(p.marketplaceCategory) ?? 0) + 1);
+      const group = exportGroupOf(p.marketplaceCategory, marketplace);
+      categoryCounts.set(group, (categoryCounts.get(group) ?? 0) + 1);
     }
   }
   const categories = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1]);
@@ -148,7 +155,7 @@ export function ExportStep({ projectId, marketplace, products, projectStatus }: 
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = `mercato-export-${projectId}.zip`;
+          a.download = buildDownloadName({ projectName, marketplace, extension: "zip" });
           a.click();
           URL.revokeObjectURL(url);
           const fileCount = usesCategoryZip ? categories.length : 1;

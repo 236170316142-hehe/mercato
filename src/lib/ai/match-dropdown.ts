@@ -29,6 +29,10 @@ const MODEL = process.env.DROPDOWN_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001
 const MAX_OPTIONS = 300;
 /** Unresolved values matched per request. */
 const BATCH_SIZE = 40;
+/** Attempts per batch before its values are left blank. */
+const MAX_ATTEMPTS = 3;
+/** Batches in flight at once — keeps large exports inside their time limit. */
+const CONCURRENCY = 4;
 
 /**
  * Cache key for one (column, value) pair. Callers MUST build lookup keys with this
@@ -57,7 +61,16 @@ export async function matchDropdownValues(
   queries: DropdownQuery[],
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  if (!queries.length || !process.env.ANTHROPIC_API_KEY) return out;
+  if (!queries.length) return out;
+  if (!process.env.ANTHROPIC_API_KEY) {
+    // Without a key every unmatched value blanks out, which looks like data loss in the
+    // exported sheet. Say so loudly — this is a misconfiguration, not a normal outcome.
+    console.error(
+      `[match-dropdown] ANTHROPIC_API_KEY is not set — ${queries.length} dropdown value(s) ` +
+      `cannot be matched and will be left blank in the export.`,
+    );
+    return out;
+  }
 
   // Deduplicate: the same (column, value, options) repeats across every product row.
   const unique = new Map<string, DropdownQuery>();
@@ -69,18 +82,27 @@ export async function matchDropdownValues(
   if (!unique.size) return out;
 
   const entries = [...unique.entries()];
+  const batches: [string, DropdownQuery][][] = [];
   for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-    const batch = entries.slice(i, i + BATCH_SIZE);
-    try {
-      const items = batch.map(([, q], n) => {
-        const opts = q.options.map((o) => `    - ${o}`).join("\n");
-        return `${n + 1}. column: "${q.column}"\n   vendor value: "${q.value}"\n   allowed options:\n${opts}`;
-      }).join("\n\n");
+    batches.push(entries.slice(i, i + BATCH_SIZE));
+  }
 
-      const { text } = await generateText({
-        model: anthropic(MODEL),
-        temperature: 0,
-        prompt: `You map vendor product values onto a marketplace template's fixed dropdown options.
+  // A real template has dozens of dropdown columns, so batches are run with bounded
+  // concurrency — sequential requests would push a large export past its time limit.
+  const runBatch = async (batch: [string, DropdownQuery][]): Promise<void> => {
+    // A dropped batch means every value in it blanks out in the sheet, so a transient
+    // API error (rate limit, timeout) is worth retrying before giving up on it.
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const items = batch.map(([, q], n) => {
+          const opts = q.options.map((o) => `    - ${o}`).join("\n");
+          return `${n + 1}. column: "${q.column}"\n   vendor value: "${q.value}"\n   allowed options:\n${opts}`;
+        }).join("\n\n");
+
+        const { text } = await generateText({
+          model: anthropic(MODEL),
+          temperature: 0,
+          prompt: `You map vendor product values onto a marketplace template's fixed dropdown options.
 
 For each item choose the single allowed option that is the nearest compatible match for the vendor value.
 
@@ -97,26 +119,46 @@ ${items}
 Respond with one line per item, in order, formatted exactly as:
 <item number>: <chosen option or empty>
 No other text.`,
-      });
+        });
 
-      for (const line of text.split(/\r?\n/)) {
-        const m = line.match(/^\s*(\d+)\s*:\s*(.*)$/);
-        if (!m) continue;
-        const idx = parseInt(m[1], 10) - 1;
-        const picked = m[2].trim().replace(/^["']|["']$/g, "");
-        const entry = batch[idx];
-        if (!entry) continue;
-        const [key, q] = entry;
-        if (!picked) continue;
-        // Only accept a verbatim option (case-insensitive compare, canonical casing stored).
-        const exact = q.options.find((o) => o.toLowerCase() === picked.toLowerCase());
-        if (exact) out.set(key, exact);
+        for (const line of text.split(/\r?\n/)) {
+          const m = line.match(/^\s*(\d+)\s*:\s*(.*)$/);
+          if (!m) continue;
+          const idx = parseInt(m[1], 10) - 1;
+          const picked = m[2].trim().replace(/^["']|["']$/g, "");
+          const entry = batch[idx];
+          if (!entry) continue;
+          const [key, q] = entry;
+          if (!picked) continue;
+          // Only accept a verbatim option (case-insensitive compare, canonical casing stored).
+          const exact = q.options.find((o) => o.toLowerCase() === picked.toLowerCase());
+          if (exact) out.set(key, exact);
+        }
+        return; // batch succeeded
+      } catch (err) {
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 400 * attempt));
+          continue;
+        }
+        // Exhausted retries — the caller blanks these cells rather than writing bad data.
+        console.warn(
+          `[match-dropdown] giving up on a batch of ${batch.length} value(s) after ` +
+          `${MAX_ATTEMPTS} attempts; they will be left blank:`, err,
+        );
       }
-    } catch (err) {
-      // Non-fatal: the caller falls back to its deterministic result for this batch.
-      console.warn("[match-dropdown] AI matching failed for a batch:", err);
     }
-  }
+  };
+
+  // Simple worker pool: CONCURRENCY batches in flight at a time.
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, batches.length) }, async () => {
+      while (next < batches.length) {
+        const batch = batches[next++];
+        if (batch) await runBatch(batch);
+      }
+    }),
+  );
 
   return out;
 }

@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { buildDownloadName } from "@/lib/export/filename";
 
 type FieldResult = {
   field: string;
@@ -51,8 +52,9 @@ const FIELD_SEVERITY = {
   mismatch: "text-red-600",
 };
 
-export function VerifyStep({ projectId, marketplace, products, verifiedCount, warningCount, mismatchCount, notFoundCount, discontinuedCount, loading, projectStatus, onRunVerify, onApproveProduct, onMarkDiscontinued, onNext }: {
+export function VerifyStep({ projectId, projectName, marketplace, products, verifiedCount, warningCount, mismatchCount, notFoundCount, discontinuedCount, loading, projectStatus, onRunVerify, onApproveProduct, onMarkDiscontinued, onNext }: {
   projectId: string;
+  projectName: string;
   marketplace: string;
   products: Product[];
   verifiedCount: number;
@@ -94,7 +96,12 @@ export function VerifyStep({ projectId, marketplace, products, verifiedCount, wa
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `verification-report.csv`;
+      a.download = buildDownloadName({
+        prefix: "mercato-verification-report",
+        projectName,
+        marketplace,
+        extension: "csv",
+      });
       a.click();
       URL.revokeObjectURL(url);
       toast.success("Report downloaded");
