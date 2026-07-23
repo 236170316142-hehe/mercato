@@ -245,7 +245,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       //   1. Unresolved SKU — the name is still a raw vendor code (catalog + web both failed),
       //      so the AI had nothing real to categorize. Never trust that guess.
       //   2. Low confidence — the AI itself signalled uncertainty below the threshold.
-      const MIN_CONFIDENCE = Number(process.env.CATEGORIZE_MIN_CONFIDENCE ?? 0.6);
+      //
+      // For constrained-taxonomy marketplaces (Temu, BestBuy, Mathis) the AI can ONLY
+      // return valid paths from a fixed CSV list — there is no risk of hallucinated category
+      // names. A "best guess within the valid set" at moderate confidence is always better
+      // than "Uncategorized", so we use a much lower threshold for these marketplaces.
+      const isConstrainedTaxonomy = ["temu", "bestbuy", "mathis"].includes(mpLower);
+      const MIN_CONFIDENCE = isConstrainedTaxonomy
+        ? Number(process.env.CATEGORIZE_MIN_CONFIDENCE_CONSTRAINED ?? 0.25)
+        : Number(process.env.CATEGORIZE_MIN_CONFIDENCE ?? 0.6);
       const inputById = new Map(productInputs.map((p) => [p.id, p]));
 
       for (const r of results) {
