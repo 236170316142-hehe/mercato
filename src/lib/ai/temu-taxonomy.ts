@@ -11,6 +11,20 @@ function csvPath(): string {
   return join(process.cwd(), "src/lib/ai/data/temu_categories.csv");
 }
 
+/** Proper quoted-CSV line parser — handles fields that contain commas. */
+function parseCsvLine(line: string): string[] {
+  const cols: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (const ch of line) {
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === "," && !inQuotes) { cols.push(current.trim()); current = ""; continue; }
+    current += ch;
+  }
+  cols.push(current.trim());
+  return cols;
+}
+
 /** Load and cache every leaf path from temu_categories.csv. */
 export function loadTemuCategoryPaths(): TemuCategoryPath[] {
   if (cachedPaths) return cachedPaths;
@@ -21,9 +35,7 @@ export function loadTemuCategoryPaths(): TemuCategoryPath[] {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.toLowerCase().startsWith("category,")) continue;
-
-    // Simple CSV split — fields have no embedded commas in this file
-    const cols = trimmed.split(",").map((c) => c.trim());
+    const cols = parseCsvLine(trimmed);
     const [category, subcategory, subSub] = cols;
     if (!category || !subcategory || !subSub) continue;
     paths.push(`${category} > ${subcategory} > ${subSub}`);
@@ -35,6 +47,12 @@ export function loadTemuCategoryPaths(): TemuCategoryPath[] {
 
   cachedPaths = paths;
   return cachedPaths;
+}
+
+/** Clear cached taxonomy data so next call reloads from disk (use after CSV update). */
+export function clearTemuCache(): void {
+  cachedPaths = null;
+  cachedPromptBlock = null;
 }
 
 /**

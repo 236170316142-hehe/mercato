@@ -310,7 +310,9 @@ If nothing fits, use "Uncategorized".`;
 
   const storeContext = isMathis
     ? "You are a product categorization expert for Mathis Brothers / Mathis Home. You are given the official Mirakl taxonomy sheet (Department > Category > Subcategory > Product Type). Your job is to match each product to the leaf path whose NAME best matches the product type — using ONLY the taxonomy list. Do not invent paths. Do not relocate a product to a different department based on assumptions about adult vs kids, room type, or how a retailer 'usually' organizes furniture."
-    : (isTemu || isBestBuy)
+    : isTemu
+    ? "You are a product categorization expert for the Temu marketplace seller portal. You are given the EXACT Temu category taxonomy (Category > Sub-Category > Product Type) sourced directly from Temu's seller listing system. Your job is to match each product to the single most specific leaf path from that taxonomy — using ONLY the paths listed. The output must be directly usable for listing on Temu's seller portal without any manual remapping. Do not invent paths. Do not shorten paths to 1 or 2 levels. Always output the full 3-level path."
+    : isBestBuy
     ? "You are a product categorization expert. You are given a shared category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet. Do not invent paths."
     : "You are a product categorization expert for a major retail marketplace.";
 

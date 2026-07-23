@@ -29,8 +29,15 @@ export function groupsByDepartment(marketplace: string): boolean {
 
 /**
  * The export-file group a category belongs to for the given marketplace.
- * Mathis → department; everything else → the category path unchanged.
+ * Mathis  → top-level department  ("Rugs > Rug Type > Indoor Rugs" → "Rugs")
+ * Temu    → Category > Sub-Category (drops Product Type to avoid hundreds of tiny files)
+ * Others  → the full category path unchanged
  */
 export function exportGroupOf(category: string, marketplace: string): string {
-  return groupsByDepartment(marketplace) ? departmentOf(category) : category;
+  if (groupsByDepartment(marketplace)) return departmentOf(category);
+  if (marketplace.toLowerCase() === "temu") {
+    const parts = category.split(" > ");
+    return parts.length >= 2 ? `${parts[0]} > ${parts[1]}` : category;
+  }
+  return category;
 }
