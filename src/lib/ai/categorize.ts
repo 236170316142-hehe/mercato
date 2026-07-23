@@ -304,6 +304,7 @@ If nothing fits, use "Uncategorized".`;
       walmart: "Walmart categories (Electronics, Home, Clothing, Baby, Sports & Outdoors, Food, etc.)",
       mathis: "Mathis Brothers categories (Baby & Kids, Bedding & Bath, Decor, Furniture, Home Improvement, Kitchen, Mattress, Organization, Outdoor, Rugs, Seasonal)",
       sears: "Sears categories (Appliances, Tools, Clothing, Shoes, Electronics, Lawn & Garden, etc.)",
+      wayfair: "Wayfair home-goods categories (Furniture, Bed & Bath, Home Décor, Kitchen & Dining, Rugs, Lighting, Outdoor, Storage & Organization, Art & Mirrors, Appliances, Baby & Kids)",
     };
     categorySection = taxonomies[mpLower] ?? `${marketplace} product categories`;
   }

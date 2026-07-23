@@ -140,9 +140,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const isTemu = mpLower === "temu";
       const isBestBuy = mpLower === "bestbuy";
       const isWalmart = mpLower === "walmart";
+      const isWayfair = mpLower === "wayfair";
       // Category-split marketplaces: products grouped by category, each group filled into
       // the closest matching uploaded template (one output file per template).
-      const usesCategoryExport = isTemu || isBestBuy || isWalmart;
+      const usesCategoryExport = isTemu || isBestBuy || isWalmart || isWayfair;
 
       let zipBuffer: Buffer;
       if (useTemplateIds && allTemplates.length) {
