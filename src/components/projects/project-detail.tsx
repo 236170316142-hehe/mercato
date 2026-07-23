@@ -48,7 +48,7 @@ const STEPS = [
 
 const AMAZON_SKIP_CATEGORIZE = true;
 // These marketplaces have no public API for verification — skip straight to Categorize
-const SKIP_VERIFY = new Set(["temu", "bestbuy", "mathis", "sears", "wayfair"]);
+const SKIP_VERIFY = new Set(["temu", "bestbuy", "mathis", "sears"]);
 
 
 function stepIndex(status: string) {
@@ -60,12 +60,12 @@ function stepIndex(status: string) {
 
 const MARKETPLACE_LABELS: Record<string, string> = {
   amazon_us: "Amazon US", amazon: "Amazon", bestbuy: "Best Buy", walmart: "Walmart",
-  temu: "Temu", mathis: "Mathis", sears: "Sears", wayfair: "Wayfair",
+  temu: "Temu", mathis: "Mathis", sears: "Sears",
 };
 
 const MARKETPLACE_DOMAIN: Record<string, string> = {
   amazon_us: "amazon.com", amazon: "amazon.com", bestbuy: "bestbuy.com", walmart: "walmart.com",
-  temu: "temu.com", mathis: "mathishome.com", sears: "sears.com", wayfair: "wayfair.com",
+  temu: "temu.com", mathis: "mathishome.com", sears: "sears.com",
 };
 
 function MarketplaceLogo({ marketplace, className }: { marketplace: string; className?: string }) {
