@@ -109,51 +109,59 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   let attempted = 0;
   let ranOutOfTime = false;
 
+  const { withImageCache } = await import("@/lib/ai/compare-images");
+
   try {
-    for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
-      // Stop before the platform kills us mid-batch. Work already committed is
-      // kept, and the response tells the caller how much is left to resume.
-      if (Date.now() - startedAt > TIME_BUDGET_MS) {
-        ranOutOfTime = true;
-        break;
+    // One download cache for the whole run: vendor images are compared against
+    // several marketplace angles, and marketplace CDN URLs recur across
+    // products, so this removes most of the repeated image-fetch I/O. The cache
+    // is discarded when the run returns rather than living on the module.
+    await withImageCache(async () => {
+      for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
+        // Stop before the platform kills us mid-batch. Work already committed is
+        // kept, and the response tells the caller how much is left to resume.
+        if (Date.now() - startedAt > TIME_BUDGET_MS) {
+          ranOutOfTime = true;
+          break;
+        }
+        const batch = allProducts.slice(i, i + BATCH_SIZE);
+        attempted += batch.length;
+        const results = await verifyProducts(project.marketplace, batch as Parameters<typeof verifyProducts>[1]);
+
+        const processed = results.filter((r) => r.status !== "skipped");
+        totalSkipped += results.length - processed.length;
+
+        // Save results in small sub-batches to avoid overwhelming the DB
+        for (let j = 0; j < processed.length; j += 10) {
+          const sub = processed.slice(j, j + 10);
+          await Promise.all(
+            sub.map((r) => {
+              const ld = r.liveData as Record<string, unknown> | null;
+              const verifiedAsin = typeof ld?.asin === "string" ? ld.asin : null;
+              // Keepa prices are in cents (e.g. 1999 = $19.99)
+              const verifiedPrice = typeof ld?.price === "number" && ld.price > 0
+                ? ld.price / 100 : null;
+              // Save UPC resolved from vendorData scan when p.upc was missing
+              const resolvedUpc = r.resolvedUpc ?? null;
+              return prisma.product.update({
+                where: { id: r.productId },
+                data: {
+                  verifyStatus: r.status,
+                  verifyFields: r.fields as object[],
+                  liveData: r.liveData as object,
+                  verifiedAt: new Date(),
+                  ...(verifiedAsin ? { asin: verifiedAsin } : {}),
+                  ...(verifiedPrice ? { price: verifiedPrice } : {}),
+                  ...(resolvedUpc ? { upc: resolvedUpc } : {}),
+                },
+              });
+            })
+          );
+        }
+
+        totalProcessed += processed.length;
       }
-      const batch = allProducts.slice(i, i + BATCH_SIZE);
-      attempted += batch.length;
-      const results = await verifyProducts(project.marketplace, batch as Parameters<typeof verifyProducts>[1]);
-
-      const processed = results.filter((r) => r.status !== "skipped");
-      totalSkipped += results.length - processed.length;
-
-      // Save results in small sub-batches to avoid overwhelming the DB
-      for (let j = 0; j < processed.length; j += 10) {
-        const sub = processed.slice(j, j + 10);
-        await Promise.all(
-          sub.map((r) => {
-            const ld = r.liveData as Record<string, unknown> | null;
-            const verifiedAsin = typeof ld?.asin === "string" ? ld.asin : null;
-            // Keepa prices are in cents (e.g. 1999 = $19.99)
-            const verifiedPrice = typeof ld?.price === "number" && ld.price > 0
-              ? ld.price / 100 : null;
-            // Save UPC resolved from vendorData scan when p.upc was missing
-            const resolvedUpc = r.resolvedUpc ?? null;
-            return prisma.product.update({
-              where: { id: r.productId },
-              data: {
-                verifyStatus: r.status,
-                verifyFields: r.fields as object[],
-                liveData: r.liveData as object,
-                verifiedAt: new Date(),
-                ...(verifiedAsin ? { asin: verifiedAsin } : {}),
-                ...(verifiedPrice ? { price: verifiedPrice } : {}),
-                ...(resolvedUpc ? { upc: resolvedUpc } : {}),
-              },
-            });
-          })
-        );
-      }
-
-      totalProcessed += processed.length;
-    }
+    });
 
     const remaining = allProducts.length - attempted;
     const complete = remaining === 0;

@@ -96,6 +96,8 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
     return idx;
   });
   const [loading, setLoading] = useState(false);
+  // Cumulative progress across the multi-pass verify loop; null when idle.
+  const [verifyProgress, setVerifyProgress] = useState<{ done: number; total: number } | null>(null);
 
   const currentStepIndex = stepIndex(project.status);
 
@@ -110,38 +112,74 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
 
   // `force` re-checks every product (explicit "Re-verify"); the default resumes,
   // processing only products that have not been verified yet.
+  //
+  // A single request is capped by the route's `maxDuration`, so large catalogs
+  // (500+) always come back partial. Rather than making the user click Verify
+  // four or five times, we drive the resume loop here: keep POSTing while the
+  // server reports work remaining, reporting cumulative progress as we go.
   async function runVerify(force = false) {
     setLoading(true);
+    setVerifyProgress(null);
     try {
-      const res = await fetch(
-        `/api/projects/${project.id}/verify${force ? "?force=1" : ""}`,
-        { method: "POST" },
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.code === "INSUFFICIENT_KEEPA_TOKENS") {
-          toast.warning(data.error ?? "Not enough Keepa tokens available to verify");
-        } else if (data.resumable && data.verified > 0) {
-          toast.warning(`Verification stopped after ${data.verified} products — results so far are saved. Run Verify again to continue.`);
-        } else {
-          toast.error(data.error ?? "Verification failed");
+      let totalVerified = 0;
+      let totalSkipped = 0;
+      // Only the first request carries `force`; the follow-up passes must resume
+      // (force=1 would re-check the products we just finished, and never end).
+      let useForce = force;
+
+      // Bounds the loop so a server that stops making progress can't spin
+      // forever. Each pass covers up to `maxDuration` of work, so this is far
+      // more headroom than any real catalog needs.
+      for (let pass = 0; pass < 25; pass++) {
+        const res = await fetch(
+          `/api/projects/${project.id}/verify${useForce ? "?force=1" : ""}`,
+          { method: "POST" },
+        );
+        const data = await res.json();
+        useForce = false;
+
+        if (!res.ok) {
+          if (data.code === "INSUFFICIENT_KEEPA_TOKENS") {
+            toast.warning(data.error ?? "Not enough Keepa tokens available to verify");
+          } else if (data.resumable && (data.verified > 0 || totalVerified > 0)) {
+            toast.warning(`Verification stopped after ${totalVerified + (data.verified ?? 0)} products — results so far are saved. Run Verify again to continue.`);
+          } else {
+            toast.error(data.error ?? "Verification failed");
+          }
+          await refreshProject();
+          return;
         }
-      } else {
+
+        totalVerified += data.verified ?? 0;
+        totalSkipped += data.skipped ?? 0;
+
         if (data.remaining > 0) {
-          toast.warning(`Verified ${data.verified} products — ${data.remaining} still to check. Run Verify again to continue.`);
-        } else if (data.skipped > 0) {
-          toast.warning(`Verified ${data.verified} products. ${data.skipped} skipped (Keepa tokens ran low — previous results preserved). Re-verify when tokens refill.`);
-        } else {
-          toast.success(`Verified ${data.verified} products`);
+          setVerifyProgress({ done: totalVerified, total: totalVerified + data.remaining });
+          // A pass that verified nothing but still reports work left would loop
+          // without end — surface it and keep the partial results.
+          if (!data.verified) {
+            toast.warning(`Verified ${totalVerified} products — ${data.remaining} still to check. Run Verify again to continue.`);
+            break;
+          }
+          continue;
         }
-        await refreshProject();
-        setActiveStep(1);
+
+        if (totalSkipped > 0) {
+          toast.warning(`Verified ${totalVerified} products. ${totalSkipped} skipped (Keepa tokens ran low — previous results preserved). Re-verify when tokens refill.`);
+        } else {
+          toast.success(`Verified ${totalVerified} products`);
+        }
+        break;
       }
+
+      await refreshProject();
+      setActiveStep(1);
     } catch (e) {
       console.error("Verify error:", e);
       toast.error("Verification failed — check the server console for details.");
     } finally {
       setLoading(false);
+      setVerifyProgress(null);
     }
   }
 
@@ -299,7 +337,9 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
                       {step.label}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {isSkipVerifyStep ? "Not required" :
+                      {isLoading && verifyProgress && step.key === "verified"
+                        ? `${verifyProgress.done} / ${verifyProgress.total} checked` :
+                       isSkipVerifyStep ? "Not required" :
                        isAmazonCategorize ? "Not required for Amazon" :
                        step.desc}
                     </p>

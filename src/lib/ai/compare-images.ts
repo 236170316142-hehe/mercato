@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 
@@ -15,7 +16,9 @@ export type ImageCompareResult = {
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const SUPPORTED_MIME = /^image\/(jpeg|png|gif|webp)$/i;
 
-async function fetchImage(url: string): Promise<{ data: Uint8Array; mimeType: string } | null> {
+type FetchedImage = { data: Uint8Array; mimeType: string };
+
+async function fetchImage(url: string): Promise<FetchedImage | null> {
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(10_000),
@@ -32,6 +35,38 @@ async function fetchImage(url: string): Promise<{ data: Uint8Array; mimeType: st
   }
 }
 
+/**
+ * Per-run download cache. The same vendor image is compared against several
+ * marketplace angles, and the same marketplace CDN URL often recurs across
+ * products, so downloading once per URL rather than once per comparison
+ * removes the bulk of the image-fetch I/O on large batches.
+ *
+ * Scoped to a single verification run via `withImageCache` — a module-level
+ * cache that outlived the request would pin megabytes of image bytes in memory
+ * for the life of the server process.
+ */
+type ImageCache = Map<string, Promise<FetchedImage | null>>;
+
+const cacheStore = new AsyncLocalStorage<ImageCache>();
+
+function fetchImageCached(url: string): Promise<FetchedImage | null> {
+  const cache = cacheStore.getStore();
+  if (!cache) return fetchImage(url);
+  // Cache the promise, not the result, so concurrent callers requesting the
+  // same URL share one in-flight download instead of racing to start their own.
+  let hit = cache.get(url);
+  if (!hit) {
+    hit = fetchImage(url);
+    cache.set(url, hit);
+  }
+  return hit;
+}
+
+/** Run `fn` with a fresh image-download cache that is discarded on completion. */
+export function withImageCache<T>(fn: () => Promise<T>): Promise<T> {
+  return cacheStore.run(new Map(), fn);
+}
+
 // ── Single pair comparison ─────────────────────────────────────────────────────
 
 export async function compareProductImages(
@@ -43,7 +78,10 @@ export async function compareProductImages(
     return { verdict: "unsure", reason: "ANTHROPIC_API_KEY not configured" };
   }
 
-  const [vendorImg, liveImg] = await Promise.all([fetchImage(vendorImageUrl), fetchImage(liveImageUrl)]);
+  const [vendorImg, liveImg] = await Promise.all([
+    fetchImageCached(vendorImageUrl),
+    fetchImageCached(liveImageUrl),
+  ]);
   if (!vendorImg) return { verdict: "unsure", reason: "Could not download catalog image" };
   if (!liveImg) return { verdict: "unsure", reason: "Could not download marketplace image" };
 
@@ -93,31 +131,98 @@ export async function compareProductImages(
 }
 
 /**
- * Compare vendor image against ALL available marketplace images (up to maxAngles).
- * Returns "match" as soon as any angle matches — improves accuracy when the primary
- * marketplace image shows a different variant/angle than the vendor image.
+ * Compare the vendor image against ALL available marketplace angles (up to
+ * maxAngles) in a SINGLE vision call — the model sees every angle at once and
+ * decides whether any of them shows the vendor's product.
+ *
+ * This replaces an earlier loop that issued one call per angle and stopped at
+ * the first match. That shape cost 1 call for matching products but 3 for every
+ * mismatch/unsure — exactly the products a verification run turns up — and it
+ * dominated the runtime of large batches. Judging all angles together is a flat
+ * 1 call per product and is also more accurate: the model can compare candidate
+ * angles side by side instead of ruling on each in isolation.
  */
 export async function compareVendorAgainstAllImages(
   vendorImageUrl: string,
   liveImageUrls: string[],
   productName: string,
-  // Angles are tried sequentially and stop at the first match, so each extra
-  // angle only costs time on products that do NOT match. 3 keeps the accuracy
-  // benefit of checking alternate shots while capping the worst case at 3
-  // vision calls per product instead of 5.
+  // All angles go into one request now, so extra angles cost image tokens rather
+  // than whole round-trips. 3 stays well inside the model's per-request image
+  // budget while covering the primary shot plus alternates.
   maxAngles = 3,
 ): Promise<ImageCompareResult> {
   const urls = liveImageUrls.filter((u) => u && u.startsWith("http")).slice(0, maxAngles);
   if (!urls.length) return { verdict: "unsure", reason: "No marketplace images available" };
-
-  let lastResult: ImageCompareResult = { verdict: "unsure", reason: "No images could be compared" };
-  for (const liveUrl of urls) {
-    const result = await compareProductImages(vendorImageUrl, liveUrl, productName);
-    lastResult = result;
-    if (result.verdict === "match") return result; // stop at first match
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return { verdict: "unsure", reason: "ANTHROPIC_API_KEY not configured" };
   }
-  // All angles checked — return the last result (mismatch or unsure)
-  return lastResult;
+
+  const [vendorImg, ...liveImgs] = await Promise.all([
+    fetchImageCached(vendorImageUrl),
+    ...urls.map((u) => fetchImageCached(u)),
+  ]);
+  if (!vendorImg) return { verdict: "unsure", reason: "Could not download catalog image" };
+  const usableLive = liveImgs.filter((i): i is FetchedImage => !!i);
+  if (!usableLive.length) return { verdict: "unsure", reason: "Could not download marketplace image" };
+
+  const model = process.env.DEFAULT_ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+  const listingLabel = usableLive.length === 1
+    ? `Image 2 is from a marketplace listing`
+    : `Images 2-${usableLive.length + 1} are different photos from a single marketplace listing`;
+
+  try {
+    const { text } = await generateText({
+      model: anthropic(model),
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text:
+                `Product: "${productName}"\n\n` +
+                `Image 1 is from our product catalog. ${listingLabel} ` +
+                `we matched to this product. Decide whether the listing shows the SAME product ` +
+                `as the catalog image.\n\n` +
+                `Rules:\n` +
+                `- The listing photos may show different angles, or accessories and alternate ` +
+                `views of the same item. If ANY of them clearly shows the catalog product, ` +
+                `answer MATCH.\n` +
+                `- Ignore differences in background, angle, lighting, watermarks, cropping, ` +
+                `lifestyle staging, and image quality.\n` +
+                `- Different color/finish variants of the same model count as MATCH only if the ` +
+                `shape/design is clearly identical.\n` +
+                `- A clearly different item, design, pattern, or pack quantity (e.g. one item vs ` +
+                `a multi-pack shot) is a MISMATCH.\n` +
+                `- If the images are too unclear to judge, answer UNSURE.\n\n` +
+                `Answer on the first line with exactly one word: MATCH, MISMATCH, or UNSURE. ` +
+                `On the second line give a one-sentence reason.`,
+            },
+            {
+              type: "image" as const,
+              image: vendorImg.data,
+              mediaType: vendorImg.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+            },
+            ...usableLive.map((img) => ({
+              type: "image" as const,
+              image: img.data,
+              mediaType: img.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+            })),
+          ],
+        },
+      ],
+      maxOutputTokens: 150,
+    });
+
+    const lines = text.trim().split("\n").map((l) => l.trim()).filter(Boolean);
+    const first = (lines[0] ?? "").toUpperCase();
+    const reason = lines.slice(1).join(" ") || "No reason given";
+    if (first.startsWith("MATCH")) return { verdict: "match", reason };
+    if (first.startsWith("MISMATCH")) return { verdict: "mismatch", reason };
+    return { verdict: "unsure", reason };
+  } catch {
+    return { verdict: "unsure", reason: "Image comparison failed" };
+  }
 }
 
 /**
@@ -144,10 +249,12 @@ export async function compareProductImagesBatch(
  */
 export async function compareVendorAgainstAllImagesBatch(
   items: Array<{ vendorImageUrl: string; liveImageUrls: string[]; productName: string }>,
-  // Measured vision-call latency: 1 call ≈ 4.2s, 8 concurrent ≈ 3.4s total,
-  // 12 concurrent ≈ 5.2s (diminishing returns). 8 is the throughput sweet spot
-  // and showed no rate-limit errors.
-  concurrency = 8,
+  // Each item is now exactly one vision call (previously up to 3 sequential
+  // ones), so a slot frees up ~3x sooner and the effective in-flight request
+  // count at a given concurrency is correspondingly lower. 12 restores roughly
+  // the old peak request rate; the previous value of 8 was tuned against the
+  // multi-call shape and now under-uses the available throughput.
+  concurrency = 12,
 ): Promise<ImageCompareResult[]> {
   const results: ImageCompareResult[] = new Array(items.length);
   for (let i = 0; i < items.length; i += concurrency) {

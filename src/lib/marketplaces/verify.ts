@@ -811,6 +811,13 @@ async function verifyAmazon(products: Product[]): Promise<VerifyResult[]> {
 
 async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
   const { searchWalmartByUpc, searchWalmartByName } = await import("@/lib/walmart/client");
+  const { getSellerItemByGtin, sellerApiConfigured } = await import("@/lib/walmart/seller-client");
+  // The Affiliate API only reliably indexes Walmart's first-party retail
+  // catalog, so our own freshly-published seller listings often come back empty
+  // there even while live on walmart.com. The Seller API reads OUR catalog
+  // directly, so a GTIN hit here authoritatively confirms our listing — this is
+  // the primary lookup, with the Affiliate search kept as a fallback.
+  const useSellerApi = sellerApiConfigured();
   // The affiliate API parallelises near-linearly: measured 1 call ≈ 24 concurrent
   // calls ≈ 1.4s, with no throttling. 12 keeps a wide safety margin under that
   // ceiling while cutting the lookup phase ~4x versus the previous value of 3.
@@ -828,6 +835,46 @@ async function verifyWalmart(products: Product[]): Promise<VerifyResult[]> {
     const batch = activeProducts.slice(i, i + CONCURRENCY);
     const settled = await Promise.allSettled(batch.map(async (p) => {
       let item = null;
+
+      // Primary: confirm our OWN published listing via the Seller API by GTIN.
+      if (useSellerApi && p.upc) {
+        const seller = await getSellerItemByGtin(p.upc).catch(() => null);
+        if (seller) {
+          const priceInCents = seller.price != null ? Math.round(seller.price * 100) : null;
+          const images = (seller.images ?? []).filter((u) => u.startsWith("http"));
+          const isPublished = (seller.publishedStatus ?? "").toUpperCase() === "PUBLISHED";
+          const productUrl = seller.itemId ? `https://www.walmart.com/ip/${seller.itemId}` : "";
+          const liveDataForCompare = {
+            ...seller,
+            images,
+            description: "",
+            productUrl,
+            // Surface publish status so the report can flag a matched-but-not-live listing.
+            publishedStatus: seller.publishedStatus ?? "UNKNOWN",
+          };
+          const result = compareToLive(
+            p,
+            seller.productName ?? "",
+            seller.brand ?? null,
+            priceInCents,
+            liveDataForCompare as unknown as Record<string, unknown>,
+            "Walmart",
+          );
+          // Our own catalog item that is not PUBLISHED is a real problem to
+          // surface (staged / unpublished / in-progress), not an "ok".
+          if (!isPublished && result.status === "ok") {
+            result.status = "warning";
+            result.fields.push({
+              field: "availability", label: "Availability",
+              stored: "Expected live", live: seller.publishedStatus ?? "Not published",
+              match: false, severity: "warning",
+              note: `Listing found in your Walmart catalog but status is ${seller.publishedStatus ?? "unknown"}, not PUBLISHED`,
+            });
+          }
+          return result;
+        }
+        // Seller API had no match — fall through to the Affiliate lookup below.
+      }
 
       if (p.upc) {
         // Try UPC-based lookup first; fall back to name search if Walmart doesn't index by UPC.
