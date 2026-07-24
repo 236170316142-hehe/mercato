@@ -47,6 +47,7 @@ type FieldResult = {
 export async function verifyProducts(
   marketplace: string,
   products: Product[],
+  options?: { skipAiPasses?: boolean },
 ): Promise<VerifyResult[]> {
   let results: VerifyResult[];
   switch (marketplace) {
@@ -78,11 +79,24 @@ export async function verifyProducts(
       }));
   }
 
-  // Post-pass 1: AI visual comparison of catalog vs marketplace images.
-  await applyImageComparison(results, products);
-  // Post-pass 2: AI semantic title comparison for Walmart borderline cases.
-  if (marketplace === "walmart") await applySemanticTitleCheck(results, products);
+  if (!options?.skipAiPasses) {
+    await applyAiVerificationPasses(results, products, marketplace);
+  }
   return results;
+}
+
+/**
+ * Run the AI post-passes (image comparison + semantic title check) on an
+ * already-fetched result set. Exported so the route can call this ONCE on all
+ * batch results instead of once per batch — dramatically cuts time-per-batch.
+ */
+export async function applyAiVerificationPasses(
+  results: VerifyResult[],
+  products: Product[],
+  marketplace: string,
+): Promise<void> {
+  await applyImageComparison(results, products);
+  if (marketplace === "walmart") await applySemanticTitleCheck(results, products);
 }
 
 // ── AI image comparison post-pass ─────────────────────────────────────────────

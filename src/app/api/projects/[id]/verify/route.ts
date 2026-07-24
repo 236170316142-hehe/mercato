@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const maxDuration = 300;
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
-import { verifyProducts } from "@/lib/marketplaces/verify";
+import { verifyProducts, applyAiVerificationPasses } from "@/lib/marketplaces/verify";
 import {
   estimateAmazonVerifyTokens,
   refreshKeepaTokens,
@@ -15,6 +15,11 @@ const BATCH_SIZE = 50;
 // A run that is cut off mid-batch loses that batch's work and strands the
 // project; stopping cleanly lets the caller resume from where we left off.
 const TIME_BUDGET_MS = (maxDuration - 45) * 1000;
+
+// Reserve the last 90 seconds for the combined AI post-pass that runs ONCE
+// after all marketplace-API batches complete (instead of once per batch).
+// This lets Walmart process ~800+ products per run instead of ~100.
+const LOOKUP_BUDGET_MS = TIME_BUDGET_MS - 90_000;
 
 function isAmazonMarketplace(marketplace: string): boolean {
   return marketplace === "amazon" || marketplace === "amazon_us";
@@ -109,29 +114,39 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   let attempted = 0;
   let ranOutOfTime = false;
 
+  // Accumulate results from all batches so the AI post-pass runs once at the end.
+  const allRawResults: Awaited<ReturnType<typeof verifyProducts>> = [];
+  const allAttemptedProducts: typeof allProducts = [];
+
+  // One download cache for the whole run: vendor images are compared against
+  // several marketplace angles, and marketplace CDN URLs recur across products,
+  // so this removes most of the repeated image-fetch I/O.
   const { withImageCache } = await import("@/lib/ai/compare-images");
 
   try {
-    // One download cache for the whole run: vendor images are compared against
-    // several marketplace angles, and marketplace CDN URLs recur across
-    // products, so this removes most of the repeated image-fetch I/O. The cache
-    // is discarded when the run returns rather than living on the module.
     await withImageCache(async () => {
       for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
-        // Stop before the platform kills us mid-batch. Work already committed is
-        // kept, and the response tells the caller how much is left to resume.
-        if (Date.now() - startedAt > TIME_BUDGET_MS) {
+        // Reserve time for the combined AI post-pass by cutting off new batches
+        // at LOOKUP_BUDGET_MS instead of the full TIME_BUDGET_MS.
+        if (Date.now() - startedAt > LOOKUP_BUDGET_MS) {
           ranOutOfTime = true;
           break;
         }
         const batch = allProducts.slice(i, i + BATCH_SIZE);
         attempted += batch.length;
-        const results = await verifyProducts(project.marketplace, batch as Parameters<typeof verifyProducts>[1]);
+
+        // Skip AI passes here — they run once after all batches below.
+        const results = await verifyProducts(
+          project.marketplace,
+          batch as Parameters<typeof verifyProducts>[1],
+          { skipAiPasses: true },
+        );
 
         const processed = results.filter((r) => r.status !== "skipped");
         totalSkipped += results.length - processed.length;
 
-        // Save results in small sub-batches to avoid overwhelming the DB
+        // Save base results immediately so progress is preserved even if the
+        // AI pass below runs out of time.
         for (let j = 0; j < processed.length; j += 10) {
           const sub = processed.slice(j, j + 10);
           await Promise.all(
@@ -160,8 +175,39 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         }
 
         totalProcessed += processed.length;
+        allRawResults.push(...results);
+        allAttemptedProducts.push(...batch);
       }
     });
+
+    // Single combined AI post-pass on all gathered results.
+    // Previously this ran inside each batch (~60-90s/batch × 22 batches for 1100
+    // products = budget exhausted after 2 batches). Now it runs once here.
+    if (allRawResults.length > 0) {
+      await applyAiVerificationPasses(
+        allRawResults,
+        allAttemptedProducts as Parameters<typeof applyAiVerificationPasses>[1],
+        project.marketplace,
+      );
+
+      // Persist the AI-updated status and field annotations.
+      // liveData / asin / price / upc were already saved in the batch loop above.
+      const aiProcessed = allRawResults.filter((r) => r.status !== "skipped");
+      for (let j = 0; j < aiProcessed.length; j += 10) {
+        const sub = aiProcessed.slice(j, j + 10);
+        await Promise.all(
+          sub.map((r) =>
+            prisma.product.update({
+              where: { id: r.productId },
+              data: {
+                verifyStatus: r.status,
+                verifyFields: r.fields as object[],
+              },
+            })
+          )
+        );
+      }
+    }
 
     const remaining = allProducts.length - attempted;
     const complete = remaining === 0;
