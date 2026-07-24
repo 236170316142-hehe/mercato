@@ -692,9 +692,21 @@ async function fillTemplateXlsx(
   }
   const aiMatches = aiQueries.length ? await matchDropdownValues(aiQueries) : new Map<string, string>();
 
+  const isTemu = marketplace.toLowerCase() === "temu";
+
   // Compute the final value for a column (dropdown-safe)
   const colVal = (p: Product, col: Column, letter: string): string => {
-    const raw = String(getProductField(p, col.key) ?? "");
+    let raw = String(getProductField(p, col.key) ?? "");
+
+    // Temu-specific field coercions applied before dropdown matching
+    if (isTemu) {
+      const nk = normalizeKey(col.key);
+      // Status: Temu uses "1" (on-sale) / "0" (off-sale) — map the generic "on_sale" default
+      if (nk === "status" && (raw === "on_sale" || raw === "")) raw = "1";
+      // Category: the template's top-level dropdown needs only level-1 of the path
+      if (nk === "category" && raw.includes(" > ")) raw = raw.split(" > ")[0]?.trim() ?? raw;
+    }
+
     const options = dropdowns.get(letter);
     if (!options) return raw;
     if (!raw.trim()) return "";
