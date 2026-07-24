@@ -406,25 +406,72 @@ async function fillTemplateXlsx(
   if (!sdMatch) return bailToScratch(products, columns, marketplace, "template sheet has no <sheetData> block");
   const rowMatches = [...sdMatch[1].matchAll(/<row\b[^>]*\br="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)];
 
-  // Header = row with the most literal (non-formula) cells
-  let headerRowNum = 1;
-  let headerRowXml = "";
-  let maxLiteral = 0;
-  for (const rm of rowMatches) {
-    const count = (rm[0].match(/<c\b/g)?.length ?? 0) - (rm[0].match(/<f>/g)?.length ?? 0);
-    if (count > maxLiteral) { maxLiteral = count; headerRowNum = parseInt(rm[1]); headerRowXml = rm[0]; }
-  }
-  if (!headerRowXml) return bailToScratch(products, columns, marketplace, "could not identify a header row in the template");
+  // Read a row's cells as letter→label, resolving shared-string refs.
+  const readRowLabels = (rowXml: string): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const cm of rowXml.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const [, letter, attrs, content] = cm;
+      const vVal = content.match(/<v>(\d+)<\/v>/)?.[1] ?? "";
+      const tVal = content.match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] ?? "";
+      const label = /\bt="s"/.test(attrs) && vVal ? (ssArr[parseInt(vVal)] ?? "") : xmlUnescape(tVal || vVal);
+      if (label) out.set(letter, label);
+    }
+    return out;
+  };
 
-  // Map column letter → header label (resolve shared-string refs)
-  const colLetterToHeader = new Map<string, string>();
-  for (const cm of headerRowXml.matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)>([\s\S]*?)<\/c>/g)) {
-    const [, letter, attrs, content] = cm;
-    const vVal = content.match(/<v>(\d+)<\/v>/)?.[1] ?? "";
-    const tVal = content.match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] ?? "";
-    const label = /\bt="s"/.test(attrs) && vVal ? (ssArr[parseInt(vVal)] ?? "") : xmlUnescape(tVal || vVal);
-    if (label) colLetterToHeader.set(letter, label);
+  // ── Header row = the row that best MATCHES our stored column definitions ────
+  // Picking "the row with the most cells" breaks on real marketplace templates
+  // that carry several banner/section rows above the real header. Walmart's
+  // "MP Item Setup by Match" is the case in point: row 2 holds section markers
+  // (SKU / Required / Optional), row 4 holds display labels ("Product ID"),
+  // and row 5 holds the field codes ("productId") that the upload path stores
+  // as the template's columns. Scoring by cell count chose row 2 and matched
+  // almost nothing, so products were written into the header block instead of
+  // the data area. Score each candidate row by how many stored columns it
+  // actually resolves, and fall back to cell count only when nothing matches.
+  const wantedKeys = new Set<string>();
+  for (const col of columns) {
+    wantedKeys.add(normalizeKey(col.label));
+    wantedKeys.add(normalizeKey(col.key));
   }
+
+  let headerRowNum = 0;
+  let headerRowXml = "";
+  let colLetterToHeader = new Map<string, string>();
+  let bestMatches = 0;
+  let bestCount = 0;
+
+  for (const rm of rowMatches) {
+    const labels = readRowLabels(rm[0]);
+    if (!labels.size) continue;
+    let matches = 0;
+    for (const label of labels.values()) {
+      if (wantedKeys.has(normalizeKey(label))) matches++;
+    }
+    const count = labels.size;
+    // Prefer more stored-column matches; break ties on the denser row.
+    if (matches > bestMatches || (matches === bestMatches && matches > 0 && count > bestCount)) {
+      bestMatches = matches;
+      bestCount = count;
+      headerRowNum = parseInt(rm[1]);
+      headerRowXml = rm[0];
+      colLetterToHeader = labels;
+    }
+  }
+
+  // Nothing matched the stored columns — fall back to the old densest-row rule
+  // so templates whose headers drifted still produce the previous behaviour
+  // (and, if that also fails to match, bailToScratch below reports why).
+  if (bestMatches === 0) {
+    let maxLiteral = 0;
+    for (const rm of rowMatches) {
+      const count = (rm[0].match(/<c\b/g)?.length ?? 0) - (rm[0].match(/<f>/g)?.length ?? 0);
+      if (count > maxLiteral) { maxLiteral = count; headerRowNum = parseInt(rm[1]); headerRowXml = rm[0]; }
+    }
+    colLetterToHeader = headerRowXml ? readRowLabels(headerRowXml) : new Map();
+  }
+
+  if (!headerRowXml) return bailToScratch(products, columns, marketplace, "could not identify a header row in the template");
 
   // ── Map template columns to our column definitions ─────────────────────────
   type ColEntry = { col: Column; letter: string };
@@ -547,6 +594,20 @@ async function fillTemplateXlsx(
   const headerStyles = new Set<string>();
   for (const cm of headerRowXml.matchAll(/\bs="(\d+)"/g)) headerStyles.add(cm[1]);
 
+  // A row that still carries long prose in every populated cell is the
+  // template's per-column help text, not a data row. Walmart's template puts
+  // one directly under the field-code header ("Alphanumeric, 50 characters -
+  // The string of letters…"); writing products there destroys the instructions
+  // and leaves the real entry area empty. Treat any row whose populated cells
+  // average well beyond a plausible data value as part of the header block.
+  const isHelpTextRow = (rowXml: string): boolean => {
+    const labels = readRowLabels(rowXml);
+    if (labels.size < 2) return false;
+    const lens = [...labels.values()].map((v) => v.length);
+    const avg = lens.reduce((a, b) => a + b, 0) / lens.length;
+    return avg > 80;
+  };
+
   let firstDataRowNum = headerRowNum + 1;
   for (const rm of rowMatches) {
     const rn = parseInt(rm[1]);
@@ -554,8 +615,8 @@ async function fillTemplateXlsx(
     // Count how many cells in this row carry a header-type style vs. a different style
     const cellStylesInRow = [...rm[0].matchAll(/\bs="(\d+)"/g)].map(m => m[1]);
     const nonHeaderCells = cellStylesInRow.filter(s => !headerStyles.has(s)).length;
-    if (cellStylesInRow.length > 0 && nonHeaderCells === 0) {
-      // Every cell has a header style → this is a subheader / field-code row, keep it
+    if ((cellStylesInRow.length > 0 && nonHeaderCells === 0) || isHelpTextRow(rm[0])) {
+      // Subheader / field-code / help-text row → keep it, data starts below
       firstDataRowNum = rn + 1;
     } else {
       // First row with different (data) styling — this is where products go
@@ -572,11 +633,28 @@ async function fillTemplateXlsx(
     if (rn >= firstDataRowNum) allDataRows.set(rn, rm[0]);
   }
 
-  // Borrow pink style from the first actual data row for rows beyond the template.
+  // Borrow the data-entry style per column for rows beyond the template.
+  // Scan EVERY template data row, not just the first: templates often leave
+  // some columns absent from the first row but styled further down, and a
+  // column we never see styled would otherwise export unformatted.
   const borrowedStyle = new Map<string, string>(); // letter → s-index
-  for (const cm of (allDataRows.get(firstDataRowNum) ?? "").matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
-    const s = cm[2].match(/\bs="(\d+)"/)?.[1];
-    if (s) borrowedStyle.set(cm[1], s);
+  for (const rn of [...allDataRows.keys()].sort((a, b) => a - b)) {
+    for (const cm of (allDataRows.get(rn) ?? "").matchAll(/<c\b[^>]*\br="([A-Z]+)\d+"([^>]*)/g)) {
+      const s = cm[2].match(/\bs="(\d+)"/)?.[1];
+      if (s && !borrowedStyle.has(cm[1])) borrowedStyle.set(cm[1], s);
+    }
+  }
+  // Columns the template never styles in its data area (Walmart ships rows with
+  // only D/F/G/H) still need the shaded entry format, or the export shows a few
+  // styled columns beside plain white ones. Fall back to the most common data
+  // style so every mapped column matches the template's look.
+  const styleFreq = new Map<string, number>();
+  for (const s of borrowedStyle.values()) styleFreq.set(s, (styleFreq.get(s) ?? 0) + 1);
+  const dominantDataStyle = [...styleFreq.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (dominantDataStyle) {
+    for (const { letter } of colEntries) {
+      if (!borrowedStyle.has(letter)) borrowedStyle.set(letter, dominantDataStyle);
+    }
   }
 
   const outputRows: string[] = [];
@@ -653,63 +731,65 @@ async function fillTemplateXlsx(
     const rn = firstDataRowNum + i;
     const tplRow = allDataRows.get(rn);
 
+    // ── Rebuild the row cell-by-cell in strict column order ────────────────────
+    // The previous in-place patch only wrote into cells the template row already
+    // contained. Walmart's template ships data rows holding just D, F, G and H,
+    // so every other mapped column (E, I, J, K, …) was silently dropped and the
+    // export came out with a single filled column. Appending the missing cells
+    // before </row> was no better: OOXML requires cells in ascending column
+    // order, and an out-of-order row makes Excel treat the sheet as damaged.
+    //
+    // Rebuilding keeps the row's own <row> attributes (height, custom format)
+    // and each existing cell's style, while guaranteeing every mapped column is
+    // present and correctly ordered.
+    const rowAttrs = tplRow
+      ? (tplRow.match(/<row\b([^>]*)>/)?.[1] ?? ` r="${rn}"`)
+      : ` r="${rn}"`;
+
+    // Existing cell styles for this row, by column letter.
+    const rowCellStyle = new Map<string, string>();
     if (tplRow) {
-      // ── In-place modification: keep ALL original cells (preserves every s="N" style,
-      // border, background colour, merge, etc.) then patch only our data columns. ──
-      // Step 1: clear all cell values (same logic as the "clear excess rows" below)
-      let rowXml = tplRow
-        .replace(/<v>[\s\S]*?<\/v>/g, "")
-        .replace(/<f>[\s\S]*?<\/f>/g, "")
-        .replace(/<is>[\s\S]*?<\/is>/g, "")
-        .replace(/\s*\bt="[^"]*"/g, "")
-        .replace(/<c\b([^>]*)><\/c>/g, "<c$1/>");
-
-      // Step 2: write product values into the relevant cells
-      for (const { col, letter } of colEntries) {
-        const val = colVal(p, col, letter);
-        const ref = `${letter}${rn}`;
-        const isLargeId = /^\d{10,}$/.test(val);
-        const isNum = val !== "" && !isLargeId && !Number.isNaN(Number(val));
-
-        // Match either self-closing <c r="X1" s="N"/> or paired <c r="X1" s="N">…</c>
-        const cellPat = new RegExp(`<c\\b([^>]*\\br="${ref}"[^>]*)(?:/>|>[\\s\\S]*?<\\/c>)`);
-        const cm = rowXml.match(cellPat);
-
-        let newCell: string;
-        if (val === "") {
-          newCell = cm ? `<c${cm[1]}/>` : "";
-        } else if (isNum) {
-          newCell = cm ? `<c${cm[1]}><v>${x(val)}</v></c>` : `<c r="${ref}"><v>${x(val)}</v></c>`;
-        } else {
-          newCell = cm ? `<c${cm[1]} t="s"><v>${ssIdx(val)}</v></c>` : `<c r="${ref}" t="s"><v>${ssIdx(val)}</v></c>`;
-        }
-
-        if (cm) {
-          rowXml = rowXml.replace(cm[0], newCell);
-        } else if (newCell) {
-          // Cell not in template — append before </row> (rare; Excel will auto-sort on open)
-          rowXml = rowXml.replace("</row>", `${newCell}</row>`);
-        }
+      for (const cm of tplRow.matchAll(/<c\b([^>]*?)(?:\/>|>[\s\S]*?<\/c>)/g)) {
+        const letter = cm[1].match(/\br="([A-Z]+)\d+"/)?.[1];
+        const s = cm[1].match(/\bs="(\d+)"/)?.[1];
+        if (letter && s) rowCellStyle.set(letter, s);
       }
-      outputRows.push(rowXml);
-    } else {
-      // No template row at this position — build a new row with borrowed styles
-      const getStyle = (letter: string) => {
-        const s = borrowedStyle.get(letter);
-        return s ? ` s="${s}"` : "";
-      };
-      const cells = colEntries.map(({ col, letter }) => {
-        const val = colVal(p, col, letter);
-        const ref = `${letter}${rn}`;
-        const isLargeId = /^\d{10,}$/.test(val);
-        const sAttr = getStyle(letter);
-        if (val !== "" && !isLargeId && !Number.isNaN(Number(val))) {
-          return `<c r="${ref}"${sAttr}><v>${x(val)}</v></c>`;
-        }
-        return `<c r="${ref}"${sAttr} t="s"><v>${ssIdx(val)}</v></c>`;
-      }).join("");
-      outputRows.push(`<row r="${rn}">${cells}</row>`);
     }
+    // Style precedence: this row's own cell → the style borrowed from the first
+    // template data row → none. This is what keeps the shaded data-entry
+    // formatting on columns the template left empty.
+    const styleFor = (letter: string): string => {
+      const s = rowCellStyle.get(letter) ?? borrowedStyle.get(letter);
+      return s ? ` s="${s}"` : "";
+    };
+
+    // Union of template columns and our mapped columns, ordered left-to-right so
+    // untouched template cells (and their styling) survive alongside new ones.
+    const letters = new Set<string>([...rowCellStyle.keys()]);
+    for (const { letter } of colEntries) letters.add(letter);
+    const ordered = [...letters].sort((a, b) =>
+      a.length !== b.length ? a.length - b.length : a.localeCompare(b),
+    );
+    const valueByLetter = new Map(
+      colEntries.map(({ col, letter }) => [letter, colVal(p, col, letter)]),
+    );
+
+    const cells = ordered.map((letter) => {
+      const ref = `${letter}${rn}`;
+      const sAttr = styleFor(letter);
+      const val = valueByLetter.get(letter);
+      // Column the template styles but we have no data for → keep it empty so
+      // the cell (and its fill/border) is preserved.
+      if (val === undefined || val === "") return `<c r="${ref}"${sAttr}/>`;
+      // Long numeric identifiers (UPC/GTIN) must stay text or Excel shows 6.36E+11.
+      const isLargeId = /^\d{10,}$/.test(val);
+      const isNum = !isLargeId && !Number.isNaN(Number(val));
+      return isNum
+        ? `<c r="${ref}"${sAttr}><v>${x(val)}</v></c>`
+        : `<c r="${ref}"${sAttr} t="s"><v>${ssIdx(val)}</v></c>`;
+    }).join("");
+
+    outputRows.push(`<row${rowAttrs}>${cells}</row>`);
   }
 
   // Remaining pre-formatted rows beyond the product count — clear values but
@@ -755,6 +835,33 @@ async function fillTemplateXlsx(
 
   // Also update the sheet-level <autoFilter> (some templates skip xl/tables/ entirely)
   sheetXml = sheetXml.replace(/(<autoFilter\b[^>]*\bref=")([^"]+)(")/i, (_, pre, ref, post) => `${pre}${extendRef(ref)}${post}`);
+
+  // ── Extend dataValidation ranges to cover every exported row ────────────────
+  // Templates ship a fixed validation window (Walmart's is E7:E1006). Exporting
+  // more products than that leaves the overflow rows with no dropdown, so the
+  // marketplace rejects values Excel never constrained. Widen each range's end
+  // row the same way the table/autoFilter refs are widened above.
+  const extendSqref = (sqref: string): string =>
+    sqref.split(/\s+/).filter(Boolean).map((part) => {
+      const m = part.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/i);
+      if (!m) return part;
+      // Only stretch ranges that already end at or beyond the data area — never
+      // shrink one, and never touch header-only ranges.
+      const end = parseInt(m[4], 10);
+      return end >= firstDataRowNum && end < lastDataRow
+        ? `${m[1]}${m[2]}:${m[3]}${lastDataRow}`
+        : part;
+    }).join(" ");
+
+  sheetXml = sheetXml.replace(
+    /(<(?:\w+:)?dataValidation\b[^>]*\bsqref=")([^"]+)(")/gi,
+    (_, pre, ref, post) => `${pre}${extendSqref(ref)}${post}`,
+  );
+  // x14 validations carry the range in an <xm:sqref> element instead
+  sheetXml = sheetXml.replace(
+    /(<(?:\w+:)?sqref[^>]*>)([\s\S]*?)(<\/(?:\w+:)?sqref>)/gi,
+    (_, pre, ref, post) => `${pre}${extendSqref(ref.trim())}${post}`,
+  );
 
   // ── Write modified files back into the ZIP ─────────────────────────────────
   tplZip.file(sheetPath, sheetXml);
