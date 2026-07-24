@@ -112,10 +112,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ? prisma.exportTemplate.findMany({
               where: { marketplace: { in: mpFamily, mode: "insensitive" }, OR: templateOwnerOr },
               select: templateSelect,
+              orderBy: { createdAt: "asc" },
             }) as Promise<TemplateRow[]>
           : prisma.exportTemplate.findMany({
               where: { id: { in: templateIds }, OR: templateOwnerOr },
               select: templateSelect,
+              orderBy: { createdAt: "asc" },
             }) as Promise<TemplateRow[]>,
       ]);
 
