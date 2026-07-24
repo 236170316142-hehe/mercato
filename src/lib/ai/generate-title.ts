@@ -78,9 +78,19 @@ export async function generateMarketplaceTitles(
 
   const cfg = TITLE_RULES[marketplace.toLowerCase()] ?? TITLE_RULES.walmart;
   const BATCH = 15;
+  // Batches were previously awaited one at a time, so a 500-product export made
+  // ~34 serial model calls (several minutes) before ZIP generation could even
+  // start — the single biggest cause of export timeouts. The batches are fully
+  // independent, so run several in flight at once.
+  const CONCURRENCY = 6;
 
+  // Precompute every batch's payload, then run them in bounded-concurrency waves.
+  const batches: Product[][] = [];
   for (let i = 0; i < products.length; i += BATCH) {
-    const batch = products.slice(i, i + BATCH);
+    batches.push(products.slice(i, i + BATCH));
+  }
+
+  const runBatch = async (batch: Product[], batchIndex: number): Promise<void> => {
     const input = batch.map((p) => {
       const vd = (p.vendorData as Record<string, unknown> | null) ?? null;
       return {
@@ -130,12 +140,19 @@ ${JSON.stringify(input, null, 2)}`,
         }
       }
     } catch (err) {
-      console.error(`[generate-title] batch ${i}–${i + BATCH} failed:`, err);
+      const start = batchIndex * BATCH;
+      console.error(`[generate-title] batch ${start}–${start + batch.length} failed:`, err);
       // Fall through — products that fail keep their original vendor name.
     }
+  };
 
-    // Yield between batches so the event loop stays responsive.
-    await new Promise<void>((r) => setTimeout(r, 0));
+  // Bounded-concurrency waves. Failures are already swallowed per batch, so one
+  // bad batch never takes down the rest of the export.
+  for (let i = 0; i < batches.length; i += CONCURRENCY) {
+    const wave = batches.slice(i, i + CONCURRENCY);
+    await Promise.all(wave.map((b, j) => runBatch(b, i + j)));
+    // Yield between waves so the event loop stays responsive to status polls.
+    await new Promise<void>((r) => setImmediate(r));
   }
 
   return titleMap;
