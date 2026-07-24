@@ -8,6 +8,16 @@ type ExportJob = {
   /** Last time the job reported progress — lets the client distinguish a
    *  still-working job from a genuinely stalled one. */
   updatedAt: number;
+  /**
+   * File extension of the stored payload ("zip", "xlsx", "csv").
+   *
+   * A single-file export (Walmart always produces one sheet) is served as the
+   * bare spreadsheet rather than a ZIP holding one entry, so the download is
+   * something the user can open directly.
+   */
+  extension?: string;
+  /** MIME type matching `extension`. */
+  contentType?: string;
 };
 
 // Module-level singleton — survives across requests in the same Node.js process.
@@ -33,9 +43,22 @@ export function setJobPhase(id: string, phase: string): void {
   }
 }
 
-export function resolveJob(id: string, zip: Buffer): void {
+export function resolveJob(
+  id: string,
+  zip: Buffer,
+  meta?: { extension?: string; contentType?: string },
+): void {
   const j = jobs.get(id);
-  if (j) jobs.set(id, { ...j, status: "done", zip, updatedAt: Date.now() });
+  if (j) {
+    jobs.set(id, {
+      ...j,
+      status: "done",
+      zip,
+      extension: meta?.extension ?? "zip",
+      contentType: meta?.contentType ?? "application/zip",
+      updatedAt: Date.now(),
+    });
+  }
 }
 
 export function rejectJob(id: string, error: string): void {

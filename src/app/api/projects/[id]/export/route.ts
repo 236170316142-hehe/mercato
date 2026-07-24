@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import type { ExportTemplate } from "@prisma/client";
-import { generateCategoryZip, generateExportZip, generateFlatCategoryZip, generateFlatExport, generateSingleTemplateExport, type TemplateRow } from "@/lib/export/zip";
+import { generateCategoryZip, generateExportZip, generateFlatCategoryZip, generateFlatExport, generateSingleTemplateExport, unwrapSingleFileZip, type TemplateRow } from "@/lib/export/zip";
 import { createJob, resolveJob, rejectJob, getJob, setJobPhase } from "@/lib/export/job-store";
 import { buildDownloadName, contentDisposition } from "@/lib/export/filename";
 
@@ -40,15 +40,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     where: { id },
     select: { name: true, marketplace: true },
   });
+  // Single-file exports are served as the spreadsheet itself, so the extension
+  // and MIME type follow whatever the job actually stored.
+  const extension = job.extension ?? "zip";
+  const contentType = job.contentType ?? "application/zip";
   const filename = buildDownloadName({
     projectName: meta?.name,
     marketplace: meta?.marketplace,
-    extension: "zip",
+    extension,
   });
 
   return new Response(job.zip as unknown as BodyInit, {
     headers: {
-      "Content-Type": "application/zip",
+      "Content-Type": contentType,
       "Content-Disposition": contentDisposition(filename),
     },
   });
@@ -178,7 +182,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         zipBuffer = await generateExportZip(project.products, allTemplates as unknown as ExportTemplate[], projectMeta.marketplace) as Buffer;
       }
 
-      resolveJob(jobId, zipBuffer as Buffer);
+      // A one-file export (Walmart always produces a single sheet) is delivered
+      // as that spreadsheet rather than a ZIP the user has to unpack first.
+      const payload = await unwrapSingleFileZip(zipBuffer as Buffer);
+      resolveJob(jobId, payload.buffer, {
+        extension: payload.extension,
+        contentType: payload.contentType,
+      });
       await prisma.project.update({ where: { id }, data: { status: "done" } });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
