@@ -1778,3 +1778,58 @@ function sanitize(name: string): string {
 function x(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
+
+// ── Single-file unwrapping ───────────────────────────────────────────────────
+
+const MIME_BY_EXT: Record<string, string> = {
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+  csv: "text/csv",
+  tsv: "text/tab-separated-values",
+};
+
+export type ExportPayload = {
+  buffer: Buffer;
+  extension: string;
+  contentType: string;
+  /** Original entry name when the ZIP was unwrapped; null when kept as a ZIP. */
+  innerName: string | null;
+};
+
+/**
+ * Serve a one-file export as that file, not as a ZIP containing it.
+ *
+ * Marketplaces that produce a single sheet (Walmart always does — one template,
+ * one output) previously delivered a ZIP the user had to unpack to reach the
+ * one spreadsheet inside. When the archive holds exactly one entry, hand back
+ * that entry directly; multi-file exports are returned untouched.
+ */
+export async function unwrapSingleFileZip(zipBuffer: Buffer): Promise<ExportPayload> {
+  const asZip: ExportPayload = {
+    buffer: zipBuffer,
+    extension: "zip",
+    contentType: "application/zip",
+    innerName: null,
+  };
+  try {
+    const zip = await JSZip.loadAsync(zipBuffer);
+    const entries = Object.values(zip.files).filter((f) => !f.dir);
+    if (entries.length !== 1) return asZip;
+
+    const only = entries[0];
+    const ext = (only.name.split(".").pop() ?? "").toLowerCase();
+    // Only unwrap formats we can label correctly — an unknown extension is
+    // safer left inside the ZIP than served with a wrong content type.
+    if (!MIME_BY_EXT[ext]) return asZip;
+
+    return {
+      buffer: await only.async("nodebuffer"),
+      extension: ext,
+      contentType: MIME_BY_EXT[ext],
+      innerName: only.name,
+    };
+  } catch {
+    // Unreadable archive — pass the original through rather than failing the export.
+    return asZip;
+  }
+}

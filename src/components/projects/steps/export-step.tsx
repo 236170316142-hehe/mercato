@@ -160,16 +160,37 @@ export function ExportStep({ projectId, projectName, marketplace, products, proj
 
         const contentType = pollRes.headers.get("content-type") ?? "";
 
-        if (contentType.includes("application/zip")) {
+        // Anything that isn't a JSON status update is the finished export. A
+        // single-file export (Walmart) arrives as the spreadsheet itself rather
+        // than a ZIP, so match on "not JSON" instead of a fixed ZIP type.
+        if (pollRes.ok && !contentType.includes("application/json")) {
           const blob = await pollRes.blob();
+          const isZip = contentType.includes("application/zip");
+          // Prefer the server's own filename so both sides can never disagree
+          // about the extension; fall back to rebuilding it locally.
+          const disposition = pollRes.headers.get("content-disposition") ?? "";
+          const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+          const plainName = disposition.match(/filename="([^"]+)"/i)?.[1];
+          const serverName = encodedName
+            ? decodeURIComponent(encodedName)
+            : plainName;
+          const filename = serverName || buildDownloadName({
+            projectName, marketplace, extension: isZip ? "zip" : "xlsx",
+          });
+
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = buildDownloadName({ projectName, marketplace, extension: "zip" });
+          a.download = filename;
           a.click();
           URL.revokeObjectURL(url);
-          const fileCount = usesCategoryZip ? categories.length : 1;
-          toast.success(`ZIP downloaded — ${fileCount} file${fileCount !== 1 ? "s" : ""}`);
+
+          if (isZip) {
+            const fileCount = usesCategoryZip ? categories.length : 1;
+            toast.success(`ZIP downloaded — ${fileCount} file${fileCount !== 1 ? "s" : ""}`);
+          } else {
+            toast.success(`Downloaded ${filename}`);
+          }
           return;
         }
 
@@ -212,11 +233,13 @@ export function ExportStep({ projectId, projectName, marketplace, products, proj
     }
   }
 
+  // Multi-file marketplaces ship a ZIP; single-file ones (Walmart) download the
+  // spreadsheet directly, so the label shouldn't promise an archive.
   const buttonLabel = loading
-    ? (statusMsg || "Generating ZIP…")
+    ? (statusMsg || (usesCategoryZip ? "Generating ZIP…" : "Generating file…"))
     : usesCategoryZip
       ? `Download ZIP (${categories.length} file${categories.length !== 1 ? "s" : ""})`
-      : `Download ZIP (${products.length} product${products.length !== 1 ? "s" : ""})`;
+      : `Download Excel (${products.length} product${products.length !== 1 ? "s" : ""})`;
 
   return (
     <div className="p-4 sm:p-8">
