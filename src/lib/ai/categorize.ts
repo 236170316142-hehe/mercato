@@ -256,23 +256,18 @@ async function categorizeBatchWithContext(
   // Temu and Best Buy share the same category sheet (temu_categories.csv).
   if ((isTemu || isBestBuy) && availableCategories?.length) {
     const taxonomy = formatTemuTaxonomyForPrompt();
-    // Force the model to ALWAYS pick the closest leaf for physical products.
-    // "Uncategorized" is reserved for truly non-catalog items, so borderline
-    // products (hats, costumes, cultural/novelty apparel) resolve consistently
-    // instead of flipping between a category and "No match" across runs.
     const closestMatchRule = `
-DECISION RULES (deterministic — follow exactly, in order):
-1. Every physical retail product on this sheet MUST be assigned to its closest matching leaf path. Do NOT return "Uncategorized" for a normal sellable product.
-2. Pick the SINGLE most specific leaf whose product type matches. If several fit, choose the one that matches the product's core noun (e.g. a "hat/cap/tarboosh/fez/top hat" → a "Hats & Caps" leaf; a "kipah/kippah/yarmulke" → the closest headwear/accessory leaf).
-3. Costume, party, cultural, religious, or dress-up apparel for children → the closest "Kids' Costumes" or kids clothing leaf. For adults → the closest costume/clothing leaf.
-4. If two leaves are equally plausible, ALWAYS choose the one that comes first alphabetically by full path — never leave it to chance.
-5. Use "Uncategorized" ONLY for non-catalog items (raw food, services, gift cards, digital-only) — essentially never for physical goods.`;
-    categorySection = strictMode
-      ? `EXACTLY one leaf path from this category taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory"):
-
-${taxonomy}
-${closestMatchRule}`
-      : `exactly one leaf path from this category taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory", e.g. "Women's Clothing > Tops > T-Shirts"):
+MANDATORY ASSIGNMENT RULES:
+1. Every physical product MUST get a leaf path. NEVER output "Uncategorized" for a real sellable item.
+2. Focus on what the product physically IS (its core noun) — not its color, brand, or audience. Examples by product type:
+   - Any hat, cap, headwear (baseball cap, beanie, sun hat, top hat, fez, tarboosh, fedora, kipah/kippah, yarmulke, turban, beret) → "Jewelry & Accessories > Hats & Caps > [closest leaf]"
+   - Any crown, tiara, diadem, headpiece → "Jewelry & Accessories > Crowns & Tiaras > [closest leaf]"
+   - Any children's costume, dress-up outfit, novelty suit → "Holidays & Party > Costumes & Dress-Up > Kids' Costumes"
+   - Any adult costume → "Holidays & Party > Costumes & Dress-Up > Adults' Costumes"
+   - Cultural/religious apparel accessory → "Jewelry & Accessories > Hats & Caps > Religious & Cultural Hats"
+3. Do NOT assign based on the audience (child/adult) — assign based on what the ITEM is.
+4. If two leaves are equally good, pick whichever comes first alphabetically.`;
+    categorySection = `exactly one leaf path from this category taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory"):
 
 ${taxonomy}
 ${closestMatchRule}`;
@@ -323,6 +318,12 @@ STEP 2 — Search the taxonomy list for a leaf (or path segment) with that same 
 STEP 3 — If exactly one path contains that leaf (e.g. Daybeds only under Baby & Kids), YOU MUST use that path. Do not pick a "similar" adult Furniture path like Sofas.
 STEP 4 — Only if no product-type leaf matches, fall back to the closest listed path — still from the list only.
 Do NOT use outside assumptions (adult daybed → living room sofas, etc.). The taxonomy is the source of truth.`
+    : isTemu || isBestBuy
+    ? `For EACH product, follow these steps in order:
+STEP 1 — Identify what the product physically IS. State the core noun (e.g. "top hat", "kippah", "crown", "costume suit", "necklace"). Ignore audience (kids/adults) and color at this step.
+STEP 2 — Find the taxonomy section that covers that physical object type. Example: any hat → look in "Jewelry & Accessories > Hats & Caps"; any crown/tiara → "Jewelry & Accessories > Crowns & Tiaras"; any kids costume → "Holidays & Party > Costumes & Dress-Up".
+STEP 3 — Pick the single leaf within that section that most closely matches. Copy it character-for-character.
+IMPORTANT: Base the category on WHAT the item is, not who it's for. A hat for a child is still a hat → Hats & Caps, not Kids' Clothing.`
     : `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
 
   const mathisSizeRule = isMathis ? `
@@ -345,18 +346,38 @@ RULES:
   const usesTaxonomySheet = isTemu || isMathis || isBestBuy;
 
   const jsonExample = (isTemu || isBestBuy)
-    ? `[{"index":1,"category":"Women's Clothing > Tops > T-Shirts","path":"Women's Clothing > Tops > T-Shirts","confidence":0.95},...]`
+    ? `[{"index":1,"category":"Electronics > Audio > Wireless Earbuds","path":"Electronics > Audio > Wireless Earbuds","confidence":0.95},{"index":2,"category":"Jewelry & Accessories > Hats & Caps > Baseball Caps","path":"Jewelry & Accessories > Hats & Caps > Baseball Caps","confidence":0.90},...]`
     : isMathis
     ? `[{"index":1,"category":"Baby & Kids > Kids Furniture > Daybeds","path":"Baby & Kids > Kids Furniture > Daybeds","confidence":0.95},...]`
     : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
 
   const pathHint = (isTemu || isBestBuy)
-    ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Women's Clothing > Tops > T-Shirts")`
+    ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Jewelry & Accessories > Crowns & Tiaras > Crowns" for a crown, "Holidays & Party > Costumes & Dress-Up > Kids' Costumes" for a children's costume, "Jewelry & Accessories > Hats & Caps > Religious & Cultural Hats" for a kipah or tarboosh)`
     : isMathis
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Baby & Kids > Kids Furniture > Daybeds" when the product is a daybed — because that is where Daybeds lives on the sheet)`
     : `- path: full path e.g. "Mathis Brothers > Seasonal"`;
 
-  const prompt = `${storeContext}
+  // For Temu/BestBuy, put the product list BEFORE the taxonomy so the AI
+  // reasons about each product's physical type first, then looks up the taxonomy.
+  // Putting products after a 660-path taxonomy causes the AI to anchor on the
+  // first taxonomy entries it encounters and apply them to all products.
+  const prompt = (isTemu || isBestBuy)
+    ? `${storeContext}
+
+${reasoningInstruction}
+
+Products to categorize:
+${list}
+
+Now assign each product into ${categorySection}.
+
+Respond ONLY with a JSON array — no markdown, no explanation:
+${jsonExample}
+${rules}
+${pathHint}
+- confidence: 0.0–1.0 (how certain you are about the match)
+- Return exactly ${products.length} items in the same order as the product list`
+    : `${storeContext}
 
 ${reasoningInstruction}
 
@@ -375,9 +396,10 @@ ${pathHint}
   const { text } = await generateText({
     model: anthropic(model),
     prompt,
-    // temperature 0 → deterministic output so the same product + sheet always
-    // yields the same category (keeps Temu and Best Buy results consistent).
-    temperature: 0,
+    // Temu/BestBuy/Mathis use a closed taxonomy — any valid path is correct.
+    // A small temperature (0.3) helps the AI reason through niche product types
+    // instead of anchoring on the first taxonomy entry seen at temperature=0.
+    temperature: usesTaxonomySheet ? 0.3 : 0,
     maxOutputTokens: usesTaxonomySheet ? 2500 : 2000,
   });
 
