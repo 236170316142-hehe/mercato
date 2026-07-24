@@ -4,6 +4,7 @@ import { loadMathisCategoryPaths } from "../ai/mathis-taxonomy";
 import { matchDropdownValues, dropdownKey, type DropdownQuery } from "../ai/match-dropdown";
 import { exportGroupOf } from "./category-group";
 import { ASIN_RE } from "../barcode";
+import { readXlsxGrid } from "../vendor/xlsx-lite";
 
 type Column = { key: string; label: string; required?: boolean };
 
@@ -354,7 +355,20 @@ async function fillTemplateXlsx(
     if (nm && target) definedNames.set(nm, target);
   }
 
-  const targetDef = sheetDefs.find(s => /^template$/i.test(s.name)) ?? sheetDefs[0];
+  // Pick the target sheet using the same scoring logic as the template upload
+  // (readXlsxGrid) so both agree on which sheet contains the product data.
+  // Multi-sheet templates (e.g. Instructions + Data) would otherwise cause
+  // fillTemplateXlsx to read from the wrong sheet → header mismatch → bailToScratch.
+  let preferredSheetName: string | null = null;
+  try {
+    const gridResult = await readXlsxGrid(fileData, 5);
+    preferredSheetName = gridResult.sheetName;
+  } catch { /* ignore — fall back below */ }
+
+  const targetDef =
+    (preferredSheetName ? sheetDefs.find(s => s.name === preferredSheetName) : null)
+    ?? sheetDefs.find(s => /^template$/i.test(s.name))
+    ?? sheetDefs[0];
   const sheetPath = targetDef ? rIdToTarget.get(targetDef.rId) : null;
   if (!sheetPath || !tplZip.file(sheetPath)) {
     return bailToScratch(
