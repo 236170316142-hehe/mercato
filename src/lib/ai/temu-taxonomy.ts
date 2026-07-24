@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, statSync } from "fs";
 import { join } from "path";
 
 /** Full Temu path: "Category > Subcategory > Sub-Subcategory" */
@@ -6,6 +6,7 @@ export type TemuCategoryPath = string;
 
 let cachedPaths: TemuCategoryPath[] | null = null;
 let cachedPromptBlock: string | null = null;
+let cachedMtime = 0;
 
 function csvPath(): string {
   return join(process.cwd(), "src/lib/ai/data/temu_categories.csv");
@@ -25,9 +26,17 @@ function parseCsvLine(line: string): string[] {
   return cols;
 }
 
-/** Load and cache every leaf path from temu_categories.csv. */
+/** Load and cache every leaf path from temu_categories.csv.
+ *  Automatically reloads if the CSV file has been modified on disk
+ *  so no server restart or admin endpoint call is needed after a CSV update. */
 export function loadTemuCategoryPaths(): TemuCategoryPath[] {
-  if (cachedPaths) return cachedPaths;
+  const mtime = statSync(csvPath()).mtimeMs;
+  if (cachedPaths && mtime === cachedMtime) return cachedPaths;
+
+  // CSV changed on disk (or first load) — invalidate and reload
+  cachedPaths = null;
+  cachedPromptBlock = null;
+  cachedMtime = mtime;
 
   const raw = readFileSync(csvPath(), "utf8");
   const paths: TemuCategoryPath[] = [];
