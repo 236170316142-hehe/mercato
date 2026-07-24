@@ -815,10 +815,11 @@ async function resolveXmlRangeDropdown(
 
 /** Extract plain text from a shared-string <si> element (handles simple + rich text). */
 function extractSsText(siXml: string): string {
-  const runs = [...siXml.matchAll(/<r>[\s\S]*?<t[^>]*>([\s\S]*?)<\/t>[\s\S]*?<\/r>/g)];
-  if (runs.length) return runs.map(m => xmlUnescape(m[1])).join("");
-  const tMatch = siXml.match(/<t[^>]*>([\s\S]*?)<\/t>/);
-  return tMatch ? xmlUnescape(tMatch[1]) : "";
+  let out = "";
+  const re = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(siXml))) out += xmlUnescape(m[1]);
+  return out;
 }
 
 function xmlUnescape(s: string): string {
