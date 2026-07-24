@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { authGuard } from "@/lib/auth-helpers";
-import { prisma } from "@/lib/db";
+import { prisma, inChunks } from "@/lib/db";
 import { categorizeProducts, type ProductInput } from "@/lib/ai/categorize";
 import { enrichSkuOnlyProducts, looksLikeSkuName } from "@/lib/ai/resolve-sku";
 import { hasCatalogVendor } from "@/lib/ai/vendor-catalog";
@@ -69,13 +69,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "No matching products found in CSV" }, { status: 400 });
   }
 
-  await Promise.all(
-    updates.map(u =>
-      prisma.product.update({
-        where: { id: u.id },
-        data: { marketplaceCategory: u.category, categoryPath: u.path, categorizedAt: new Date() },
-      })
-    )
+  // Chunked — a large CSV import would otherwise exhaust the pg pool.
+  await inChunks(updates, (u) =>
+    prisma.product.update({
+      where: { id: u.id },
+      data: { marketplaceCategory: u.category, categoryPath: u.path, categorizedAt: new Date() },
+    })
   );
   await prisma.project.update({ where: { id }, data: { status: "categorized" } });
 
@@ -221,17 +220,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         productInputs = enriched;
         enrichedCount = enrichments.length;
         if (enrichments.length > 0) {
-          await Promise.all(
-            enrichments.map((e) =>
-              prisma.product.update({
-                where: { id: e.productId },
-                data: {
-                  name: e.name,
-                  brand: e.brand,
-                  description: e.description,
-                },
-              }),
-            ),
+          await inChunks(enrichments, (e) =>
+            prisma.product.update({
+              where: { id: e.productId },
+              data: {
+                name: e.name,
+                brand: e.brand,
+                description: e.description,
+              },
+            }),
           );
         }
       }
@@ -270,18 +267,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
       }
 
-      await Promise.all(
-        results.map((r) =>
-          prisma.product.update({
-            where: { id: r.productId },
-            data: {
-              marketplaceCategory: r.category,
-              categoryPath: r.path,
-              categoryConfidence: r.confidence,
-              categorizedAt: new Date(),
-            },
-          })
-        )
+      // Chunked: issuing all ~1100 updates at once exhausts the pg connection
+      // pool and fails the whole run with "timeout exceeded when trying to connect".
+      await inChunks(results, (r) =>
+        prisma.product.update({
+          where: { id: r.productId },
+          data: {
+            marketplaceCategory: r.category,
+            categoryPath: r.path,
+            categoryConfidence: r.confidence,
+            categorizedAt: new Date(),
+          },
+        })
       );
 
       // Fold new results into the existing-category map so the response counts
