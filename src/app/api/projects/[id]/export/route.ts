@@ -3,7 +3,7 @@ import { authGuard } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/db";
 import type { ExportTemplate } from "@prisma/client";
 import { generateCategoryZip, generateExportZip, generateFlatCategoryZip, generateFlatExport, generateSingleTemplateExport, type TemplateRow } from "@/lib/export/zip";
-import { createJob, resolveJob, rejectJob, getJob } from "@/lib/export/job-store";
+import { createJob, resolveJob, rejectJob, getJob, setJobPhase } from "@/lib/export/job-store";
 import { buildDownloadName, contentDisposition } from "@/lib/export/filename";
 
 export const maxDuration = 300;
@@ -21,7 +21,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!job) return NextResponse.json({ error: "Job not found or expired" }, { status: 404 });
 
   if (job.status === "processing") {
-    return NextResponse.json({ status: "processing" });
+    // Echo the phase and a heartbeat so the client can show real progress and
+    // tell a slow-but-alive job apart from a stalled one.
+    return NextResponse.json({
+      status: "processing",
+      phase: job.phase ?? "Preparing…",
+      updatedAt: job.updatedAt,
+    });
   }
 
   if (job.status === "error") {
@@ -98,6 +104,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // Include fileData so category-zip exports can use fillTemplateXlsx and preserve
       // original template formatting, column widths, styles, and dropdown validations.
+      setJobPhase(jobId, "Loading products…");
       const templateSelect = { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true, fileData: true };
       const [project, allTemplates] = await Promise.all([
         prisma.project.findUnique({ where: { id }, include: { products: true } }),
@@ -118,6 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // instead of copying vendor titles word-for-word. Falls back to vendor name on error.
       if (mpLower === "walmart" && project.products.length > 0) {
         try {
+          setJobPhase(jobId, `Generating optimised titles for ${project.products.length} products…`);
           const { generateMarketplaceTitles } = await import("@/lib/ai/generate-title");
           const titleMap = await generateMarketplaceTitles("walmart", project.products);
           if (titleMap.size > 0) {
@@ -143,6 +151,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // Category-split marketplaces: products grouped by category, each group filled into
       // the closest matching uploaded template (one output file per template).
       const usesCategoryExport = isTemu || isBestBuy || isWalmart;
+
+      setJobPhase(jobId, "Building spreadsheet files…");
 
       let zipBuffer: Buffer;
       if (useTemplateIds && allTemplates.length) {

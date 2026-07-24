@@ -139,8 +139,18 @@ export function ExportStep({ projectId, projectName, marketplace, products, proj
       const { jobId } = (await startRes.json()) as { jobId: string };
       setStatusMsg("Processing files…");
 
-      const deadline = Date.now() + 5 * 60 * 1000;
-      while (Date.now() < deadline) {
+      // A fixed wall-clock deadline used to abandon exports that were still
+      // running fine — the ZIP finished server-side but nobody collected it, so
+      // the user saw "timed out" and got no file. Instead of a hard cap, give up
+      // only when the server stops making progress: each new phase (or any
+      // successful poll) resets the stall window.
+      const STALL_LIMIT_MS = 5 * 60 * 1000;  // no progress at all for 5 min → give up
+      const HARD_LIMIT_MS = 30 * 60 * 1000;  // absolute backstop
+      const startedAt = Date.now();
+      let lastProgressAt = Date.now();
+      let lastPhase = "";
+
+      while (Date.now() - startedAt < HARD_LIMIT_MS) {
         await new Promise((r) => setTimeout(r, 2500));
         if (!mountedRef.current) return;
 
@@ -169,9 +179,24 @@ export function ExportStep({ projectId, projectName, marketplace, products, proj
           return;
         }
 
-        const data = (await pollRes.json()) as { status: string; error?: string };
+        const data = (await pollRes.json()) as {
+          status: string; error?: string; phase?: string; updatedAt?: number;
+        };
         if (data.status === "error") {
           toast.error(data.error ?? "Export failed");
+          return;
+        }
+
+        // Any phase change counts as progress and resets the stall window, so a
+        // genuinely slow export (large catalogs, AI title generation) is never
+        // cut off while it is still working.
+        if (data.phase && data.phase !== lastPhase) {
+          lastPhase = data.phase;
+          lastProgressAt = Date.now();
+          setStatusMsg(data.phase);
+        }
+        if (Date.now() - lastProgressAt > STALL_LIMIT_MS) {
+          toast.error("Export stalled — no progress from the server. Please try again.");
           return;
         }
       }
