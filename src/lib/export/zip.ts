@@ -503,6 +503,56 @@ async function fillTemplateXlsx(
     return a.letter.localeCompare(b.letter);
   });
 
+  // ── Required-column detection ──────────────────────────────────────────────
+  // Marketplace templates band their columns under a merged banner that reads
+  // "Required" / "Optional" (Walmart: E2:H2 = Required, I2:R2 = Optional).
+  // Only the required band is exported: optional columns are left blank so the
+  // sheet carries exactly what the marketplace demands and nothing that could
+  // trip validation. Derived from the merge ranges rather than hardcoded
+  // letters so a revised template keeps working.
+  const colNum = (letter: string): number =>
+    [...letter.toUpperCase()].reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0);
+
+  const requiredLetters = new Set<string>();
+  let sawRequiredBanner = false;
+  for (const mm of sheetXml.matchAll(/<mergeCell\s+ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"/gi)) {
+    const [, c1, r1, c2, r2] = mm;
+    // Banner rows sit above the header row we resolved earlier.
+    if (parseInt(r1, 10) > headerRowNum || parseInt(r2, 10) > headerRowNum) continue;
+    const text = colLetterToHeader.get(c1) ?? "";
+    const banner = (readRowLabels(rowMatches.find(rm => rm[1] === r1)?.[0] ?? "").get(c1) ?? text).trim();
+    if (!/^required$/i.test(banner)) continue;
+    sawRequiredBanner = true;
+    const from = colNum(c1), to = colNum(c2);
+    for (const { letter } of colEntries) {
+      const n = colNum(letter);
+      if (n >= from && n <= to) requiredLetters.add(letter);
+    }
+  }
+
+  // A column outside every banner but left of the required band is an identity
+  // column the template keeps separate (Walmart merges SKU down D2:D5). Treat
+  // anything before the first required column as required too.
+  if (sawRequiredBanner && requiredLetters.size) {
+    const firstRequired = Math.min(...[...requiredLetters].map(colNum));
+    for (const { letter } of colEntries) {
+      if (colNum(letter) < firstRequired) requiredLetters.add(letter);
+    }
+  }
+
+  // Only narrow the export when the banner was actually found — templates
+  // without one keep every mapped column, as before.
+  const exportEntries = sawRequiredBanner && requiredLetters.size
+    ? colEntries.filter((e) => requiredLetters.has(e.letter))
+    : colEntries;
+
+  if (sawRequiredBanner) {
+    console.log(
+      `[export] required columns: [${exportEntries.map(e => e.letter).join(", ")}] ; ` +
+      `optional left blank: [${colEntries.filter(e => !requiredLetters.has(e.letter)).map(e => e.letter).join(", ") || "none"}]`,
+    );
+  }
+
   // ── Dropdown options from dataValidations ──────────────────────────────────
   // Parse ALL dataValidation blocks first, then filter to type="list".
   // The old regex required type= to precede sqref= in the attribute list —
@@ -679,7 +729,9 @@ async function fillTemplateXlsx(
   // Pass 1 — collect values the deterministic matcher could not place.
   const aiQueries: DropdownQuery[] = [];
   for (const p of products) {
-    for (const { col, letter } of colEntries) {
+    // Only the columns we actually export — resolving dropdowns for blanked
+    // optional columns would spend AI calls on values nothing ever writes.
+    for (const { col, letter } of exportEntries) {
       const options = dropdowns.get(letter);
       if (!options) continue;
       const raw = String(getProductField(p, col.key) ?? "");
@@ -694,6 +746,19 @@ async function fillTemplateXlsx(
 
   const isTemu = marketplace.toLowerCase() === "temu";
 
+  // Shipping weight is a required numeric field and Walmart rejects a blank or
+  // zero value, so a product whose vendor sheet has no usable weight gets a
+  // nominal 0.1 lb rather than failing the row. Matches the template's own
+  // field code ("ShippingWeight") and label ("Shipping Weight (lbs)").
+  const WEIGHT_FALLBACK = "0.1";
+  const isShippingWeightCol = (col: Column, letter: string): boolean => {
+    const header = colLetterToHeader.get(letter) ?? "";
+    return [col.key, col.label, header].some((s) => {
+      const n = normalizeKey(String(s ?? ""));
+      return n === "shippingweight" || n === "shippingweightlbs";
+    });
+  };
+
   // Compute the final value for a column (dropdown-safe)
   const colVal = (p: Product, col: Column, letter: string): string => {
     let raw = String(getProductField(p, col.key) ?? "");
@@ -705,6 +770,12 @@ async function fillTemplateXlsx(
       if (nk === "status" && (raw === "on_sale" || raw === "")) raw = "1";
       // Category: the template's top-level dropdown needs only level-1 of the path
       if (nk === "category" && raw.includes(" > ")) raw = raw.split(" > ")[0]?.trim() ?? raw;
+    }
+
+    if (isShippingWeightCol(col, letter)) {
+      // Treat missing, non-numeric and non-positive alike — all are unusable.
+      const n = parseFloat(raw.replace(/[^0-9.\-]/g, ""));
+      return Number.isFinite(n) && n > 0 ? String(n) : WEIGHT_FALLBACK;
     }
 
     const options = dropdowns.get(letter);
@@ -782,8 +853,11 @@ async function fillTemplateXlsx(
     const ordered = [...letters].sort((a, b) =>
       a.length !== b.length ? a.length - b.length : a.localeCompare(b),
     );
+    // Values only for the required columns. Optional columns still get an empty
+    // styled cell below, so the template's look is unchanged — they just carry
+    // no data.
     const valueByLetter = new Map(
-      colEntries.map(({ col, letter }) => [letter, colVal(p, col, letter)]),
+      exportEntries.map(({ col, letter }) => [letter, colVal(p, col, letter)]),
     );
 
     const cells = ordered.map((letter) => {
@@ -1358,7 +1432,14 @@ function getProductField(p: Product, key: string): unknown {
     product_height: fromVendor("height", "item_height", "product_height") ?? "",
     product_weight: fromVendor("weight", "item_weight", "product_weight") ?? "",
     package_weight: fromVendor("package_weight", "shipping_weight", "gross_weight") ?? "",
-    shipping_weight: fromVendor("shipping_weight", "package_weight", "gross_weight") ?? "",
+    // Vendor sheets label this many ways; fall back to the item/product weight
+    // so a sheet that only carries a plain "Weight" column still populates
+    // Walmart's required Shipping Weight instead of exporting blank.
+    shipping_weight: fromVendor(
+      "shipping_weight", "package_weight", "gross_weight",
+      "ship_weight", "shipweight", "weight", "item_weight", "product_weight",
+      "unit_weight", "weight_lbs", "weight_lb", "wt",
+    ) ?? "",
     depth: fromVendor("depth", "item_depth", "height") ?? "",
 
     // Color / finish / attribute aliases
