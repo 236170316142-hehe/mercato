@@ -108,8 +108,26 @@ export async function generateCategoryZip(
   marketplace = "amazon",
   defaultTemplateId?: string,
 ): Promise<Buffer> {
+  console.log(`[export] generateCategoryZip called: ${products.length} products, ${templates.length} templates, marketplace=${marketplace}`);
   const zip = new JSZip();
-  const fallback = templates.find((t) => t.id === defaultTemplateId) ?? templates[0];
+  // Fallback priority:
+  //   1) explicitly selected template
+  //   2) template whose name contains "other(s)/general/default" AND has fileData
+  //   3) template with the MOST COLUMNS that also has fileData (most fields = most general)
+  //   4) any template with fileData
+  //   5) first template
+  const isGenericTemplate = (t: TemplateRow) =>
+    /\bother(s)?\b|\bgeneral\b|\bdefault\b/i.test(t.name) && !!t.fileData;
+  const withFile = templates.filter((t) => t.fileData);
+  const mostColumns = withFile.length
+    ? withFile.reduce((a, b) =>
+        (b.columns as Column[]).length > (a.columns as Column[]).length ? b : a)
+    : null;
+  const fallback = templates.find((t) => t.id === defaultTemplateId)
+    ?? templates.find(isGenericTemplate)
+    ?? mostColumns
+    ?? templates[0];
+  console.log(`[export] fallback template: "${fallback?.name}" (cols=${Array.isArray(fallback?.columns) ? (fallback.columns as Column[]).length : "?"})`);
 
   const eligible = eligibleProducts(products, marketplace);
 
@@ -145,9 +163,11 @@ export async function generateCategoryZip(
     if (template.fileFormat === "csv") {
       zip.file(`${fileName}.csv`, generateCsv(catProducts, columns));
     } else if (template.fileData) {
+      console.log(`[export] Filling template "${template.name}" (${marketplace}) fileData size=${Buffer.byteLength(template.fileData as Buffer)}`);
       const buffer = await fillTemplateXlsx(catProducts, columns, template.fileData as Buffer, marketplace);
       zip.file(`${fileName}.xlsx`, buffer);
     } else {
+      console.warn(`[export] Template "${template.name}" (${marketplace}) has NO fileData — plain workbook will be generated. Re-upload the template file to fix this.`);
       const buffer = await createXlsxFromScratch(catProducts, columns, catLabel || template.name);
       zip.file(`${fileName}.xlsx`, buffer);
     }
@@ -315,6 +335,7 @@ async function fillTemplateXlsx(
   fileData: Buffer,
   marketplace = "",
 ): Promise<Buffer> {
+  console.log(`[export] fillTemplateXlsx called: ${products.length} products, fileData=${fileData?.length ?? 0} bytes, marketplace=${marketplace}`);
   const tplZip = await JSZip.loadAsync(fileData);
 
   // ── Locate target worksheet ────────────────────────────────────────────────
@@ -484,6 +505,7 @@ async function fillTemplateXlsx(
       }
     }
   }
+  console.log(`[export] colEntries matched: ${colEntries.length}, headerRowNum=${headerRowNum}, colLetterToHeader size=${colLetterToHeader.size}`);
   if (colEntries.length === 0) {
     // The most common cause of a "downloaded file doesn't match my template" report:
     // the template's header labels don't normalize-match the stored column
@@ -683,6 +705,7 @@ async function fillTemplateXlsx(
     if (rn >= firstDataRowNum) allDataRows.set(rn, rm[0]);
   }
 
+  console.log(`[export] firstDataRowNum=${firstDataRowNum}, allDataRows.size=${allDataRows.size}, borrowedStyle will be empty=${allDataRows.size === 0}`);
   // Borrow the data-entry style per column for rows beyond the template.
   // Scan EVERY template data row, not just the first: templates often leave
   // some columns absent from the first row but styled further down, and a
@@ -706,6 +729,7 @@ async function fillTemplateXlsx(
       if (!borrowedStyle.has(letter)) borrowedStyle.set(letter, dominantDataStyle);
     }
   }
+  console.log(`[export] borrowedStyle populated: ${borrowedStyle.size} columns, dominantDataStyle=${dominantDataStyle ?? "none"}, allStyleValues=[${[...new Set(borrowedStyle.values())].slice(0,5).join(",")}]`);
 
   const outputRows: string[] = [];
 
@@ -903,18 +927,23 @@ async function fillTemplateXlsx(
   // Parse the table ref, keep the column span, extend the end row.
   const lastDataRow = firstDataRowNum - 1 + products.length;
 
-  // Helper: given a ref like "A1:AA10", extend the end-row to lastDataRow → "A1:AA5"
+  // Helper: given a ref like "A1:AA10", extend the end-row to lastDataRow (never shrink)
   const extendRef = (ref: string): string => {
-    const m = ref.match(/^([A-Z]+)(\d+):([A-Z]+)\d+$/i);
+    const m = ref.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/i);
     if (!m) return ref;
-    return `${m[1]}${m[2]}:${m[3]}${lastDataRow}`;
+    const newEnd = Math.max(parseInt(m[4], 10), lastDataRow);
+    return `${m[1]}${m[2]}:${m[3]}${newEnd}`;
   };
 
   // Update xl/tables/*.xml — table ref + its nested autoFilter ref
   for (const [fpath, fobj] of Object.entries(tplZip.files)) {
     if (!/^xl\/tables\/[^/]+\.xml$/i.test(fpath)) continue;
     let tblXml = await fobj.async("string");
-    tblXml = tblXml.replace(/(<table\b[^>]*\bref=")([^"]+)(")/i, (_, pre, ref, post) => `${pre}${extendRef(ref)}${post}`);
+    tblXml = tblXml.replace(/(<table\b[^>]*\bref=")([^"]+)(")/i, (_, pre, ref, post) => {
+      const newRef = extendRef(ref);
+      console.log(`[export] table ref: ${ref} → ${newRef} (lastDataRow=${lastDataRow})`);
+      return `${pre}${newRef}${post}`;
+    });
     tblXml = tblXml.replace(/(<autoFilter\b[^>]*\bref=")([^"]+)(")/i, (_, pre, ref, post) => `${pre}${extendRef(ref)}${post}`);
     tplZip.file(fpath, tblXml);
   }

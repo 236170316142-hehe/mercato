@@ -144,6 +144,9 @@ export async function categorizeProducts(
     );
     settled.forEach((s, gi) => {
       const fallback = availableCategories?.[0] ?? "General";
+      if (s.status === "rejected") {
+        console.error(`[categorize] Batch ${i + gi} failed (${marketplace}, model=${model}):`, s.reason);
+      }
       allResults.push(...(s.status === "fulfilled"
         ? s.value
         : group[gi].map((p) => ({ productId: p.id, category: fallback, path: fallback, confidence: 0.1 }))));
@@ -458,6 +461,7 @@ ${pathHint}
         return parsed.map(mapResult).filter((r) => r.productId);
       } catch { /* fall through */ }
     }
+    console.error(`[categorize] JSON parse failed (${marketplace}). Model response:\n${text.slice(0, 500)}`);
     return products.map((p) => ({ productId: p.id, category: fallbackCat, path: fallbackCat, confidence: 0.1 }));
   }
 }
