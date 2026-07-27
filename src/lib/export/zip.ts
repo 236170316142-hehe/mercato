@@ -145,12 +145,28 @@ export async function generateCategoryZip(
     grouped.get(catKey)!.catProducts.push(p);
   }
 
+  // ── Extract category lists from template XLSX files ──────────────────────────
+  // Temu templates ship with a category-scope sheet (and/or sample data) that
+  // lists the exact Temu taxonomy paths each template covers. Build a map of
+  // templateId → Set<lowerCasedCategoryPath> for use in Pass 2 matching.
+  const isTemu = marketplace.toLowerCase() === "temu";
+  const tmplCats = new Map<string, Set<string>>();
+  if (isTemu) {
+    await Promise.all(templates.map(async (t) => {
+      if (!t.fileData) return;
+      const cats = await extractTemuTemplateCategories(t.fileData as Buffer);
+      if (cats.length) {
+        tmplCats.set(t.id, new Set(cats.map(c => c.toLowerCase())));
+        console.log(`[export] Template "${t.name}" lists ${cats.length} category paths`);
+      }
+    }));
+  }
+
   // ── Pass 2: assign best template to each group ────────────────────────────────
-  // Primary: name/category word-overlap (findBestTemplate).
-  // Secondary: if primary returns the fallback AND the fallback is not already a
-  // generic catch-all (OTHER/GENERAL/DEFAULT), use product-data column overlap to
-  // pick the nearest template by structure.
-  // If a generic template exists, skip secondary — it IS the intended catch-all.
+  // Priority order:
+  //   1) Exact category-path match from template's embedded category sheet (Temu only)
+  //   2) Name/category word-overlap (findBestTemplate)
+  //   3) Column-overlap — only when no OTHER/GENERAL catch-all template exists
   const hasCatchAll = isGenericTemplate(fallback);
   const byCategory = new Map<string, { template: TemplateRow; catLabel: string; products: Product[] }>();
   for (const [catKey, { catLabel, isUncategorized, catProducts }] of grouped.entries()) {
@@ -158,9 +174,27 @@ export async function generateCategoryZip(
     if (isUncategorized) {
       tpl = fallback;
     } else {
-      tpl = findBestTemplate(catLabel, templates, fallback);
-      if (tpl === fallback && templates.length > 1 && !hasCatchAll) {
-        tpl = bestByColumnOverlap(catProducts, templates, fallback);
+      // 1) Exact match against category paths embedded in each template file
+      const lowerCat = catLabel.toLowerCase();
+      const exactMatch = tmplCats.size > 0
+        ? templates.find(t => {
+            const cats = tmplCats.get(t.id);
+            if (!cats) return false;
+            // product category starts with a template category (or is an exact match)
+            return cats.has(lowerCat) || [...cats].some(c => lowerCat.startsWith(c) || c.startsWith(lowerCat));
+          })
+        : undefined;
+
+      if (exactMatch) {
+        tpl = exactMatch;
+        console.log(`[export] Exact category match: "${tpl.name}" for "${catLabel}"`);
+      } else {
+        // 2) Name/word-overlap
+        tpl = findBestTemplate(catLabel, templates, fallback);
+        // 3) Column overlap — only when no designated catch-all exists
+        if (tpl === fallback && templates.length > 1 && !hasCatchAll) {
+          tpl = bestByColumnOverlap(catProducts, templates, fallback);
+        }
       }
     }
     console.log(`[export] Group "${catLabel || "(uncategorized)"}" → template "${tpl.name}"`);
@@ -306,6 +340,37 @@ function bestByColumnOverlap(
     console.log(`[export] Column-overlap match: "${best.name}" (productKeys=${productKeys.size}, score=${bestScore.toFixed(2)})`);
   }
   return best;
+}
+
+// Scan a Temu XLSX template's shared strings for category paths listed in its
+// category-scope / sample sheets (values like "Jewelry & Accessories > Hats & Caps").
+// These are used for exact-path matching so each template is chosen based on the
+// actual categories it covers, not just its file name.
+async function extractTemuTemplateCategories(fileData: Buffer): Promise<string[]> {
+  try {
+    const tplZip = await JSZip.loadAsync(fileData);
+    const ssFile = tplZip.files["xl/sharedStrings.xml"];
+    if (!ssFile) return [];
+    const ssXml = await ssFile.async("string");
+    const found: string[] = [];
+    // Each <si>…</si> is one shared string; pull all <t> text nodes inside it
+    const siRe = /<si>([\s\S]*?)<\/si>/g;
+    let siM: RegExpExecArray | null;
+    while ((siM = siRe.exec(ssXml))) {
+      let text = "";
+      const tRe = /<t(?:\s[^>]*)?>([^<]*)<\/t>/g;
+      let tM: RegExpExecArray | null;
+      while ((tM = tRe.exec(siM[1]))) text += tM[1];
+      text = text.trim();
+      // Category paths have at least one " > " separator and are not too long
+      if (text.includes(" > ") && text.split(" > ").length >= 2 && text.length < 300) {
+        found.push(text);
+      }
+    }
+    return [...new Set(found)];
+  } catch {
+    return [];
+  }
 }
 
 // ── Single-template export (non-Mathis marketplaces with user-selected template) ─
