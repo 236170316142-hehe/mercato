@@ -866,6 +866,11 @@ async function fillTemplateXlsx(
       if (nk === "status" && (raw === "on_sale" || raw === "")) raw = "1";
       // Category: the template's top-level dropdown needs only level-1 of the path
       if (nk === "category" && raw.includes(" > ")) raw = raw.split(" > ")[0]?.trim() ?? raw;
+      // "Product type" on Temu = listing type ("Normal product" / "Custom product"),
+      // NOT the marketplace category. The coreMap sets product_type→marketplaceCategory
+      // (correct for Amazon) but that's wrong here. Default to "Normal product" so
+      // pickDropdownValue selects the correct option for standard listings.
+      if ((nk === "producttype" || nk === "goodstype") && raw.includes(" > ")) raw = "Normal product";
     }
 
     if (isShippingWeightCol(col, letter)) {
