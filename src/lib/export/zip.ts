@@ -147,9 +147,11 @@ export async function generateCategoryZip(
 
   // ── Pass 2: assign best template to each group ────────────────────────────────
   // Primary: name/category word-overlap (findBestTemplate).
-  // Secondary: if primary returns the fallback (score=0), use product-data column
-  // overlap to pick the template whose columns best match what the products actually
-  // have in their vendorData — "nearest" in structure even when names don't match.
+  // Secondary: if primary returns the fallback AND the fallback is not already a
+  // generic catch-all (OTHER/GENERAL/DEFAULT), use product-data column overlap to
+  // pick the nearest template by structure.
+  // If a generic template exists, skip secondary — it IS the intended catch-all.
+  const hasCatchAll = isGenericTemplate(fallback);
   const byCategory = new Map<string, { template: TemplateRow; catLabel: string; products: Product[] }>();
   for (const [catKey, { catLabel, isUncategorized, catProducts }] of grouped.entries()) {
     let tpl: TemplateRow;
@@ -157,7 +159,7 @@ export async function generateCategoryZip(
       tpl = fallback;
     } else {
       tpl = findBestTemplate(catLabel, templates, fallback);
-      if (tpl === fallback && templates.length > 1) {
+      if (tpl === fallback && templates.length > 1 && !hasCatchAll) {
         tpl = bestByColumnOverlap(catProducts, templates, fallback);
       }
     }
@@ -267,25 +269,41 @@ function bestByColumnOverlap(
   }
   if (productKeys.size === 0) return fallback;
 
+  // Build column→frequency map so common columns count less, unique columns count more
+  const colFreq = new Map<string, number>();
+  for (const t of templates) {
+    const seen = new Set<string>();
+    for (const col of (t.columns as Column[] | null) ?? []) {
+      for (const ck of [norm(col.key ?? ""), norm(col.label ?? "")]) {
+        if (ck && !seen.has(ck)) { seen.add(ck); colFreq.set(ck, (colFreq.get(ck) ?? 0) + 1); }
+      }
+    }
+  }
+  const total = templates.length;
+
   let best = fallback;
-  let bestScore = -1;
+  let bestScore = 0; // must beat 0 — ties leave fallback in place
 
   for (const t of templates) {
     const cols = t.columns as Column[];
     if (!Array.isArray(cols)) continue;
     let score = 0;
     for (const col of cols) {
-      const k = norm(col.key ?? "");
-      const l = norm(col.label ?? "");
-      if ((k && productKeys.has(k)) || (l && productKeys.has(l))) score++;
+      for (const ck of [norm(col.key ?? ""), norm(col.label ?? "")]) {
+        if (ck && productKeys.has(ck)) {
+          // IDF-style: columns unique to fewer templates carry more weight
+          const freq = colFreq.get(ck) ?? 1;
+          score += (total - freq + 1) / total;
+        }
+      }
     }
-    // Prefer templates that have fileData (can preserve formatting)
-    const adjusted = score * 2 + (t.fileData ? 1 : 0);
+    // fileData bonus so formatted templates are preferred when scores tie
+    const adjusted = score + (t.fileData ? 0.01 : 0);
     if (adjusted > bestScore) { bestScore = adjusted; best = t; }
   }
 
   if (best !== fallback) {
-    console.log(`[export] Column-overlap match: "${best.name}" (productKeys=${productKeys.size}, colScore=${bestScore})`);
+    console.log(`[export] Column-overlap match: "${best.name}" (productKeys=${productKeys.size}, score=${bestScore.toFixed(2)})`);
   }
   return best;
 }
