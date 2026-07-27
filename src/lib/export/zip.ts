@@ -131,25 +131,38 @@ export async function generateCategoryZip(
 
   const eligible = eligibleProducts(products, marketplace);
 
-  // Group by category first so we always produce ONE FILE PER CATEGORY.
-  // Even when all categories resolve to the same fallback template, each category
-  // gets its own named file (e.g. "Baby & Kids.xlsx", "Seasonal.xlsx") instead
-  // of everything collapsing into a single template-named file.
+  // ── Pass 1: group products by category key (no template assignment yet) ──────
   // For Mathis the group is the DEPARTMENT (first path segment), so every subcategory
   // under "Baby & Kids > …" lands in one "Baby & Kids" file rather than one file per
   // leaf. Other marketplaces continue to group on the full category path.
-  const byCategory = new Map<string, { template: TemplateRow; catLabel: string; products: Product[] }>();
+  const grouped = new Map<string, { catLabel: string; isUncategorized: boolean; catProducts: Product[] }>();
   for (const p of eligible) {
     const cat = p.marketplaceCategory;
     const isUncategorized = !cat || cat === "Uncategorized";
     const group = isUncategorized ? "" : exportGroupOf(cat!, marketplace);
     const catKey = isUncategorized ? `__uncategorized__` : group;
-    // Match the template on the same string the group is keyed by, so every product in
-    // a department resolves to one template. (Matching on the full leaf path would let
-    // whichever leaf happened to come first decide the template for the whole file.)
-    const tpl = isUncategorized ? fallback : findBestTemplate(group, templates, fallback);
-    if (!byCategory.has(catKey)) byCategory.set(catKey, { template: tpl, catLabel: isUncategorized ? "" : group, products: [] });
-    byCategory.get(catKey)!.products.push(p);
+    if (!grouped.has(catKey)) grouped.set(catKey, { catLabel: group, isUncategorized, catProducts: [] });
+    grouped.get(catKey)!.catProducts.push(p);
+  }
+
+  // ── Pass 2: assign best template to each group ────────────────────────────────
+  // Primary: name/category word-overlap (findBestTemplate).
+  // Secondary: if primary returns the fallback (score=0), use product-data column
+  // overlap to pick the template whose columns best match what the products actually
+  // have in their vendorData — "nearest" in structure even when names don't match.
+  const byCategory = new Map<string, { template: TemplateRow; catLabel: string; products: Product[] }>();
+  for (const [catKey, { catLabel, isUncategorized, catProducts }] of grouped.entries()) {
+    let tpl: TemplateRow;
+    if (isUncategorized) {
+      tpl = fallback;
+    } else {
+      tpl = findBestTemplate(catLabel, templates, fallback);
+      if (tpl === fallback && templates.length > 1) {
+        tpl = bestByColumnOverlap(catProducts, templates, fallback);
+      }
+    }
+    console.log(`[export] Group "${catLabel || "(uncategorized)"}" → template "${tpl.name}"`);
+    byCategory.set(catKey, { template: tpl, catLabel: isUncategorized ? "" : catLabel, products: catProducts });
   }
 
   for (const [catKey, { template, catLabel, products: catProducts }] of byCategory.entries()) {
@@ -233,6 +246,47 @@ export function findBestTemplate<T extends { id: string; name: string; category?
     if (score > bestScore) { bestScore = score; best = t; }
   }
 
+  return best;
+}
+
+// Secondary template picker: when name-overlap gives no match, score templates by
+// how many of their column keys/labels appear in the products' vendorData keys.
+// The template whose columns best cover what the products actually have = nearest match.
+function bestByColumnOverlap(
+  products: Product[],
+  templates: TemplateRow[],
+  fallback: TemplateRow,
+): TemplateRow {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+  // Collect every vendorData key across all products in this group
+  const productKeys = new Set<string>();
+  for (const p of products) {
+    const vd = p.vendorData as Record<string, unknown> | null;
+    if (vd) for (const k of Object.keys(vd)) productKeys.add(norm(k));
+  }
+  if (productKeys.size === 0) return fallback;
+
+  let best = fallback;
+  let bestScore = -1;
+
+  for (const t of templates) {
+    const cols = t.columns as Column[];
+    if (!Array.isArray(cols)) continue;
+    let score = 0;
+    for (const col of cols) {
+      const k = norm(col.key ?? "");
+      const l = norm(col.label ?? "");
+      if ((k && productKeys.has(k)) || (l && productKeys.has(l))) score++;
+    }
+    // Prefer templates that have fileData (can preserve formatting)
+    const adjusted = score * 2 + (t.fileData ? 1 : 0);
+    if (adjusted > bestScore) { bestScore = adjusted; best = t; }
+  }
+
+  if (best !== fallback) {
+    console.log(`[export] Column-overlap match: "${best.name}" (productKeys=${productKeys.size}, colScore=${bestScore})`);
+  }
   return best;
 }
 
