@@ -25,19 +25,38 @@ type Product = {
 function matchTemplate(category: string, templates: Template[]): Template {
   if (templates.length === 1) return templates[0];
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  // Prefer a generic catch-all over first-in-array when no specific match exists
+  const isGeneric = (t: Template) => /\bother(s)?\b|\bgeneral\b|\bdefault\b/i.test(t.name);
+  const fallback = templates.find(isGeneric) ?? templates[0];
+
+  const department = category.split(/\s*>\s*/)[0]?.trim() || category;
+  const normDept = norm(department);
   const normCat = norm(category);
   const catWords = normCat.split(" ").filter((w) => w.length > 2);
-  let best = templates[0];
-  let bestScore = 0;
+
+  let best = fallback;
+  let bestScore = 0; // must beat 0 to override the chosen fallback
+
   for (const t of templates) {
-    const normName = norm(t.category || t.name);
-    const nameWords = normName.split(" ").filter((w) => w.length > 2);
+    const target = norm(t.category || t.name);
+    const bareName = target.replace(/\s+\d+$/, "").trim();
+    const targetWords = target.split(" ").filter((w) => w.length > 2);
+
     let score = 0;
-    for (const word of catWords) if (nameWords.includes(word)) score += 2;
-    for (const word of nameWords) if (catWords.includes(word)) score += 1;
-    if (normName.includes(normCat)) score += 5;
-    if (normCat.includes(normName)) score += 3;
-    if (normName === normCat) score += 10;
+    if (target === normDept || bareName === normDept) score += 20;
+    else if (normDept.startsWith(target) || target.startsWith(normDept)) score += 12;
+    else if (
+      (target.length >= 5 && normDept.startsWith(target.slice(0, 5))) ||
+      (normDept.length >= 5 && target.startsWith(normDept.slice(0, 5)))
+    ) score += 10;
+
+    for (const word of catWords) if (targetWords.includes(word)) score += 2;
+    for (const word of targetWords) if (catWords.includes(word)) score += 1;
+    if (target.includes(normCat)) score += 5;
+    if (normCat.includes(target)) score += 3;
+    if (target === normCat) score += 10;
+
     if (score > bestScore) { bestScore = score; best = t; }
   }
   return best;
