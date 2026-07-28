@@ -49,6 +49,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         name: project.name,
         marketplace: project.marketplace,
         status: project.status,
+        isNewListing: project.isNewListing,
       }}
       products={project.products.map((p) => ({
         ...p,

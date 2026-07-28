@@ -69,6 +69,9 @@ model Project {
   name        String
   marketplace String   // amazon | bestbuy | walmart | temu | mathis | sears
   status      String   @default("uploaded") // uploaded | verifying | verified | categorizing | categorized | exporting | done
+  // New-listing projects have no live marketplace page to verify against, so the
+  // Verify step is skipped and the flow goes straight to Categorize.
+  isNewListing Boolean @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -100,6 +103,9 @@ model Product {
   categoryPath        String?
   categoryConfidence  Float?
   categorizedAt       DateTime?
+  // Walmart new-listing: the "Spec Product Type" assigned from Walmart's PT
+  // taxonomy (required on the new-listing template). Null for other flows.
+  specProductType     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

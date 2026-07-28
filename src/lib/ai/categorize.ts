@@ -2,6 +2,7 @@ import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { formatTemuTaxonomyForPrompt, loadTemuCategoryPaths } from "@/lib/ai/temu-taxonomy";
 import { formatMathisTaxonomyForPrompt, loadMathisCategoryPaths } from "@/lib/ai/mathis-taxonomy";
+import { formatWalmartTaxonomyForPrompt, loadWalmartCategoryPaths } from "@/lib/ai/walmart-taxonomy";
 
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -106,6 +107,7 @@ export async function categorizeProducts(
   const isMathis = mpLower === "mathis";
   const isBestBuyTop = mpLower === "bestbuy";
   const isTemuTop = mpLower === "temu";
+  const isWalmartTop = mpLower === "walmart";
 
   // Temu + Best Buy share temu_categories.csv so the same products get the same category paths.
   // Claude is given the full sheet + product details and must pick an exact leaf path.
@@ -120,12 +122,20 @@ export async function categorizeProducts(
     availableCategories = loadMathisCategoryPaths();
   }
 
-  // Constrained mode = AI must pick from a fixed list (Temu/Best Buy/Mathis CSV taxonomy)
-  const isConstrained = (isMathis || isBestBuyTop || isTemuTop) && !!availableCategories?.length;
+  // Walmart: categorize into the full taxonomy when supplied, else the 75 values
+  // the listing template's Product Category dropdown accepts. Either way the
+  // result is mapped down to a template value at export (mapToTemplateCategory).
+  if (isWalmartTop) {
+    availableCategories = loadWalmartCategoryPaths();
+  }
+
+  // Constrained mode = AI must pick from a fixed list (Temu/Best Buy/Mathis/Walmart taxonomy)
+  const isConstrained =
+    (isMathis || isBestBuyTop || isTemuTop || isWalmartTop) && !!availableCategories?.length;
 
   // Smaller batches for constrained-category marketplaces so the AI reasons carefully per product.
-  // Temu/Mathis/Best Buy use full taxonomy sheets — keep batches small so the taxonomy fits with product context.
-  const BATCH = (isTemuTop || isMathis || isBestBuyTop) ? 5 : isConstrained ? 8 : 20;
+  // These use full taxonomy sheets — keep batches small so the taxonomy fits with product context.
+  const BATCH = (isTemuTop || isMathis || isBestBuyTop || isWalmartTop) ? 5 : isConstrained ? 8 : 20;
   const PARALLEL = isConstrained ? 2 : 3;
 
   const model = availableCategories?.length
@@ -244,6 +254,7 @@ async function categorizeBatchWithContext(
   const isMathis = mpLower === "mathis";
   const isTemu = mpLower === "temu";
   const isBestBuy = mpLower === "bestbuy";
+  const isWalmart = mpLower === "walmart";
 
   const list = products.map((p, idx) => {
     let line = `${idx + 1}. "${p.name}"`;
@@ -274,6 +285,20 @@ MANDATORY ASSIGNMENT RULES:
 
 ${taxonomy}
 ${closestMatchRule}`;
+  } else if (isWalmart && availableCategories?.length) {
+    // Walmart taxonomy — the rich taxonomy sheet when supplied, otherwise the 75
+    // values the listing template accepts. Categorize into the most specific
+    // entry; a rich path is mapped down to a template value at export time.
+    const taxonomy = formatWalmartTaxonomyForPrompt();
+    const flat = availableCategories.every((c) => !c.includes(" > "));
+    const shape = flat
+      ? `exactly one category from this list (copy character-for-character)`
+      : `exactly one leaf path from this taxonomy (copy character-for-character as "Category > Subcategory > …")`;
+    categorySection = `${strictMode ? shape.toUpperCase() : shape}:
+
+${taxonomy}
+
+Assign every real, sellable product to its closest match — only use "Uncategorized" when nothing fits at all.`;
   } else if (isMathis && availableCategories?.length) {
     // Full taxonomy from mathis_categories.csv (sourced from the official Mirakl fwd sheets).
     // Paths are 2–4 levels: Department > Category > Subcategory > Product Type
@@ -312,6 +337,8 @@ If nothing fits, use "Uncategorized".`;
     ? "You are a product categorization expert for the Temu marketplace seller portal. You are given the EXACT Temu category taxonomy (Category > Sub-Category > Product Type) sourced directly from Temu's seller listing system. Your job is to match each product to the single most specific leaf path from that taxonomy — using ONLY the paths listed. The output must be directly usable for listing on Temu's seller portal without any manual remapping. Do not invent paths. Do not shorten paths to 1 or 2 levels. Always output the full 3-level path."
     : isBestBuy
     ? "You are a product categorization expert. You are given a shared category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet. Do not invent paths."
+    : isWalmart
+    ? "You are a product categorization expert for the Walmart Marketplace seller portal. You are given the exact category list Walmart's item-setup accepts. Match each product to the single closest category from that list — using ONLY the entries provided. The result feeds directly into a Walmart listing, so it must be one of the listed values verbatim. Do not invent categories."
     : "You are a product categorization expert for a major retail marketplace.";
 
   const reasoningInstruction = isMathis
@@ -338,20 +365,33 @@ MATHIS RULES (mandatory — taxonomy over assumptions):
 5. Use "Uncategorized" only if no listed path's product type matches at all.
 6. Lighting → "Decor > Lighting …". Window treatments → "Decor > Window Treatments …". Holiday decor → "Seasonal > …".` : "";
 
+  // Walmart's own category list legitimately includes single-word values like
+  // "Other", "Furniture" and "Toys", so the generic "never output these" rule
+  // must not apply — only forbid inventing values that aren't on the list.
+  const noInventRule = isWalmart
+    ? `2. Never invent category names — output ONLY values that appear verbatim in the list above (some ARE single words like "Furniture" or "Other"; those are valid when listed)`
+    : `2. Never invent category names. Never output "General", "Other", "Furniture", "Unknown", etc.`;
   const rules = availableCategories?.length ? `
 RULES:
 1. Output EXACTLY one category name from the list above (copy it character-for-character) OR "Uncategorized" if truly no fit exists
-2. Never invent category names. Never output "General", "Other", "Furniture", "Unknown", etc.
+${noInventRule}
 3. "Uncategorized" is only for products that genuinely don't belong in ANY listed category
 4. Use product name, brand, description, vendor category as signals to identify WHAT the product is — then map that to the taxonomy leaf
 5. Do not override a direct taxonomy product-type match with general retail logic${mathisSizeRule}` : "";
 
-  const usesTaxonomySheet = isTemu || isMathis || isBestBuy;
+  // Walmart categorizes against a fixed sheet too, so it shares the sheet-mode
+  // temperature/token budget and the "path mirrors the validated category" rule.
+  const usesTaxonomySheet = isTemu || isMathis || isBestBuy || isWalmart;
+  // The fuzzy-match floor: rich multi-word paths need a higher bar than the flat
+  // 75-value list, whose category names are often 1–2 words.
+  const walmartFlat = isWalmart && !(availableCategories ?? []).some((c) => c.includes(" > "));
 
   const jsonExample = (isTemu || isBestBuy)
     ? `[{"index":1,"category":"Electronics > Audio > Wireless Earbuds","path":"Electronics > Audio > Wireless Earbuds","confidence":0.95},{"index":2,"category":"Jewelry & Accessories > Hats & Caps > Baseball Caps","path":"Jewelry & Accessories > Hats & Caps > Baseball Caps","confidence":0.90},...]`
     : isMathis
     ? `[{"index":1,"category":"Baby & Kids > Kids Furniture > Daybeds","path":"Baby & Kids > Kids Furniture > Daybeds","confidence":0.95},...]`
+    : isWalmart
+    ? `[{"index":1,"category":"Furniture","path":"Furniture","confidence":0.95},{"index":2,"category":"Home Decor, Kitchen, & Other","path":"Home Decor, Kitchen, & Other","confidence":0.9},...]`
     : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
 
   const pathHint = (isTemu || isBestBuy)
@@ -436,7 +476,9 @@ ${pathHint}
                       + normCat.split(" ").filter((w) => w.length > 2 && normAllowed.includes(w)).length;
           if (score > bestScore) { bestScore = score; best = allowed; }
         }
-        const minScore = usesTaxonomySheet ? 4 : 2;
+        // Flat single-word categories can't reach the 4-word overlap a long path
+        // needs, so use the looser floor for Walmart's flat list.
+        const minScore = walmartFlat ? 1 : usesTaxonomySheet ? 4 : 2;
         cat = bestScore >= minScore ? best! : "Uncategorized";
       }
     }

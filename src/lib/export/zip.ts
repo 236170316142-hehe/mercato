@@ -680,7 +680,10 @@ async function fillTemplateXlsx(
     if (parseInt(r1, 10) > headerRowNum || parseInt(r2, 10) > headerRowNum) continue;
     const text = colLetterToHeader.get(c1) ?? "";
     const banner = (readRowLabels(rowMatches.find(rm => rm[1] === r1)?.[0] ?? "").get(c1) ?? text).trim();
-    if (!/^required$/i.test(banner)) continue;
+    // Matches both the MP-item template ("Required") and the new-listing
+    // template ("Required to sell on Walmart website"), but not "Required?"
+    // help columns or "Optional".
+    if (!/^required\b/i.test(banner)) continue;
     sawRequiredBanner = true;
     const from = colNum(c1), to = colNum(c2);
     for (const { letter } of colEntries) {
@@ -699,16 +702,28 @@ async function fillTemplateXlsx(
     }
   }
 
+  // Columns that must always export even when they fall in the "Optional" band.
+  // Product Category is the whole point of the categorize step, so it is filled
+  // even though Walmart's template files it under Optional.
+  const isCategoryCol = (e: ColEntry): boolean => {
+    const header = colLetterToHeader.get(e.letter) ?? "";
+    return [e.col.key, e.col.label, header].some((s) => {
+      const n = normalizeKey(String(s ?? ""));
+      return n === "productcategory" || n === "category";
+    });
+  };
+  const alwaysExport = (e: ColEntry): boolean => isCategoryCol(e);
+
   // Only narrow the export when the banner was actually found — templates
   // without one keep every mapped column, as before.
   const exportEntries = sawRequiredBanner && requiredLetters.size
-    ? colEntries.filter((e) => requiredLetters.has(e.letter))
+    ? colEntries.filter((e) => requiredLetters.has(e.letter) || alwaysExport(e))
     : colEntries;
 
   if (sawRequiredBanner) {
     console.log(
       `[export] required columns: [${exportEntries.map(e => e.letter).join(", ")}] ; ` +
-      `optional left blank: [${colEntries.filter(e => !requiredLetters.has(e.letter)).map(e => e.letter).join(", ") || "none"}]`,
+      `optional left blank: [${colEntries.filter(e => !exportEntries.includes(e)).map(e => e.letter).join(", ") || "none"}]`,
     );
   }
 
@@ -906,6 +921,13 @@ async function fillTemplateXlsx(
   const aiMatches = aiQueries.length ? await matchDropdownValues(aiQueries) : new Map<string, string>();
 
   const isTemu = marketplace.toLowerCase() === "temu";
+  const isWalmart = marketplace.toLowerCase() === "walmart";
+  // Map a categorized value (a rich "A > B > C" path, or already a flat value)
+  // down to one of the 75 categories the Walmart template dropdown accepts.
+  // Loaded lazily so non-Walmart exports never touch the taxonomy files.
+  const { mapToTemplateCategory } = isWalmart
+    ? await import("@/lib/ai/walmart-taxonomy")
+    : { mapToTemplateCategory: (): string | null => null };
 
   // Shipping weight is a required numeric field and Walmart rejects a blank or
   // zero value, so a product whose vendor sheet has no usable weight gets a
@@ -942,6 +964,19 @@ async function fillTemplateXlsx(
       // Treat missing, non-numeric and non-positive alike — all are unusable.
       const n = parseFloat(raw.replace(/[^0-9.\-]/g, ""));
       return Number.isFinite(n) && n > 0 ? String(n) : WEIGHT_FALLBACK;
+    }
+
+    // Walmart Product Category: the stored value is whatever categorization
+    // assigned (a rich path when the taxonomy CSV is present, otherwise already
+    // a template value). Collapse it to one of the 75 dropdown values before
+    // dropdown matching runs, so it lands on a value the template accepts.
+    if (isWalmart) {
+      const nk = normalizeKey(col.key);
+      const headerNk = normalizeKey(colLetterToHeader.get(letter) ?? "");
+      if (raw.trim() && (nk === "productcategory" || nk === "category" ||
+          headerNk === "productcategory" || headerNk === "category")) {
+        raw = mapToTemplateCategory(raw) ?? "";
+      }
     }
 
     const options = dropdowns.get(letter);
@@ -1549,6 +1584,12 @@ function getProductField(p: Product, key: string): unknown {
     product_image_8_url: fromVendor("product_image_8_url", "image_url8", "image_url_8", "image8", "alternate_image7") ?? "",
     product_image_9_url: fromVendor("product_image_9_url", "image_url9", "image_url_9", "image9", "alternate_image8") ?? "",
     product_image_10_url: fromVendor("product_image_10_url", "image_url10", "image_url_10", "image10", "alternate_image9") ?? "",
+
+    // Walmart new-listing "Spec Product Type" — assigned from Walmart's PT
+    // taxonomy during categorization. Field code on the template is
+    // "specProductType" (→ "specproducttype" normalized).
+    specproducttype: (p as { specProductType?: string | null }).specProductType ?? "",
+    spec_product_type: (p as { specProductType?: string | null }).specProductType ?? "",
 
     // Category — filled from AI categorisation; blank for "Uncategorized" so no junk text in the cell
     category: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",

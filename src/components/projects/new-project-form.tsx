@@ -37,6 +37,7 @@ export function NewProjectForm() {
   const [name, setName] = useState("");
   const [marketplace, setMarketplace] = useState("");
   const [amazonGroup, setAmazonGroup] = useState(false); // true when Amazon tile is selected
+  const [isNewListing, setIsNewListing] = useState(false); // Walmart only: skip verification
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -69,6 +70,8 @@ export function NewProjectForm() {
     form.append("file", file);
     form.append("name", name.trim());
     form.append("marketplace", marketplace);
+    // Only sent (and only honoured server-side) for Walmart.
+    if (marketplace === "walmart" && isNewListing) form.append("isNewListing", "true");
 
     const res = await fetch("/api/projects", { method: "POST", body: form });
     const data = await res.json();
@@ -203,6 +206,25 @@ export function NewProjectForm() {
           </div>
         )}
       </div>
+
+      {/* New-listing option — Walmart only. Skips the Verify step, which has no
+          live marketplace page to check a brand-new listing against. */}
+      {marketplace === "walmart" && (
+        <label className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer hover:bg-accent transition-colors">
+          <input
+            type="checkbox"
+            checked={isNewListing}
+            onChange={(e) => setIsNewListing(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
+          />
+          <span className="text-sm">
+            <span className="font-medium">New listing</span>
+            <span className="block text-xs text-muted-foreground">
+              These products aren&apos;t live on Walmart yet — skip verification and go straight to categorization.
+            </span>
+          </span>
+        </label>
+      )}
 
       <button
         type="submit"

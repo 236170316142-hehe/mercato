@@ -176,3 +176,78 @@ export async function getSellerItemByGtin(rawCode: string): Promise<SellerItem |
     return null;
   }
 }
+
+// ── Product-type taxonomy ─────────────────────────────────────────────────────
+// GET /v3/items/taxonomy returns Walmart's Product Type (PT) taxonomy — the
+// authoritative list of "Spec Product Type" values a new listing may use. This
+// list is not embedded in the listing template (the template fetches it
+// dynamically), so it must come from the API.
+
+export type WalmartProductType = {
+  productType: string;
+  productTypeGroup?: string;
+  category?: string;
+};
+
+/**
+ * Fetch and flatten the Product Type taxonomy. Version 5.0 + MP_ITEM returns the
+ * PT hierarchy (vs the legacy category taxonomy when version is omitted).
+ *
+ * The documented response shape is an `itemTaxonomy` array of
+ * {category, productTypeGroup, productType}, but the exact envelope isn't
+ * pinned in the docs, so this walks the JSON defensively and collects every
+ * distinct productType it can find.
+ */
+export async function getItemTaxonomy(): Promise<WalmartProductType[]> {
+  const data = await sellerFetch("/v3/items/taxonomy?version=5.0&feedType=MP_ITEM");
+  if (!data) return [];
+
+  const out: WalmartProductType[] = [];
+  const seen = new Set<string>();
+  const push = (pt: unknown, group?: unknown, cat?: unknown) => {
+    const name = typeof pt === "string" ? pt.trim() : "";
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    out.push({
+      productType: name,
+      productTypeGroup: typeof group === "string" ? group : undefined,
+      category: typeof cat === "string" ? cat : undefined,
+    });
+  };
+
+  // Preferred shape: { itemTaxonomy: [{ category, productTypeGroup, productType }] }
+  const arr =
+    (data.itemTaxonomy as Record<string, unknown>[] | undefined) ??
+    (data.taxonomy as Record<string, unknown>[] | undefined) ??
+    (data.payload as Record<string, unknown>[] | undefined);
+  if (Array.isArray(arr)) {
+    for (const row of arr) {
+      const pt = row.productType ?? row.productTypeName ?? row.name;
+      // productType may itself be an array of names within a group.
+      if (Array.isArray(pt)) {
+        for (const p of pt) push(p, row.productTypeGroup, row.category);
+      } else {
+        push(pt, row.productTypeGroup, row.category);
+      }
+    }
+  }
+
+  // Fallback: deep-walk for any "productType" keys if the above found nothing.
+  if (!out.length) {
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      for (const [k, v] of Object.entries(node)) {
+        if (/^producttype(name)?$/i.test(k)) {
+          if (Array.isArray(v)) v.forEach((x) => push(x));
+          else push(v);
+        } else {
+          walk(v);
+        }
+      }
+    };
+    walk(data);
+  }
+
+  return out;
+}

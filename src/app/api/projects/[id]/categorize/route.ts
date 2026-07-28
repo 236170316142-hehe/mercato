@@ -253,7 +253,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // legitimate "nearest match" assignments that the AI marks 0.1–0.3 simply because
       // the product is niche (crowns, kippot, tarboosh hats, etc.). Any valid path is better
       // than Uncategorized for these marketplaces, so skip the confidence check entirely.
-      const isConstrainedTaxonomy = ["temu", "bestbuy", "mathis"].includes(mpLower);
+      // Walmart categorizes against a fixed list too (rich taxonomy or the 75
+      // template values), so like the other constrained marketplaces any valid
+      // assignment beats "Uncategorized" — skip the confidence gate.
+      const isConstrainedTaxonomy = ["temu", "bestbuy", "mathis", "walmart"].includes(mpLower);
       const MIN_CONFIDENCE = Number(process.env.CATEGORIZE_MIN_CONFIDENCE ?? 0.6);
       const inputById = new Map(productInputs.map((p) => [p.id, p]));
 
@@ -284,6 +287,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // Fold new results into the existing-category map so the response counts
       // reflect the full project (kept + newly categorized).
       for (const r of results) existingCatById.set(r.productId, r.category);
+    }
+
+    // Walmart new-listing: the listing template requires a "Spec Product Type"
+    // (from Walmart's PT taxonomy) that categorization doesn't produce. Assign it
+    // here so col E can be filled at export. Degrades to a no-op when the Seller
+    // API / taxonomy is unavailable — the field is simply left blank.
+    if (mpLower === "walmart" && project.isNewListing && productInputs.length > 0) {
+      try {
+        const { assignSpecProductTypes } = await import("@/lib/ai/walmart-spec-product-type");
+        const specInputs = productInputs.map((p) => ({
+          id: p.id,
+          name: p.name,
+          brand: p.brand,
+          description: p.description,
+          category: existingCatById.get(p.id) ?? null,
+        }));
+        const specMap = await assignSpecProductTypes(specInputs);
+        if (specMap.size > 0) {
+          await inChunks([...specMap], ([productId, specProductType]) =>
+            prisma.product.update({ where: { id: productId }, data: { specProductType } }),
+          );
+        }
+      } catch (err) {
+        console.warn("[categorize] spec product-type assignment failed:", err);
+      }
     }
 
     await prisma.project.update({ where: { id }, data: { status: "categorized" } });

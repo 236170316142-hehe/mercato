@@ -37,6 +37,7 @@ type Project = {
   name: string;
   marketplace: string;
   status: string;
+  isNewListing?: boolean;
 };
 
 const STEPS = [
@@ -86,13 +87,15 @@ export function ProjectDetail({ project: initial, products: initialProducts }: {
 }) {
   const router = useRouter();
   const confirm = useConfirm();
-  const skipVerify = SKIP_VERIFY.has(initial.marketplace);
+  // Skip Verify when the marketplace has no verification API, OR when this
+  // specific project is a new listing (no live page to check against).
+  const skipVerify = SKIP_VERIFY.has(initial.marketplace) || !!initial.isNewListing;
   const [project, setProject] = useState(initial);
   const [products, setProducts] = useState(initialProducts);
   const [activeStep, setActiveStep] = useState(() => {
     const idx = stepIndex(initial.status);
-    // If this marketplace skips verification and we land on the verify step, advance to categorize
-    if (SKIP_VERIFY.has(initial.marketplace) && idx === 1) return 2;
+    // If this project skips verification and we land on the verify step, advance to categorize
+    if (skipVerify && idx === 1) return 2;
     return idx;
   });
   const [loading, setLoading] = useState(false);

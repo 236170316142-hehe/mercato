@@ -12,6 +12,9 @@ export async function POST(req: NextRequest) {
   const file = form.get("file") as File | null;
   const name = (form.get("name") as string | null)?.trim();
   const marketplace = form.get("marketplace") as string | null;
+  // New-listing projects skip verification (no live page to check against).
+  // Only meaningful for marketplaces that otherwise verify — currently Walmart.
+  const isNewListing = form.get("isNewListing") === "true" && marketplace === "walmart";
 
   if (!file || !name || !marketplace) {
     return NextResponse.json({ error: "file, name and marketplace are required" }, { status: 400 });
@@ -30,6 +33,7 @@ export async function POST(req: NextRequest) {
       name,
       marketplace,
       status: "uploaded",
+      isNewListing,
       products: {
         create: rows.map((r) => ({
           name: r.name ?? "Unknown",
