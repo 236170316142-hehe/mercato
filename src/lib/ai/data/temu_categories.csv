@@ -55,6 +55,27 @@ Women's Clothing,Sleepwear,Robes
 Women's Clothing,Socks & Hosiery,Socks
 Women's Clothing,Socks & Hosiery,Tights
 Women's Clothing,Socks & Hosiery,Stockings
+Women's Curve+Plus,Tops,Plus-Size T-Shirts
+Women's Curve+Plus,Tops,Plus-Size Blouses & Shirts
+Women's Curve+Plus,Tops,Plus-Size Tank Tops
+Women's Curve+Plus,Tops,Plus-Size Tunics
+Women's Curve+Plus,Dresses,Plus-Size Casual Dresses
+Women's Curve+Plus,Dresses,Plus-Size Maxi Dresses
+Women's Curve+Plus,Dresses,Plus-Size Party Dresses
+Women's Curve+Plus,Bottoms,Plus-Size Jeans
+Women's Curve+Plus,Bottoms,Plus-Size Leggings
+Women's Curve+Plus,Bottoms,Plus-Size Shorts
+Women's Curve+Plus,Bottoms,Plus-Size Skirts
+Women's Curve+Plus,Outerwear,Plus-Size Jackets
+Women's Curve+Plus,Outerwear,Plus-Size Coats
+Women's Curve+Plus,Activewear,Plus-Size Sports Bras
+Women's Curve+Plus,Activewear,Plus-Size Athletic Leggings
+Women's Curve+Plus,Swimwear,Plus-Size Bikinis
+Women's Curve+Plus,Swimwear,Plus-Size One-Piece Swimsuits
+Women's Curve+Plus,Lingerie,Plus-Size Bras
+Women's Curve+Plus,Lingerie,Plus-Size Shapewear
+Women's Curve+Plus,Sleepwear,Plus-Size Pajama Sets
+Women's Curve+Plus,Sleepwear,Plus-Size Nightgowns
 Men's Clothing,Tops,T-Shirts
 Men's Clothing,Tops,Casual Shirts
 Men's Clothing,Tops,Dress Shirts
@@ -127,6 +148,12 @@ Kids & Baby,Nursery,Cribs & Bassinets
 Kids & Baby,Nursery,Nursery Decor
 Kids & Baby,Nursery,Baby Bedding
 Kids & Baby,Nursery,Baby Monitors
+Kids & Baby,Maternity Clothing,Maternity Tops
+Kids & Baby,Maternity Clothing,Maternity Dresses
+Kids & Baby,Maternity Clothing,Maternity Bottoms
+Kids & Baby,Maternity Clothing,Maternity Activewear
+Kids & Baby,Maternity Care,Maternity Support Belts
+Kids & Baby,Maternity Care,Nursing Bras & Accessories
 Shoes,Women's Shoes,Sneakers
 Shoes,Women's Shoes,Heels
 Shoes,Women's Shoes,Flats
@@ -611,6 +638,19 @@ Tools & Home Improvement,Safety & Security,Smoke Detectors
 Tools & Home Improvement,Safety & Security,Safety Equipment
 Tools & Home Improvement,Paint & Wall Treatment,Paint Brushes & Rollers
 Tools & Home Improvement,Paint & Wall Treatment,Wallpaper & Wall Panels
+Mowers & Outdoor Power Tools,Lawn Mowers,Push Mowers
+Mowers & Outdoor Power Tools,Lawn Mowers,Self-Propelled Mowers
+Mowers & Outdoor Power Tools,Lawn Mowers,Riding Mowers
+Mowers & Outdoor Power Tools,Trimmers & Edgers,String Trimmers
+Mowers & Outdoor Power Tools,Trimmers & Edgers,Lawn Edgers
+Mowers & Outdoor Power Tools,Leaf Blowers,Corded Leaf Blowers
+Mowers & Outdoor Power Tools,Leaf Blowers,Cordless Leaf Blowers
+Mowers & Outdoor Power Tools,Chainsaws,Gas Chainsaws
+Mowers & Outdoor Power Tools,Chainsaws,Electric Chainsaws
+Mowers & Outdoor Power Tools,Pressure Washers,Electric Pressure Washers
+Mowers & Outdoor Power Tools,Pressure Washers,Gas Pressure Washers
+Mowers & Outdoor Power Tools,Snow Removal,Snow Blowers
+Mowers & Outdoor Power Tools,Generators,Portable Generators
 Musical Instruments,Guitars,Acoustic Guitars
 Musical Instruments,Guitars,Electric Guitars
 Musical Instruments,Guitars,Bass Guitars
@@ -630,6 +670,23 @@ Musical Instruments,Recording & Studio,Studio Monitors
 Musical Instruments,Instrument Accessories,Instrument Cables
 Musical Instruments,Instrument Accessories,Instrument Stands
 Musical Instruments,Instrument Accessories,Tuners & Metronomes
+Industrial & Commercial,Safety Equipment,Safety Gloves
+Industrial & Commercial,Safety Equipment,Safety Goggles & Glasses
+Industrial & Commercial,Safety Equipment,Helmets & Hard Hats
+Industrial & Commercial,Safety Equipment,Safety Vests & Clothing
+Industrial & Commercial,Safety Equipment,Ear Protection
+Industrial & Commercial,Safety Equipment,Respirators & Masks
+Industrial & Commercial,Packaging Supplies,Boxes & Shipping Containers
+Industrial & Commercial,Packaging Supplies,Tape & Dispensers
+Industrial & Commercial,Packaging Supplies,Bubble Wrap & Foam
+Industrial & Commercial,Packaging Supplies,Labels & Tags
+Industrial & Commercial,Janitorial Supplies,Commercial Mops & Brooms
+Industrial & Commercial,Janitorial Supplies,Trash Bags & Bins
+Industrial & Commercial,Janitorial Supplies,Industrial Cleaning Products
+Industrial & Commercial,Adhesives & Sealants,Industrial Glues
+Industrial & Commercial,Adhesives & Sealants,Sealants & Caulk
+Industrial & Commercial,Material Handling,Storage Shelving & Racks
+Industrial & Commercial,Material Handling,Hand Trucks & Dollies
 Holidays & Party,Christmas,Christmas Tree Decorations
 Holidays & Party,Christmas,Christmas String Lights
 Holidays & Party,Christmas,Christmas Trees & Wreaths
