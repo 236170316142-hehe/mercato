@@ -76,6 +76,7 @@ export function ExportStep({ projectId, projectName, marketplace, products, proj
   const [fetching, setFetching] = useState(true);
   // For single-template marketplaces: user picks which template to export with
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [missingTemplateCategories, setMissingTemplateCategories] = useState<string[]>([]);
   const mountedRef = useRef(true);
 
   const isMathis = marketplace === "mathis";
@@ -204,6 +205,11 @@ export function ExportStep({ projectId, projectName, marketplace, products, proj
           a.click();
           URL.revokeObjectURL(url);
 
+          // Check if any Temu categories were excluded due to missing templates
+          const missingHeader = pollRes.headers.get("X-Missing-Template-Categories") ?? "";
+          const missing = missingHeader.split(",").filter(Boolean).map(decodeURIComponent);
+          setMissingTemplateCategories(missing);
+
           if (isZip) {
             const fileCount = usesCategoryZip ? categories.length : 1;
             toast.success(`ZIP downloaded — ${fileCount} file${fileCount !== 1 ? "s" : ""}`);
@@ -281,6 +287,31 @@ export function ExportStep({ projectId, projectName, marketplace, products, proj
           {buttonLabel}
         </button>
       </div>
+
+      {/* Missing-template warning (Temu) */}
+      {missingTemplateCategories.length > 0 && (
+        <div className="mb-5 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                {missingTemplateCategories.length} categor{missingTemplateCategories.length === 1 ? "y" : "ies"} excluded — no matching template
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5 mb-2">
+                Upload a dedicated template for each category below, then re-export to include these products.
+              </p>
+              <ul className="flex flex-col gap-1">
+                {missingTemplateCategories.map((cat) => (
+                  <li key={cat} className="flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                    {cat}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">

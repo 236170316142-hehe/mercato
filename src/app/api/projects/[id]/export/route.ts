@@ -50,10 +50,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     extension,
   });
 
+  const missing = job.missingTemplateCategories ?? [];
   return new Response(job.zip as unknown as BodyInit, {
     headers: {
       "Content-Type": contentType,
       "Content-Disposition": contentDisposition(filename),
+      // Temu categories that had no matching template — client reads this to show
+      // an "upload a template for these categories" warning after download.
+      "X-Missing-Template-Categories": missing.map(encodeURIComponent).join(","),
+      "Access-Control-Expose-Headers": "X-Missing-Template-Categories",
     },
   });
 }
@@ -172,6 +177,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       setJobPhase(jobId, "Building spreadsheet files…");
 
       let zipBuffer: Buffer;
+      let missingTemplateCategories: string[] = [];
       if (useTemplateIds && allTemplates.length) {
         // User explicitly selected a template → all products in one file using that template.
         // This takes priority over category-split so Walmart (and any marketplace) can use
@@ -182,7 +188,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       } else if (usesCategoryExport && allTemplates.length) {
         // With uploaded templates: match each category to the closest template
         // and export in that template's column format — one file per matched category
-        zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
+        const result = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId);
+        zipBuffer = result.zip;
+        missingTemplateCategories = result.missingTemplateCategories;
       } else if (usesCategoryExport) {
         // Without templates: split by AI-assigned category using flat columns
         zipBuffer = await generateFlatCategoryZip(project.products, projectMeta.marketplace) as Buffer;
@@ -190,7 +198,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // Non-Mathis with no templates → flat export (one file, standard columns)
         zipBuffer = await generateFlatExport(project.products, projectMeta.marketplace) as Buffer;
       } else if (useAutoMatch) {
-        zipBuffer = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId) as Buffer;
+        const result = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId);
+        zipBuffer = result.zip;
+        missingTemplateCategories = result.missingTemplateCategories;
       } else {
         zipBuffer = await generateExportZip(project.products, allTemplates as unknown as ExportTemplate[], projectMeta.marketplace) as Buffer;
       }
@@ -201,6 +211,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       resolveJob(jobId, payload.buffer, {
         extension: payload.extension,
         contentType: payload.contentType,
+        missingTemplateCategories,
       });
       await prisma.project.update({ where: { id }, data: { status: "done" } });
     } catch (err) {

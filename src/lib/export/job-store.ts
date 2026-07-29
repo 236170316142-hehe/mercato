@@ -18,6 +18,8 @@ type ExportJob = {
   extension?: string;
   /** MIME type matching `extension`. */
   contentType?: string;
+  /** Temu categories that had no matching template and were excluded from the export. */
+  missingTemplateCategories?: string[];
 };
 
 // Module-level singleton — survives across requests in the same Node.js process.
@@ -46,7 +48,7 @@ export function setJobPhase(id: string, phase: string): void {
 export function resolveJob(
   id: string,
   zip: Buffer,
-  meta?: { extension?: string; contentType?: string },
+  meta?: { extension?: string; contentType?: string; missingTemplateCategories?: string[] },
 ): void {
   const j = jobs.get(id);
   if (j) {
@@ -56,6 +58,7 @@ export function resolveJob(
       zip,
       extension: meta?.extension ?? "zip",
       contentType: meta?.contentType ?? "application/zip",
+      missingTemplateCategories: meta?.missingTemplateCategories ?? [],
       updatedAt: Date.now(),
     });
   }

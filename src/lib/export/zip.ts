@@ -107,9 +107,9 @@ export async function generateCategoryZip(
   templates: TemplateRow[],
   marketplace = "amazon",
   defaultTemplateId?: string,
-): Promise<Buffer> {
+): Promise<{ zip: Buffer; missingTemplateCategories: string[] }> {
   console.log(`[export] generateCategoryZip called: ${products.length} products, ${templates.length} templates, marketplace=${marketplace}`);
-  const zip = new JSZip();
+  const zipOut = new JSZip();
   // Fallback priority:
   //   1) explicitly selected template
   //   2) template whose name contains "other(s)/general/default" AND has fileData
@@ -167,7 +167,12 @@ export async function generateCategoryZip(
   //   1) Exact category-path match from template's embedded category sheet (Temu only)
   //   2) Name/category word-overlap (findBestTemplate)
   //   3) Column-overlap — only when no OTHER/GENERAL catch-all template exists
+  //
+  // For Temu: if the only available match is the catch-all "OTHER" template,
+  // the category is flagged as needing a dedicated template and excluded from
+  // the export — it should NOT be lumped into the generic catch-all file.
   const hasCatchAll = isGenericTemplate(fallback);
+  const missingTemplateCategories: string[] = [];
   const byCategory = new Map<string, { template: TemplateRow; catLabel: string; products: Product[] }>();
   for (const [catKey, { catLabel, isUncategorized, catProducts }] of grouped.entries()) {
     let tpl: TemplateRow;
@@ -180,7 +185,6 @@ export async function generateCategoryZip(
         ? templates.find(t => {
             const cats = tmplCats.get(t.id);
             if (!cats) return false;
-            // product category starts with a template category (or is an exact match)
             return cats.has(lowerCat) || [...cats].some(c => lowerCat.startsWith(c) || c.startsWith(lowerCat));
           })
         : undefined;
@@ -196,6 +200,14 @@ export async function generateCategoryZip(
           tpl = bestByColumnOverlap(catProducts, templates, fallback);
         }
       }
+
+      // For Temu: if the best we found is the generic catch-all, exclude this
+      // category and tell the user they need a dedicated template for it.
+      if (isTemu && hasCatchAll && tpl === fallback) {
+        missingTemplateCategories.push(catLabel);
+        console.log(`[export] No specific template for "${catLabel}" — excluded, needs a dedicated template`);
+        continue;
+      }
     }
     console.log(`[export] Group "${catLabel || "(uncategorized)"}" → template "${tpl.name}"`);
     byCategory.set(catKey, { template: tpl, catLabel: isUncategorized ? "" : catLabel, products: catProducts });
@@ -210,19 +222,20 @@ export async function generateCategoryZip(
     const fileName = catKey === "__uncategorized__" ? sanitize(template.name) : sanitize(catLabel);
 
     if (template.fileFormat === "csv") {
-      zip.file(`${fileName}.csv`, generateCsv(catProducts, columns));
+      zipOut.file(`${fileName}.csv`, generateCsv(catProducts, columns));
     } else if (template.fileData) {
       console.log(`[export] Filling template "${template.name}" (${marketplace}) fileData size=${Buffer.byteLength(template.fileData as Buffer)}`);
       const buffer = await fillTemplateXlsx(catProducts, columns, template.fileData as Buffer, marketplace);
-      zip.file(`${fileName}.xlsx`, buffer);
+      zipOut.file(`${fileName}.xlsx`, buffer);
     } else {
       console.warn(`[export] Template "${template.name}" (${marketplace}) has NO fileData — plain workbook will be generated. Re-upload the template file to fix this.`);
       const buffer = await createXlsxFromScratch(catProducts, columns, catLabel || template.name);
-      zip.file(`${fileName}.xlsx`, buffer);
+      zipOut.file(`${fileName}.xlsx`, buffer);
     }
   }
 
-  return zip.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>;
+  const zipBuffer = await (zipOut.generateAsync({ type: "nodebuffer" }) as unknown as Promise<Buffer>);
+  return { zip: zipBuffer, missingTemplateCategories };
 }
 
 // Pick the best-matching template for a category using word-overlap scoring.
