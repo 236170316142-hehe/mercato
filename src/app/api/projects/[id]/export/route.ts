@@ -126,11 +126,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             }),
       ]);
 
-      // User-uploaded templates take full priority over admin/global templates.
-      // If the exporting user has uploaded their own templates for this marketplace,
-      // use only those. Fall back to admin/global templates only when the user has none.
+      // Both user-uploaded and admin/global templates are included in the export pool.
+      // When the user has uploaded a template with the same name as an admin template,
+      // the user's version replaces the admin's — so their customisation takes effect
+      // without losing access to admin templates they haven't overridden.
       const userOwnTemplates = rawTemplates.filter(t => t.userId === user!.id);
-      const allTemplates = (userOwnTemplates.length > 0 ? userOwnTemplates : rawTemplates) as TemplateRow[];
+      const adminTemplates   = rawTemplates.filter(t => t.userId !== user!.id);
+      const userNames = new Set(userOwnTemplates.map(t => t.name.toLowerCase().trim()));
+      const nonOverriddenAdmin = adminTemplates.filter(t => !userNames.has(t.name.toLowerCase().trim()));
+      const allTemplates = [...userOwnTemplates, ...nonOverriddenAdmin] as TemplateRow[];
 
       if (!project) throw new Error("Project not found");
 
