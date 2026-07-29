@@ -256,7 +256,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // Walmart categorizes against a fixed list too (rich taxonomy or the 75
       // template values), so like the other constrained marketplaces any valid
       // assignment beats "Uncategorized" — skip the confidence gate.
-      const isConstrainedTaxonomy = ["temu", "bestbuy", "mathis", "walmart"].includes(mpLower);
+      const isConstrainedTaxonomy = ["temu", "bestbuy", "sears", "mathis", "walmart"].includes(mpLower);
       const MIN_CONFIDENCE = Number(process.env.CATEGORIZE_MIN_CONFIDENCE ?? 0.6);
       const inputById = new Map(productInputs.map((p) => [p.id, p]));
 
@@ -331,11 +331,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       reprocessed: productInputs.length,
       enrichedFromSku: enrichedCount,
       categories:
-        mpLower === "temu" || mpLower === "bestbuy"
+        mpLower === "temu"
           ? ["(temu_categories.csv taxonomy)"]
-          : mpLower === "mathis"
-            ? ["(mathis_categories.csv taxonomy)"]
-            : [],
+          : mpLower === "bestbuy"
+            ? ["(bestbuy_categories.csv taxonomy)"]
+            : mpLower === "sears"
+              ? ["(sears_categories.csv taxonomy)"]
+              : mpLower === "mathis"
+                ? ["(mathis_categories.csv taxonomy)"]
+                : [],
     });
   } catch (err) {
     await prisma.project.update({ where: { id }, data: { status: "verified" } });

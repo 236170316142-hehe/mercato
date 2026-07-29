@@ -170,6 +170,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const isTemu = mpLower === "temu";
       const isBestBuy = mpLower === "bestbuy";
       const isWalmart = mpLower === "walmart";
+      const isSears = mpLower === "sears";
       // Category-split marketplaces: products grouped by category, each group filled into
       // the closest matching uploaded template (one output file per template).
       const usesCategoryExport = isTemu || isBestBuy || isWalmart;
@@ -180,7 +181,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       let missingTemplateCategories: string[] = [];
       if (useTemplateIds && allTemplates.length) {
         // User explicitly selected a template → all products in one file using that template.
-        // This takes priority over category-split so Walmart (and any marketplace) can use
+        // This takes priority over category-split so any marketplace can use
         // a manually chosen template instead of auto-matching by category.
         const tpl = allTemplates[0];
         const templateFileData = tpl?.fileData ? Buffer.from(tpl.fileData as unknown as ArrayBuffer) : null;
@@ -194,8 +195,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       } else if (usesCategoryExport) {
         // Without templates: split by AI-assigned category using flat columns
         zipBuffer = await generateFlatCategoryZip(project.products, projectMeta.marketplace) as Buffer;
+      } else if (isSears && allTemplates.length) {
+        // Sears uses one generic template — all products go into a single file.
+        // No category-splitting needed since a single template covers the whole catalogue.
+        const tpl = allTemplates[0];
+        const templateFileData = tpl?.fileData ? Buffer.from(tpl.fileData as unknown as ArrayBuffer) : null;
+        zipBuffer = await generateSingleTemplateExport(project.products, tpl, projectMeta.marketplace, templateFileData) as Buffer;
       } else if (!allTemplates.length) {
-        // Non-Mathis with no templates → flat export (one file, standard columns)
+        // No templates → flat export (one file, standard columns)
         zipBuffer = await generateFlatExport(project.products, projectMeta.marketplace) as Buffer;
       } else if (useAutoMatch) {
         const result = await generateCategoryZip(project.products, allTemplates, projectMeta.marketplace, templateId);

@@ -3,6 +3,8 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { formatTemuTaxonomyForPrompt, loadTemuCategoryPaths } from "@/lib/ai/temu-taxonomy";
 import { formatMathisTaxonomyForPrompt, loadMathisCategoryPaths } from "@/lib/ai/mathis-taxonomy";
 import { formatWalmartTaxonomyForPrompt, loadWalmartCategoryPaths } from "@/lib/ai/walmart-taxonomy";
+import { formatBestBuyTaxonomyForPrompt, loadBestBuyCategoryPaths } from "@/lib/ai/bestbuy-taxonomy";
+import { formatSearsTaxonomyForPrompt, loadSearsCategoryPaths } from "@/lib/ai/sears-taxonomy";
 
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -108,11 +110,21 @@ export async function categorizeProducts(
   const isBestBuyTop = mpLower === "bestbuy";
   const isTemuTop = mpLower === "temu";
   const isWalmartTop = mpLower === "walmart";
+  const isSearsTop = mpLower === "sears";
 
-  // Temu + Best Buy share temu_categories.csv so the same products get the same category paths.
-  // Claude is given the full sheet + product details and must pick an exact leaf path.
-  if (isTemuTop || isBestBuyTop) {
+  // Temu: full taxonomy from temu_categories.csv
+  if (isTemuTop) {
     availableCategories = loadTemuCategoryPaths();
+  }
+
+  // Best Buy: own electronics-focused taxonomy from bestbuy_categories.csv
+  if (isBestBuyTop) {
+    availableCategories = loadBestBuyCategoryPaths();
+  }
+
+  // Sears: broad-retail taxonomy from sears_categories.csv
+  if (isSearsTop) {
+    availableCategories = loadSearsCategoryPaths();
   }
 
   // Mathis works the same way: the full taxonomy sheet (mathis_categories.csv, built from
@@ -129,13 +141,12 @@ export async function categorizeProducts(
     availableCategories = loadWalmartCategoryPaths();
   }
 
-  // Constrained mode = AI must pick from a fixed list (Temu/Best Buy/Mathis/Walmart taxonomy)
+  // Constrained mode = AI must pick from a fixed list (Temu/Best Buy/Sears/Mathis/Walmart taxonomy)
   const isConstrained =
-    (isMathis || isBestBuyTop || isTemuTop || isWalmartTop) && !!availableCategories?.length;
+    (isMathis || isBestBuyTop || isTemuTop || isWalmartTop || isSearsTop) && !!availableCategories?.length;
 
   // Smaller batches for constrained-category marketplaces so the AI reasons carefully per product.
-  // These use full taxonomy sheets — keep batches small so the taxonomy fits with product context.
-  const BATCH = (isTemuTop || isMathis || isBestBuyTop || isWalmartTop) ? 5 : isConstrained ? 8 : 20;
+  const BATCH = (isTemuTop || isMathis || isBestBuyTop || isWalmartTop || isSearsTop) ? 5 : isConstrained ? 8 : 20;
   const PARALLEL = isConstrained ? 2 : 3;
 
   const model = availableCategories?.length
@@ -255,6 +266,7 @@ async function categorizeBatchWithContext(
   const isTemu = mpLower === "temu";
   const isBestBuy = mpLower === "bestbuy";
   const isWalmart = mpLower === "walmart";
+  const isSears = mpLower === "sears";
 
   const list = products.map((p, idx) => {
     let line = `${idx + 1}. "${p.name}"`;
@@ -267,8 +279,7 @@ async function categorizeBatchWithContext(
   }).join("\n");
 
   let categorySection: string;
-  // Temu and Best Buy share the same category sheet (temu_categories.csv).
-  if ((isTemu || isBestBuy) && availableCategories?.length) {
+  if (isTemu && availableCategories?.length) {
     const taxonomy = formatTemuTaxonomyForPrompt();
     const closestMatchRule = `
 MANDATORY ASSIGNMENT RULES:
@@ -282,6 +293,31 @@ MANDATORY ASSIGNMENT RULES:
 3. Do NOT assign based on the audience (child/adult) — assign based on what the ITEM is.
 4. If two leaves are equally good, pick whichever comes first alphabetically.`;
     categorySection = `exactly one leaf path from this category taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory"):
+
+${taxonomy}
+${closestMatchRule}`;
+  } else if (isBestBuy && availableCategories?.length) {
+    const taxonomy = formatBestBuyTaxonomyForPrompt();
+    const closestMatchRule = `
+MANDATORY ASSIGNMENT RULES:
+1. Every product MUST get a leaf path. NEVER output "Uncategorized" for a product that can be sold on Best Buy.
+2. Focus on the product's primary technology function and use case.
+3. Peripherals (keyboards, mice, webcams) → Computers & Tablets > Computer Accessories.
+4. Wearable tech (smartwatches, fitness bands) → Health & Wellness > Wearables.
+5. If a product spans two categories, pick the one matching its PRIMARY function.`;
+    categorySection = `exactly one leaf path from this Best Buy category taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory"):
+
+${taxonomy}
+${closestMatchRule}`;
+  } else if (isSears && availableCategories?.length) {
+    const taxonomy = formatSearsTaxonomyForPrompt();
+    const closestMatchRule = `
+MANDATORY ASSIGNMENT RULES:
+1. Every product MUST get a leaf path. NEVER output "Uncategorized" for a real sellable item.
+2. Assign based on what the product IS — tools go to Tools & Hardware, clothing to Clothing, etc.
+3. If the product spans departments (e.g. power tools in Lawn & Garden), pick the department where Sears buyers would look first.
+4. Always use the full 3-level path.`;
+    categorySection = `exactly one leaf path from this Sears category taxonomy (copy character-for-character as "Category > Subcategory > Sub-Subcategory"):
 
 ${taxonomy}
 ${closestMatchRule}`;
@@ -336,7 +372,9 @@ If nothing fits, use "Uncategorized".`;
     : isTemu
     ? "You are a product categorization expert for the Temu marketplace seller portal. You are given the EXACT Temu category taxonomy (Category > Sub-Category > Product Type) sourced directly from Temu's seller listing system. Your job is to match each product to the single most specific leaf path from that taxonomy — using ONLY the paths listed. The output must be directly usable for listing on Temu's seller portal without any manual remapping. Do not invent paths. Do not shorten paths to 1 or 2 levels. Always output the full 3-level path."
     : isBestBuy
-    ? "You are a product categorization expert. You are given a shared category sheet (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that sheet. Do not invent paths."
+    ? "You are a product categorization expert for the Best Buy marketplace. You are given the EXACT Best Buy category taxonomy (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that taxonomy — using ONLY the paths listed. Focus on the product's primary technology function. Do not invent paths. Always output the full 3-level path."
+    : isSears
+    ? "You are a product categorization expert for the Sears Marketplace. You are given the EXACT Sears category taxonomy (Category > Subcategory > Sub-Subcategory). Match each product to the single most specific leaf path from that taxonomy — using ONLY the paths listed. Sears sells tools, appliances, clothing, electronics, lawn care, automotive, and home goods. Do not invent paths. Always output the full 3-level path."
     : isWalmart
     ? "You are a product categorization expert for the Walmart Marketplace seller portal. You are given the exact category list Walmart's item-setup accepts. Match each product to the single closest category from that list — using ONLY the entries provided. The result feeds directly into a Walmart listing, so it must be one of the listed values verbatim. Do not invent categories."
     : "You are a product categorization expert for a major retail marketplace.";
@@ -348,12 +386,22 @@ STEP 2 — Search the taxonomy list for a leaf (or path segment) with that same 
 STEP 3 — If exactly one path contains that leaf (e.g. Daybeds only under Baby & Kids), YOU MUST use that path. Do not pick a "similar" adult Furniture path like Sofas.
 STEP 4 — Only if no product-type leaf matches, fall back to the closest listed path — still from the list only.
 Do NOT use outside assumptions (adult daybed → living room sofas, etc.). The taxonomy is the source of truth.`
-    : isTemu || isBestBuy
+    : isTemu
     ? `For EACH product, follow these steps in order:
 STEP 1 — Identify what the product physically IS. State the core noun (e.g. "top hat", "kippah", "crown", "costume suit", "necklace"). Ignore audience (kids/adults) and color at this step.
 STEP 2 — Find the taxonomy section that covers that physical object type. Example: any hat → look in "Jewelry & Accessories > Hats & Caps"; any crown/tiara → "Jewelry & Accessories > Crowns & Tiaras"; any kids costume → "Holidays & Party > Costumes & Dress-Up".
 STEP 3 — Pick the single leaf within that section that most closely matches. Copy it character-for-character.
 IMPORTANT: Base the category on WHAT the item is, not who it's for. A hat for a child is still a hat → Hats & Caps, not Kids' Clothing.`
+    : isBestBuy
+    ? `For EACH product, follow these steps:
+STEP 1 — Identify the product's primary technology function (e.g. "wireless headphones", "laptop", "smart doorbell").
+STEP 2 — Find the Best Buy taxonomy section matching that function (e.g. headphones → Audio > Headphones; laptop → Computers & Tablets > Laptops).
+STEP 3 — Pick the single leaf that most closely matches the product's specific type. Copy it character-for-character.`
+    : isSears
+    ? `For EACH product, follow these steps:
+STEP 1 — Identify what department the product belongs to on Sears (Appliances, Tools & Hardware, Clothing, Electronics, Lawn & Garden, etc.).
+STEP 2 — Find the matching section in the Sears taxonomy, then narrow to the right subcategory and leaf.
+STEP 3 — Copy the full 3-level path character-for-character.`
     : `For each product, first think: "What is this product? What does it do / who uses it?" — then pick the best category. Use your knowledge of real-world products.`;
 
   const mathisSizeRule = isMathis ? `
@@ -379,32 +427,36 @@ ${noInventRule}
 4. Use product name, brand, description, vendor category as signals to identify WHAT the product is — then map that to the taxonomy leaf
 5. Do not override a direct taxonomy product-type match with general retail logic${mathisSizeRule}` : "";
 
-  // Walmart categorizes against a fixed sheet too, so it shares the sheet-mode
-  // temperature/token budget and the "path mirrors the validated category" rule.
-  const usesTaxonomySheet = isTemu || isMathis || isBestBuy || isWalmart;
+  const usesTaxonomySheet = isTemu || isMathis || isBestBuy || isWalmart || isSears;
   // The fuzzy-match floor: rich multi-word paths need a higher bar than the flat
   // 75-value list, whose category names are often 1–2 words.
   const walmartFlat = isWalmart && !(availableCategories ?? []).some((c) => c.includes(" > "));
 
-  const jsonExample = (isTemu || isBestBuy)
-    ? `[{"index":1,"category":"Electronics > Audio > Wireless Earbuds","path":"Electronics > Audio > Wireless Earbuds","confidence":0.95},{"index":2,"category":"Jewelry & Accessories > Hats & Caps > Baseball Caps","path":"Jewelry & Accessories > Hats & Caps > Baseball Caps","confidence":0.90},...]`
+  const jsonExample = isTemu
+    ? `[{"index":1,"category":"Jewelry & Accessories > Hats & Caps > Baseball Caps","path":"Jewelry & Accessories > Hats & Caps > Baseball Caps","confidence":0.95},{"index":2,"category":"Holidays & Party > Costumes & Dress-Up > Kids' Costumes","path":"Holidays & Party > Costumes & Dress-Up > Kids' Costumes","confidence":0.90},...]`
+    : isBestBuy
+    ? `[{"index":1,"category":"Audio > Headphones > Wireless Headphones","path":"Audio > Headphones > Wireless Headphones","confidence":0.95},{"index":2,"category":"Computers & Tablets > Laptops > Gaming Laptops","path":"Computers & Tablets > Laptops > Gaming Laptops","confidence":0.90},...]`
+    : isSears
+    ? `[{"index":1,"category":"Tools & Hardware > Power Tools > Drills & Drivers","path":"Tools & Hardware > Power Tools > Drills & Drivers","confidence":0.95},{"index":2,"category":"Appliances > Major Appliances > Refrigerators","path":"Appliances > Major Appliances > Refrigerators","confidence":0.90},...]`
     : isMathis
     ? `[{"index":1,"category":"Baby & Kids > Kids Furniture > Daybeds","path":"Baby & Kids > Kids Furniture > Daybeds","confidence":0.95},...]`
     : isWalmart
     ? `[{"index":1,"category":"Furniture","path":"Furniture","confidence":0.95},{"index":2,"category":"Home Decor, Kitchen, & Other","path":"Home Decor, Kitchen, & Other","confidence":0.9},...]`
     : `[{"index":1,"category":"Category Name","path":"Category Name","confidence":0.95},...]`;
 
-  const pathHint = (isTemu || isBestBuy)
+  const pathHint = isTemu
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Jewelry & Accessories > Crowns & Tiaras > Crowns" for a crown, "Holidays & Party > Costumes & Dress-Up > Kids' Costumes" for a children's costume, "Jewelry & Accessories > Hats & Caps > Religious & Cultural Hats" for a kipah or tarboosh)`
+    : isBestBuy
+    ? `- category and path: must be the exact leaf path from the Best Buy taxonomy (e.g. "Audio > Headphones > Wireless Headphones" for wireless headphones, "Computers & Tablets > Laptops > Gaming Laptops" for a gaming laptop)`
+    : isSears
+    ? `- category and path: must be the exact leaf path from the Sears taxonomy (e.g. "Tools & Hardware > Power Tools > Drills & Drivers" for a drill, "Appliances > Major Appliances > Refrigerators" for a fridge)`
     : isMathis
     ? `- category and path: must be the exact leaf path from the taxonomy sheet (e.g. "Baby & Kids > Kids Furniture > Daybeds" when the product is a daybed — because that is where Daybeds lives on the sheet)`
     : `- path: full path e.g. "Mathis Brothers > Seasonal"`;
 
-  // For Temu/BestBuy, put the product list BEFORE the taxonomy so the AI
-  // reasons about each product's physical type first, then looks up the taxonomy.
-  // Putting products after a 660-path taxonomy causes the AI to anchor on the
-  // first taxonomy entries it encounters and apply them to all products.
-  const prompt = (isTemu || isBestBuy)
+  // For taxonomy-driven marketplaces, put the product list BEFORE the taxonomy so the AI
+  // reasons about each product's type first, then looks up the taxonomy.
+  const prompt = (isTemu || isBestBuy || isSears)
     ? `${storeContext}
 
 ${reasoningInstruction}

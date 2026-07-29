@@ -1,0 +1,252 @@
+Category,Subcategory,Sub-Subcategory
+Appliances,Major Appliances,Refrigerators
+Appliances,Major Appliances,Ranges & Cooktops
+Appliances,Major Appliances,Dishwashers
+Appliances,Major Appliances,Wall Ovens
+Appliances,Major Appliances,Microwave Ovens
+Appliances,Major Appliances,Range Hoods & Vents
+Appliances,Major Appliances,Freezers
+Appliances,Laundry,Top-Load Washers
+Appliances,Laundry,Front-Load Washers
+Appliances,Laundry,Electric Dryers
+Appliances,Laundry,Gas Dryers
+Appliances,Laundry,Washer & Dryer Sets
+Appliances,Laundry,Laundry Accessories
+Appliances,Air Conditioning,Window Air Conditioners
+Appliances,Air Conditioning,Portable Air Conditioners
+Appliances,Air Conditioning,Central Air Conditioners
+Appliances,Heating,Electric Space Heaters
+Appliances,Heating,Gas Heaters
+Appliances,Heating,Heat Pumps
+Appliances,Small Appliances,Coffee Makers
+Appliances,Small Appliances,Toasters & Toaster Ovens
+Appliances,Small Appliances,Blenders
+Appliances,Small Appliances,Slow Cookers & Crock Pots
+Appliances,Small Appliances,Food Processors
+Appliances,Small Appliances,Stand Mixers
+Appliances,Small Appliances,Air Fryers
+Appliances,Small Appliances,Electric Grills & Griddles
+Appliances,Small Appliances,Juicers
+Appliances,Small Appliances,Electric Kettles
+Appliances,Vacuums & Floor Care,Upright Vacuums
+Appliances,Vacuums & Floor Care,Stick Vacuums
+Appliances,Vacuums & Floor Care,Canister Vacuums
+Appliances,Vacuums & Floor Care,Robot Vacuums
+Appliances,Vacuums & Floor Care,Handheld Vacuums
+Appliances,Vacuums & Floor Care,Steam Mops
+Tools & Hardware,Power Tools,Drills & Drivers
+Tools & Hardware,Power Tools,Circular Saws
+Tools & Hardware,Power Tools,Jigsaws & Reciprocating Saws
+Tools & Hardware,Power Tools,Sanders
+Tools & Hardware,Power Tools,Rotary Tools
+Tools & Hardware,Power Tools,Air Compressors
+Tools & Hardware,Power Tools,Nail Guns & Staplers
+Tools & Hardware,Power Tools,Angle Grinders
+Tools & Hardware,Hand Tools,Screwdrivers
+Tools & Hardware,Hand Tools,Hammers & Mallets
+Tools & Hardware,Hand Tools,Wrenches & Sockets
+Tools & Hardware,Hand Tools,Pliers & Cutters
+Tools & Hardware,Hand Tools,Tool Sets & Combo Kits
+Tools & Hardware,Hand Tools,Measuring & Layout Tools
+Tools & Hardware,Outdoor Power Equipment,Gas Lawn Mowers
+Tools & Hardware,Outdoor Power Equipment,Electric Lawn Mowers
+Tools & Hardware,Outdoor Power Equipment,Riding Lawn Mowers
+Tools & Hardware,Outdoor Power Equipment,Leaf Blowers
+Tools & Hardware,Outdoor Power Equipment,String Trimmers
+Tools & Hardware,Outdoor Power Equipment,Chainsaws
+Tools & Hardware,Outdoor Power Equipment,Pressure Washers
+Tools & Hardware,Outdoor Power Equipment,Snow Blowers
+Tools & Hardware,Tool Storage,Tool Chests & Cabinets
+Tools & Hardware,Tool Storage,Tool Bags & Totes
+Tools & Hardware,Tool Storage,Wall Storage & Pegboards
+Tools & Hardware,Hardware,Nuts Bolts & Fasteners
+Tools & Hardware,Hardware,Door Hardware & Locks
+Tools & Hardware,Hardware,Cabinet Hardware
+Tools & Hardware,Safety Equipment,Safety Glasses
+Tools & Hardware,Safety Equipment,Work Gloves
+Tools & Hardware,Safety Equipment,Ear Protection
+Clothing,Men's Clothing,Men's T-Shirts & Polos
+Clothing,Men's Clothing,Men's Dress Shirts
+Clothing,Men's Clothing,Men's Pants & Jeans
+Clothing,Men's Clothing,Men's Shorts
+Clothing,Men's Clothing,Men's Suits & Blazers
+Clothing,Men's Clothing,Men's Outerwear & Jackets
+Clothing,Men's Clothing,Men's Sweaters & Hoodies
+Clothing,Men's Clothing,Men's Underwear & Socks
+Clothing,Women's Clothing,Women's Tops & Blouses
+Clothing,Women's Clothing,Women's Pants & Jeans
+Clothing,Women's Clothing,Women's Skirts
+Clothing,Women's Clothing,Women's Dresses
+Clothing,Women's Clothing,Women's Outerwear & Jackets
+Clothing,Women's Clothing,Women's Sweaters & Hoodies
+Clothing,Women's Clothing,Women's Intimates & Sleepwear
+Clothing,Women's Clothing,Women's Swimwear
+Clothing,Kids' Clothing,Boys' Tops & T-Shirts
+Clothing,Kids' Clothing,Boys' Pants & Shorts
+Clothing,Kids' Clothing,Girls' Tops & Dresses
+Clothing,Kids' Clothing,Girls' Pants & Leggings
+Clothing,Kids' Clothing,Baby & Infant Clothing
+Clothing,Kids' Clothing,Toddler Clothing
+Clothing,Workwear,Work Shirts & Hi-Vis Tops
+Clothing,Workwear,Work Pants & Overalls
+Clothing,Workwear,Safety Vests & Protective Gear
+Shoes,Men's Shoes,Men's Athletic & Running Shoes
+Shoes,Men's Shoes,Men's Casual Shoes & Sneakers
+Shoes,Men's Shoes,Men's Dress Shoes & Oxfords
+Shoes,Men's Shoes,Men's Boots
+Shoes,Men's Shoes,Men's Work & Safety Boots
+Shoes,Men's Shoes,Men's Sandals & Flip Flops
+Shoes,Women's Shoes,Women's Athletic & Running Shoes
+Shoes,Women's Shoes,Women's Casual Shoes & Sneakers
+Shoes,Women's Shoes,Women's Dress Shoes & Pumps
+Shoes,Women's Shoes,Women's Boots & Booties
+Shoes,Women's Shoes,Women's Heels & Wedges
+Shoes,Women's Shoes,Women's Sandals & Flip Flops
+Shoes,Kids' Shoes,Boys' Athletic Shoes
+Shoes,Kids' Shoes,Boys' Casual Shoes & Boots
+Shoes,Kids' Shoes,Girls' Athletic Shoes
+Shoes,Kids' Shoes,Girls' Casual Shoes & Boots
+Shoes,Kids' Shoes,Baby & Toddler Shoes
+Electronics,TVs,4K Ultra HD TVs
+Electronics,TVs,Smart TVs
+Electronics,TVs,OLED & QLED TVs
+Electronics,TVs,Full HD TVs
+Electronics,Home Audio,Sound Bars & Home Theater Systems
+Electronics,Home Audio,Bluetooth Speakers
+Electronics,Home Audio,Headphones & Earbuds
+Electronics,Home Audio,AV Receivers & Amplifiers
+Electronics,Computers,Laptops
+Electronics,Computers,Desktop Computers
+Electronics,Computers,Tablets & iPads
+Electronics,Computers,Computer Accessories
+Electronics,Cell Phones,Smartphones
+Electronics,Cell Phones,Cell Phone Accessories
+Electronics,Cell Phones,Prepaid Phones
+Electronics,Cameras,Digital & Mirrorless Cameras
+Electronics,Cameras,Indoor & Outdoor Security Cameras
+Electronics,Cameras,Action Cameras & Drones
+Electronics,Cameras,Camera Accessories
+Electronics,Smart Home,Smart Speakers & Displays
+Electronics,Smart Home,Smart Doorbells & Security Systems
+Electronics,Smart Home,Smart Thermostats
+Electronics,Smart Home,Smart Lighting
+Electronics,Video Games,Video Game Consoles
+Electronics,Video Games,Video Games
+Electronics,Video Games,Gaming Accessories
+Lawn & Garden,Lawn Mowers,Gas Push Mowers
+Lawn & Garden,Lawn Mowers,Electric & Cordless Mowers
+Lawn & Garden,Lawn Mowers,Riding Lawn Mowers
+Lawn & Garden,Lawn Mowers,Zero Turn Mowers
+Lawn & Garden,Outdoor Power Tools,Leaf Blowers & Vacuums
+Lawn & Garden,Outdoor Power Tools,String Trimmers & Edgers
+Lawn & Garden,Outdoor Power Tools,Chainsaws
+Lawn & Garden,Outdoor Power Tools,Pressure Washers
+Lawn & Garden,Outdoor Power Tools,Snow Blowers
+Lawn & Garden,Garden Hand Tools,Shovels & Spades
+Lawn & Garden,Garden Hand Tools,Rakes & Hoes
+Lawn & Garden,Garden Hand Tools,Pruners & Loppers
+Lawn & Garden,Garden Hand Tools,Garden Hoses & Sprinklers
+Lawn & Garden,Outdoor Furniture,Patio Chairs & Loungers
+Lawn & Garden,Outdoor Furniture,Patio Tables & Dining Sets
+Lawn & Garden,Outdoor Furniture,Outdoor Sofas & Sectionals
+Lawn & Garden,Outdoor Furniture,Outdoor Umbrellas & Canopies
+Lawn & Garden,Outdoor Furniture,Outdoor Cushions & Covers
+Lawn & Garden,Grills & Outdoor Cooking,Gas Grills
+Lawn & Garden,Grills & Outdoor Cooking,Charcoal Grills
+Lawn & Garden,Grills & Outdoor Cooking,Electric Grills
+Lawn & Garden,Grills & Outdoor Cooking,Smokers & Pellet Grills
+Lawn & Garden,Grills & Outdoor Cooking,Grill Accessories
+Lawn & Garden,Plants & Planters,Planters & Pots
+Lawn & Garden,Plants & Planters,Raised Garden Beds
+Lawn & Garden,Plants & Planters,Seeds & Bulbs
+Lawn & Garden,Lawn Care,Fertilizers & Weed Control
+Lawn & Garden,Lawn Care,Lawn Sprinklers & Irrigation
+Home,Furniture,Sofas & Sectionals
+Home,Furniture,Recliners & Accent Chairs
+Home,Furniture,Coffee & End Tables
+Home,Furniture,Bedroom Sets & Headboards
+Home,Furniture,Dressers & Nightstands
+Home,Furniture,Dining Tables & Chairs
+Home,Furniture,Bookcases & Shelving
+Home,Furniture,TV Stands & Entertainment Centers
+Home,Bedding & Bath,Comforters & Comforter Sets
+Home,Bedding & Bath,Sheets & Pillowcases
+Home,Bedding & Bath,Blankets & Throws
+Home,Bedding & Bath,Pillows
+Home,Bedding & Bath,Bath Towels & Sets
+Home,Bedding & Bath,Shower Curtains & Accessories
+Home,Kitchen,Cookware Sets & Pots
+Home,Kitchen,Bakeware
+Home,Kitchen,Kitchen Knives & Cutting Boards
+Home,Kitchen,Dinnerware & Flatware
+Home,Kitchen,Kitchen Storage & Organization
+Home,Home Improvement,Flooring & Tiles
+Home,Home Improvement,Lighting Fixtures
+Home,Home Improvement,Plumbing & Faucets
+Home,Home Improvement,Paint & Painting Supplies
+Home,Home Improvement,Doors & Windows
+Home,Home Improvement,Storage & Shelving
+Sports & Fitness,Fitness Equipment,Treadmills
+Sports & Fitness,Fitness Equipment,Exercise Bikes
+Sports & Fitness,Fitness Equipment,Ellipticals
+Sports & Fitness,Fitness Equipment,Weight Benches & Racks
+Sports & Fitness,Fitness Equipment,Free Weights & Dumbbells
+Sports & Fitness,Fitness Equipment,Yoga & Pilates Equipment
+Sports & Fitness,Outdoor Sports,Bicycles & Cycling Accessories
+Sports & Fitness,Outdoor Sports,Kayaks & Water Sports
+Sports & Fitness,Outdoor Sports,Camping & Hiking Gear
+Sports & Fitness,Outdoor Sports,Fishing Gear & Tackle
+Sports & Fitness,Team Sports,Basketball Equipment
+Sports & Fitness,Team Sports,Baseball & Softball Equipment
+Sports & Fitness,Team Sports,Football Equipment
+Sports & Fitness,Team Sports,Soccer Equipment
+Sports & Fitness,Winter Sports,Skis & Snowboard Equipment
+Sports & Fitness,Winter Sports,Ice Skates
+Sports & Fitness,Sports Accessories,Sports Bags & Backpacks
+Sports & Fitness,Sports Accessories,Protective Gear & Padding
+Automotive,Car Care,Car Wax & Polish
+Automotive,Car Care,Car Vacuums
+Automotive,Car Care,Tire Inflators & Gauges
+Automotive,Car Care,Car Wash Supplies
+Automotive,Auto Parts,Car Batteries
+Automotive,Auto Parts,Windshield Wipers
+Automotive,Auto Parts,Filters & Fluids
+Automotive,Car Accessories,Car Seat Covers & Floor Mats
+Automotive,Car Accessories,Cargo Carriers & Organizers
+Automotive,Car Accessories,Car Phone Mounts
+Automotive,Garage,Garage Storage Systems
+Automotive,Garage,Tool Organizers & Workbenches
+Automotive,Garage,Garage Flooring
+Baby & Kids,Baby Gear,Strollers
+Baby & Kids,Baby Gear,Car Seats
+Baby & Kids,Baby Gear,Baby Carriers & Wraps
+Baby & Kids,Baby Furniture,Cribs & Toddler Beds
+Baby & Kids,Baby Furniture,Changing Tables & Dressers
+Baby & Kids,Baby Feeding,High Chairs & Booster Seats
+Baby & Kids,Baby Feeding,Baby Bottles & Accessories
+Baby & Kids,Toys,Action Figures & Playsets
+Baby & Kids,Toys,Building & Construction Sets
+Baby & Kids,Toys,Dolls & Accessories
+Baby & Kids,Toys,Outdoor & Ride-On Toys
+Baby & Kids,Toys,Educational & Learning Toys
+Baby & Kids,Toys,Board Games & Puzzles
+Jewelry & Watches,Women's Jewelry,Women's Rings
+Jewelry & Watches,Women's Jewelry,Women's Necklaces & Pendants
+Jewelry & Watches,Women's Jewelry,Women's Earrings
+Jewelry & Watches,Women's Jewelry,Women's Bracelets
+Jewelry & Watches,Men's Jewelry,Men's Rings
+Jewelry & Watches,Men's Jewelry,Men's Bracelets & Chains
+Jewelry & Watches,Watches,Men's Watches
+Jewelry & Watches,Watches,Women's Watches
+Jewelry & Watches,Watches,Smartwatches
+Health & Beauty,Skincare,Moisturizers & Serums
+Health & Beauty,Skincare,Cleansers & Toners
+Health & Beauty,Skincare,Sunscreen & SPF
+Health & Beauty,Hair Care,Shampoo & Conditioner
+Health & Beauty,Hair Care,Hair Styling Products
+Health & Beauty,Hair Care,Hair Dryers & Styling Tools
+Health & Beauty,Vitamins & Supplements,Multivitamins
+Health & Beauty,Vitamins & Supplements,Protein & Fitness Supplements
+Health & Beauty,Personal Care,Electric Toothbrushes
+Health & Beauty,Personal Care,Electric Shavers & Trimmers
+Health & Beauty,Personal Care,Deodorant & Body Care
