@@ -262,36 +262,39 @@ export function findBestTemplate<T extends { id: string; name: string; category?
   const normCat = norm(category);
   const catWords = normCat.split(" ").filter((w) => w.length > 2);
 
+  // Score one candidate string against the product category path.
+  const scoreTarget = (raw: string): number => {
+    const target = norm(raw);
+    const bareName = target.replace(/\s+\d+$/, "").trim();
+    const targetWords = target.split(" ").filter((w) => w.length > 2);
+    let sc = 0;
+    if (target === normDept || bareName === normDept) sc += 20;
+    else if (normDept.startsWith(target) || target.startsWith(normDept)) sc += 12;
+    else if (
+      (target.length >= 5 && normDept.startsWith(target.slice(0, 5))) ||
+      (normDept.length >= 5 && target.startsWith(normDept.slice(0, 5)))
+    ) sc += 10;
+    for (const word of catWords) if (targetWords.includes(word)) sc += 2;
+    for (const word of targetWords) if (catWords.includes(word)) sc += 1;
+    if (target.includes(normCat)) sc += 5;
+    if (normCat.includes(target)) sc += 3;
+    if (target === normCat) sc += 10;
+    return sc;
+  };
+
   let best = fallback;
   let bestScore = 0;
 
   for (const t of templates) {
-    const normName = norm(t.name);
-    const normCatField = t.category ? norm(t.category) : normName;
-    // Strip trailing digits from template names like "Decor 1" / "Decor 2"
-    const bareName = normName.replace(/\s+\d+$/, "").trim();
-    const target = normCatField || bareName || normName;
-    const targetWords = target.split(" ").filter((w) => w.length > 2);
-
-    let score = 0;
-
-    // Strong department match (most important for Mathis/Temu taxonomy paths)
-    if (target === normDept || bareName === normDept) score += 20;
-    else if (normDept.startsWith(target) || target.startsWith(normDept)) score += 12;
-    // "Mattress" ↔ "Mattresses", "Decor" ↔ "Decorative" stem-ish: shared prefix ≥5 chars
-    else if (
-      (target.length >= 5 && normDept.startsWith(target.slice(0, 5))) ||
-      (normDept.length >= 5 && target.startsWith(normDept.slice(0, 5)))
-    ) {
-      score += 10;
-    }
-
-    for (const word of catWords) if (targetWords.includes(word)) score += 2;
-    for (const word of targetWords) if (catWords.includes(word)) score += 1;
-    if (target.includes(normCat)) score += 5;
-    if (normCat.includes(target)) score += 3;
-    if (target === normCat) score += 10;
-
+    // Score against BOTH the template name AND its category field — take the higher.
+    // A template may have a descriptive name ("Home & Kitchen / Furniture / Dining Room
+    // Furniture / Chairs") but a short internal category label ("TEMU CHAIRS (1)").
+    // Using only `category || name` caused the category label to win and the descriptive
+    // name to be ignored, resulting in a zero score and false "no match" warnings.
+    const score = Math.max(
+      scoreTarget(t.name),
+      t.category ? scoreTarget(t.category) : 0,
+    );
     if (score > bestScore) { bestScore = score; best = t; }
   }
 

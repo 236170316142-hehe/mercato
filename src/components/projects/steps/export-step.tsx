@@ -35,28 +35,37 @@ function matchTemplate(category: string, templates: Template[]): Template {
   const normCat = norm(category);
   const catWords = normCat.split(" ").filter((w) => w.length > 2);
 
+  // Score one string against the product category — higher is better.
+  const scoreTarget = (raw: string): number => {
+    const target = norm(raw);
+    const bareName = target.replace(/\s+\d+$/, "").trim();
+    const targetWords = target.split(" ").filter((w) => w.length > 2);
+    let sc = 0;
+    if (target === normDept || bareName === normDept) sc += 20;
+    else if (normDept.startsWith(target) || target.startsWith(normDept)) sc += 12;
+    else if (
+      (target.length >= 5 && normDept.startsWith(target.slice(0, 5))) ||
+      (normDept.length >= 5 && target.startsWith(normDept.slice(0, 5)))
+    ) sc += 10;
+    for (const word of catWords) if (targetWords.includes(word)) sc += 2;
+    for (const word of targetWords) if (catWords.includes(word)) sc += 1;
+    if (target.includes(normCat)) sc += 5;
+    if (normCat.includes(target)) sc += 3;
+    if (target === normCat) sc += 10;
+    return sc;
+  };
+
   let best = fallback;
   let bestScore = 0; // must beat 0 to override the chosen fallback
 
   for (const t of templates) {
-    const target = norm(t.category || t.name);
-    const bareName = target.replace(/\s+\d+$/, "").trim();
-    const targetWords = target.split(" ").filter((w) => w.length > 2);
-
-    let score = 0;
-    if (target === normDept || bareName === normDept) score += 20;
-    else if (normDept.startsWith(target) || target.startsWith(normDept)) score += 12;
-    else if (
-      (target.length >= 5 && normDept.startsWith(target.slice(0, 5))) ||
-      (normDept.length >= 5 && target.startsWith(normDept.slice(0, 5)))
-    ) score += 10;
-
-    for (const word of catWords) if (targetWords.includes(word)) score += 2;
-    for (const word of targetWords) if (catWords.includes(word)) score += 1;
-    if (target.includes(normCat)) score += 5;
-    if (normCat.includes(target)) score += 3;
-    if (target === normCat) score += 10;
-
+    // Score against BOTH the template name AND its category field — take the higher.
+    // This matters when a template has a short internal category label ("TEMU CHAIRS (1)")
+    // but a descriptive name ("Home & Kitchen / Furniture / Dining Room Furniture / Chairs").
+    const score = Math.max(
+      scoreTarget(t.name),
+      t.category ? scoreTarget(t.category) : 0,
+    );
     if (score > bestScore) { bestScore = score; best = t; }
   }
   return best;
