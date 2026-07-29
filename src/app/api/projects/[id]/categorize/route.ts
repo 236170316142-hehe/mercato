@@ -262,7 +262,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       for (const r of results) {
         const input = inputById.get(r.productId);
-        const stillRawSku = input ? looksLikeSkuName(input.name, input.sku) : false;
+        // Only treat as unresolved if the name is still a raw code AND there's no
+        // description or vendor category to anchor the AI's decision on.
+        const stillRawSku = input
+          ? looksLikeSkuName(input.name, input.sku) && !input.description && !input.vendorCategory
+          : false;
         const failsConfidence = !isConstrainedTaxonomy && r.confidence < MIN_CONFIDENCE;
         if (r.category !== "Uncategorized" && (stillRawSku || failsConfidence)) {
           r.category = "Uncategorized";
