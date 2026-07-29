@@ -969,11 +969,11 @@ async function fillTemplateXlsx(
       if (nk === "status" && (raw === "on_sale" || raw === "")) raw = "1";
       // Category: the template's top-level dropdown needs only level-1 of the path
       if (nk === "category" && raw.includes(" > ")) raw = raw.split(" > ")[0]?.trim() ?? raw;
-      // "Product type" on Temu = listing type ("Normal product" / "Custom product"),
-      // NOT the marketplace category. The coreMap sets product_type→marketplaceCategory
-      // (correct for Amazon) but that's wrong here. Default to "Normal product" so
-      // pickDropdownValue selects the correct option for standard listings.
-      if ((nk === "producttype" || nk === "goodstype") && raw.includes(" > ")) raw = "Normal product";
+      // "Product type" / "Goods type" on Temu = listing format ("Normal product" /
+      // "Custom product"), NOT the marketplace category. The coreMap maps these to
+      // marketplaceCategory (a " > " path) which is wrong here; also covers the case
+      // where no category was assigned (raw="") — both should default to "Normal product".
+      if ((nk === "producttype" || nk === "goodstype" || nk === "skutype") && (raw.includes(" > ") || !raw.trim())) raw = "Normal product";
     }
 
     if (isShippingWeightCol(col, letter)) {
@@ -1377,6 +1377,14 @@ function getVdNorm(vd: Record<string, unknown>): Map<string, unknown> {
 
 function getProductField(p: Product, key: string): unknown {
   const nk = normalizeKey(key);
+  // "Length - in" normalises to "lengthin" but coreMap has "length". Pre-compute a
+  // unit-suffix-stripped form so both lookups can fall back to the bare field name.
+  const bareNk = (() => {
+    for (const s of ["lbs", "kg", "oz", "lb", "cm", "mm", "ft", "ml", "in", "g", "m", "l"]) {
+      if (nk.endsWith(s) && nk.length > s.length + 2) return nk.slice(0, -s.length);
+    }
+    return null;
+  })();
   const vd = p.vendorData as Record<string, unknown> | null;
   const ld = p.liveData as Record<string, unknown> | null;
 
@@ -1617,6 +1625,19 @@ function getProductField(p: Product, key: string): unknown {
     browse_node: p.categoryPath ?? "",
     product_type: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",
 
+    // Temu listing-type field: "Goods type" / "goods_type" on the Temu template is the
+    // listing format selector (Normal product / Custom product), NOT the category.
+    // Setting it to the AI category path lets the colVal Temu coercion intercept " > "
+    // and replace with "Normal product" — the correct value for standard listings.
+    goods_type: (p.marketplaceCategory && p.marketplaceCategory !== "Uncategorized") ? p.marketplaceCategory : "",
+    // Temu packaging fields — vendor data is used when present; otherwise left blank
+    // for the seller to fill in on Temu's portal.
+    packaging_unit: fromVendor("packaging_unit", "pack_unit", "unit_type") ?? "",
+    total_packaging_quantity: fromVendor("total_packaging_quantity", "packaging_quantity", "pack_quantity") ?? "",
+    net_content: fromVendor("net_content", "unit_count", "quantity_per_package") ?? "",
+    individually_packed: fromVendor("individually_packed", "individual_pack") ?? "",
+    sku_type: fromVendor("sku_type", "goods_type", "product_kind") ?? "",
+
     // Temu-specific technique fields — pass through vendor data if present
     customization_processing_technique: fromVendor("customization_processing_technique", "processing_technique", "technique") ?? "",
     primary_technique: fromVendor("primary_technique", "technique", "process") ?? "",
@@ -1833,6 +1854,8 @@ function getProductField(p: Product, key: string): unknown {
   const coreNorm = new Map<string, unknown>();
   for (const [k, v] of Object.entries(coreMap)) coreNorm.set(normalizeKey(k), v);
   if (coreNorm.has(nk)) return coreNorm.get(nk);
+  // Unit-suffix fallback: "lengthin" → try "length", "widthcm" → try "width", etc.
+  if (bareNk && coreNorm.has(bareNk)) return coreNorm.get(bareNk);
 
   if (vd && vdNorm) {
     // Exact key match
@@ -1840,6 +1863,8 @@ function getProductField(p: Product, key: string): unknown {
     // O(1) normalized key match via cache
     const normV = vdNorm.get(nk);
     if (normV !== undefined) return normV;
+    // Unit-suffix fallback for vendorData too: vendor key "length" matches column "Length - in"
+    if (bareNk) { const v = vdNorm.get(bareNk); if (v !== undefined) return v; }
 
     // Numbered image/photo field: collect ALL image-URL-like keys from vendorData sorted,
     // then return the nth one. e.g. "product_image_3_url" → n=3 → 3rd image key.
