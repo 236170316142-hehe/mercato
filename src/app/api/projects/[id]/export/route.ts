@@ -108,22 +108,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       // Include fileData so category-zip exports can use fillTemplateXlsx and preserve
       // original template formatting, column widths, styles, and dropdown validations.
+      // userId is included so we can prefer user-uploaded templates over admin/global ones.
       setJobPhase(jobId, "Loading products…");
-      const templateSelect = { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true, fileData: true };
-      const [project, allTemplates] = await Promise.all([
+      const templateSelect = { id: true, name: true, marketplace: true, category: true, fileFormat: true, columns: true, fileData: true, userId: true };
+      const [project, rawTemplates] = await Promise.all([
         prisma.project.findUnique({ where: { id }, include: { products: true } }),
         useAutoMatch
           ? prisma.exportTemplate.findMany({
               where: { marketplace: { in: mpFamily, mode: "insensitive" }, OR: templateOwnerOr },
               select: templateSelect,
               orderBy: { createdAt: "asc" },
-            }) as Promise<TemplateRow[]>
+            })
           : prisma.exportTemplate.findMany({
               where: { id: { in: templateIds }, OR: templateOwnerOr },
               select: templateSelect,
               orderBy: { createdAt: "asc" },
-            }) as Promise<TemplateRow[]>,
+            }),
       ]);
+
+      // User-uploaded templates take full priority over admin/global templates.
+      // If the exporting user has uploaded their own templates for this marketplace,
+      // use only those. Fall back to admin/global templates only when the user has none.
+      const userOwnTemplates = rawTemplates.filter(t => t.userId === user!.id);
+      const allTemplates = (userOwnTemplates.length > 0 ? userOwnTemplates : rawTemplates) as TemplateRow[];
 
       if (!project) throw new Error("Project not found");
 
